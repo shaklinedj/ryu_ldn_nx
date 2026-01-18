@@ -215,15 +215,23 @@ void Logger::log_v(LogLevel level, const char* format, va_list args) {
     char message[MAX_LOG_MESSAGE_LENGTH];
     format_log_message_v(message, sizeof(message), level, format, args);
 
+    // Thread-safe output
+#ifdef __SWITCH__
+    std::scoped_lock lock(m_mutex);
+#else
+    std::lock_guard<std::mutex> lock(m_mutex);
+#endif
     output_message(message);
 }
 
 void Logger::flush() {
 #ifdef __SWITCH__
+    std::scoped_lock lock(m_mutex);
     if (m_file_open) {
         ams::fs::FlushFile(s_log_file_handle);
     }
 #else
+    std::lock_guard<std::mutex> lock(m_mutex);
     if (m_file != nullptr) {
         std::fflush(static_cast<FILE*>(m_file));
     }
@@ -359,9 +367,10 @@ void Logger::close_file() {
 }
 
 void Logger::check_idle_timeout() {
+#ifdef __SWITCH__
+    std::scoped_lock lock(m_mutex);
     if (!m_file_open) return;
 
-#ifdef __SWITCH__
     uint64_t current_tick = armGetSystemTick();
     uint64_t elapsed_ns = armTicksToNs(current_tick - m_last_write_tick);
 
@@ -369,6 +378,9 @@ void Logger::check_idle_timeout() {
         close_file();
     }
 #else
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (!m_file_open) return;
+
     // Non-Switch: always close after check (for testing simplicity)
     // Real timeout only matters on Switch hardware
     close_file();

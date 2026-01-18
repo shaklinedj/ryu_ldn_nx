@@ -166,24 +166,29 @@ namespace ams {
                 sm::MitmProcessInfo client_info;
                 server->AcknowledgeMitmSession(std::addressof(fsrv), std::addressof(client_info));
 
+                Result rc;
                 switch (port_index) {
                     case PortIndex_LdnMitm:
                         // LDN MITM service (ldn:u)
-                        return this->AcceptMitmImpl(
+                        rc = this->AcceptMitmImpl(
                             server,
                             sf::CreateSharedObjectEmplaced<
                                 mitm::ldn::ILdnMitMService,
                                 mitm::ldn::LdnMitMService>(decltype(fsrv)(fsrv), client_info),
                             fsrv);
+                        LOG_INFO("LDN AcceptMitmImpl result: 0x%x", rc.GetValue());
+                        return rc;
 
                     case PortIndex_BsdMitm:
                         // BSD MITM service (bsd:u)
-                        return this->AcceptMitmImpl(
+                        rc = this->AcceptMitmImpl(
                             server,
                             sf::CreateSharedObjectEmplaced<
                                 mitm::bsd::IBsdMitmService,
                                 mitm::bsd::BsdMitmService>(decltype(fsrv)(fsrv), client_info),
                             fsrv);
+                        LOG_INFO("BSD AcceptMitmImpl result: 0x%x", rc.GetValue());
+                        return rc;
 
                     default:
                         AMS_ABORT("Unknown port index");

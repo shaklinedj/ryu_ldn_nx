@@ -14,6 +14,7 @@
 #include <stratosphere.hpp>
 #include "interfaces/iservice.hpp"
 #include "ldn_icommunication.hpp"
+#include "ldn_client_process_monitor.hpp"
 
 namespace ams::mitm::ldn {
 
@@ -68,6 +69,18 @@ public:
      */
     Result CreateUserLocalCommunicationService(
         sf::Out<sf::SharedPointer<ICommunicationInterface>> out);
+
+    /**
+     * @brief Create the client process monitor
+     *
+     * Required for firmware 18.0.0+ compatibility.
+     * This is a stub implementation - games require it but don't use it.
+     *
+     * @param out Output pointer for the created monitor
+     * @return Result code
+     */
+    Result CreateClientProcessMonitor(
+        sf::Out<sf::SharedPointer<IClientProcessMonitorInterface>> out);
 };
 
 // Verify interface compliance

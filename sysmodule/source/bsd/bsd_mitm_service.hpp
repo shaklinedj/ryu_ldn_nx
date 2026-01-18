@@ -66,9 +66,10 @@ public:
     // =========================================================================
 
     Result RegisterClient(
-        sf::Out<s32> out_errno, u32 config_size,
-        const sf::InAutoSelectBuffer& config,
+        sf::Out<u64> out_pid,
+        const ryu_ldn::bsd::LibraryConfigData& config,
         const sf::ClientProcessId& client_pid,
+        u64 tmem_size,
         sf::CopyHandle&& transfer_memory);
 
     Result StartMonitoring(sf::Out<s32> out_errno, u64 pid);

@@ -85,12 +85,20 @@ struct SocketInfo {
  * creates the fd but Bind/Connect happens later, and we need the socket
  * type/protocol to create the ProxySocket.
  *
- * TODO: This should be per-client (m_socket_info member) but for now
- * we use a global static. This is safe because:
- * 1. Each game process has its own fd namespace
- * 2. We only track fds for the MITMed client
+ * NOTE: This is a global static shared across all MITM clients. Access
+ * must be protected by g_socket_info_mutex. Different client processes
+ * may have the same fd values, but since we're in the sysmodule context,
+ * fd collisions are handled by the fact that each BsdMitmService instance
+ * forwards to a different real service session.
  */
 static std::unordered_map<s32, SocketInfo> g_socket_info;
+
+/**
+ * @brief Mutex protecting g_socket_info
+ *
+ * Must be held when reading or modifying g_socket_info.
+ */
+static os::Mutex g_socket_info_mutex{false};
 
 // =============================================================================
 // Constructor / Destructor
@@ -122,8 +130,8 @@ BsdMitmService::BsdMitmService(std::shared_ptr<::Service>&& s, const sm::MitmPro
     : MitmServiceImplBase(std::forward<std::shared_ptr<::Service>>(s), c)
     , m_client_pid(c.process_id.value)
 {
-    LOG_INFO("BSD MITM service created for program_id=0x%016lx, pid=%lu",
-             c.program_id.value, m_client_pid);
+    LOG_INFO("BSD MITM service created for program_id=0x%016lx, pid=%lu, fwd_srv=%p",
+             c.program_id.value, m_client_pid, m_forward_service.get());
 }
 
 /**
@@ -232,35 +240,47 @@ bool BsdMitmService::ShouldMitm(const sm::MitmProcessInfo& client_info) {
  * @return Result code from forwarding to real service
  */
 Result BsdMitmService::RegisterClient(
-    sf::Out<s32> out_errno, u32 config_size,
-    const sf::InAutoSelectBuffer& config,
+    sf::Out<u64> out_pid,
+    const ryu_ldn::bsd::LibraryConfigData& config,
     const sf::ClientProcessId& client_pid,
+    u64 tmem_size,
     sf::CopyHandle&& transfer_memory)
 {
-    LOG_VERBOSE("BSD RegisterClient for pid=%lu, config_size=%u",
-                client_pid.GetValue().value, config_size);
+    // Log detailed info about the call
+    // client_pid comes from IPC send_pid mechanism (sf extracts it from kernel)
+    LOG_INFO("BSD RegisterClient: client_pid=%lu, tmem_size=%lu, tmem_handle=0x%x",
+             client_pid.GetValue().value, tmem_size,
+             transfer_memory.GetOsHandle());
 
-    struct {
-        u32 config_size;
-    } in = { config_size };
+    LOG_VERBOSE("BSD RegisterClient config: version=%u, tcp_tx=%u, tcp_rx=%u, udp_tx=%u, udp_rx=%u, sb_eff=%u",
+                config.version, config.tcp_tx_buf_size, config.tcp_rx_buf_size,
+                config.udp_tx_buf_size, config.udp_rx_buf_size, config.sb_efficiency);
 
-    s32 errno_out = 0;
+    // Reconstruct the input structure that libnx sends
+    // Layout: [config 32 bytes][pid_placeholder 8 bytes][tmem_size 8 bytes]
+    const struct {
+        ryu_ldn::bsd::LibraryConfigData config;
+        u64 pid_placeholder;
+        u64 tmem_size;
+    } forward_input = { config, 0, tmem_size };
+
+    // Forward to the real service
+    // RegisterClient returns u64 pid, not s32 errno (it's special - cmd 0)
+    u64 pid_out = 0xDEADBEEF;  // Sentinel to detect if service writes to it
+    LOG_INFO("BSD RegisterClient: forwarding to real service (fwd_srv=%p)", m_forward_service.get());
+
     Result rc = serviceMitmDispatchInOut(
-        m_forward_service.get(), 0, in, errno_out,
-        .buffer_attrs = {
-            SfBufferAttr_In | SfBufferAttr_HipcAutoSelect,
-        },
-        .buffers = {
-            { config.GetPointer(), config.GetSize() },
-        },
+        m_forward_service.get(), 0, forward_input, pid_out,
         .in_send_pid = true,
         .in_num_handles = 1,
         .in_handles = { transfer_memory.GetOsHandle() },
         .override_pid = m_client_pid,
     );
 
-    out_errno.SetValue(errno_out);
-    LOG_VERBOSE("BSD RegisterClient result: rc=0x%x errno=%d", rc.GetValue(), errno_out);
+    LOG_INFO("BSD RegisterClient: forward returned rc=0x%x, pid_out=0x%lx (%lu)",
+             rc.GetValue(), pid_out, pid_out);
+
+    out_pid.SetValue(pid_out);
     R_RETURN(rc);
 }
 
@@ -285,7 +305,7 @@ Result BsdMitmService::RegisterClient(
  * @return Result code from forwarding
  */
 Result BsdMitmService::StartMonitoring(sf::Out<s32> out_errno, u64 pid) {
-    LOG_VERBOSE("BSD StartMonitoring for pid=%lu", pid);
+    LOG_INFO("BSD StartMonitoring for pid=%lu", pid);
 
     s32 errno_out = 0;
     Result rc = serviceMitmDispatchInOut(
@@ -337,7 +357,7 @@ Result BsdMitmService::Socket(
     sf::Out<s32> out_errno, sf::Out<s32> out_fd,
     s32 domain, s32 type, s32 protocol)
 {
-    LOG_VERBOSE("BSD Socket domain=%d type=%d protocol=%d", domain, type, protocol);
+    LOG_INFO("BSD Socket domain=%d type=%d protocol=%d", domain, type, protocol);
 
     struct {
         s32 domain;
@@ -372,11 +392,14 @@ Result BsdMitmService::Socket(
             }
         }
 
-        g_socket_info[out.fd] = SocketInfo{
-            .type = static_cast<ryu_ldn::bsd::SocketType>(type),
-            .protocol = proto,
-            .is_proxy = false,
-        };
+        {
+            std::scoped_lock lock(g_socket_info_mutex);
+            g_socket_info[out.fd] = SocketInfo{
+                .type = static_cast<ryu_ldn::bsd::SocketType>(type),
+                .protocol = proto,
+                .is_proxy = false,
+            };
+        }
         LOG_VERBOSE("BSD Socket tracked fd=%d type=%d proto=%d", out.fd, type, static_cast<s32>(proto));
     }
 
@@ -436,11 +459,14 @@ Result BsdMitmService::SocketExempt(
             }
         }
 
-        g_socket_info[out.fd] = SocketInfo{
-            .type = static_cast<ryu_ldn::bsd::SocketType>(type),
-            .protocol = proto,
-            .is_proxy = false,
-        };
+        {
+            std::scoped_lock lock(g_socket_info_mutex);
+            g_socket_info[out.fd] = SocketInfo{
+                .type = static_cast<ryu_ldn::bsd::SocketType>(type),
+                .protocol = proto,
+                .is_proxy = false,
+            };
+        }
         LOG_VERBOSE("BSD SocketExempt tracked fd=%d type=%d proto=%d", out.fd, type, static_cast<s32>(proto));
     }
 
@@ -528,17 +554,20 @@ Result BsdMitmService::Close(
     LOG_VERBOSE("BSD Close fd=%d", fd);
 
     // Check if this is a proxy socket
-    auto it = g_socket_info.find(fd);
-    if (it != g_socket_info.end()) {
-        if (it->second.is_proxy) {
-            // Close the proxy socket
-            auto& manager = ProxySocketManager::GetInstance();
-            if (manager.CloseProxySocket(fd)) {
-                LOG_INFO("BSD Close fd=%d closed LDN proxy socket", fd);
+    {
+        std::scoped_lock lock(g_socket_info_mutex);
+        auto it = g_socket_info.find(fd);
+        if (it != g_socket_info.end()) {
+            if (it->second.is_proxy) {
+                // Close the proxy socket
+                auto& manager = ProxySocketManager::GetInstance();
+                if (manager.CloseProxySocket(fd)) {
+                    LOG_INFO("BSD Close fd=%d closed LDN proxy socket", fd);
+                }
             }
+            // Remove from tracking table
+            g_socket_info.erase(it);
         }
-        // Remove from tracking table
-        g_socket_info.erase(it);
     }
 
     // Forward close to real service (the fd still exists there)
@@ -657,21 +686,31 @@ Result BsdMitmService::Bind(
                      (sock_addr->sin_addr >> 24) & 0xFF,
                      sock_addr->GetPort());
 
-            // Get socket info (type and protocol)
-            auto it = g_socket_info.find(fd);
-            if (it == g_socket_info.end()) {
+            // Get socket info (type and protocol) under lock
+            SocketInfo socket_info;
+            bool found = false;
+            {
+                std::scoped_lock lock(g_socket_info_mutex);
+                auto it = g_socket_info.find(fd);
+                if (it != g_socket_info.end()) {
+                    socket_info = it->second;
+                    found = true;
+                }
+            }
+
+            if (!found) {
                 LOG_WARN("BSD Bind fd=%d not tracked, forwarding to real service", fd);
                 // Fall through to normal bind
             } else {
                 // Create proxy socket
                 auto& manager = ProxySocketManager::GetInstance();
-                ProxySocket* proxy = manager.CreateProxySocket(fd, it->second.type, it->second.protocol);
+                ProxySocket* proxy = manager.CreateProxySocket(fd, socket_info.type, socket_info.protocol);
 
                 if (proxy != nullptr) {
                     // Handle ephemeral port (port 0)
                     ryu_ldn::bsd::SockAddrIn bind_addr = *sock_addr;
                     if (bind_addr.GetPort() == 0) {
-                        uint16_t ephemeral = manager.AllocatePort(it->second.protocol);
+                        uint16_t ephemeral = manager.AllocatePort(socket_info.protocol);
                         if (ephemeral == 0) {
                             LOG_ERROR("BSD Bind fd=%d failed to allocate ephemeral port", fd);
                             out_errno.SetValue(static_cast<s32>(ryu_ldn::bsd::BsdErrno::AddrInUse));
@@ -681,7 +720,7 @@ Result BsdMitmService::Bind(
                         LOG_VERBOSE("BSD Bind fd=%d allocated ephemeral port %u", fd, ephemeral);
                     } else {
                         // Reserve the specific port
-                        if (!manager.ReservePort(bind_addr.GetPort(), it->second.protocol)) {
+                        if (!manager.ReservePort(bind_addr.GetPort(), socket_info.protocol)) {
                             LOG_WARN("BSD Bind fd=%d port %u already in use", fd, bind_addr.GetPort());
                             out_errno.SetValue(static_cast<s32>(ryu_ldn::bsd::BsdErrno::AddrInUse));
                             R_SUCCEED();
@@ -697,7 +736,13 @@ Result BsdMitmService::Bind(
                     }
 
                     // Mark as proxy socket
-                    it->second.is_proxy = true;
+                    {
+                        std::scoped_lock lock(g_socket_info_mutex);
+                        auto it = g_socket_info.find(fd);
+                        if (it != g_socket_info.end()) {
+                            it->second.is_proxy = true;
+                        }
+                    }
 
                     LOG_INFO("BSD Bind fd=%d successfully bound to LDN proxy", fd);
                     out_errno.SetValue(0);
@@ -779,9 +824,19 @@ Result BsdMitmService::Connect(
                      (sock_addr->sin_addr >> 24) & 0xFF,
                      sock_addr->GetPort());
 
-            // Get socket info (type and protocol)
-            auto it = g_socket_info.find(fd);
-            if (it == g_socket_info.end()) {
+            // Get socket info (type and protocol) under lock
+            SocketInfo socket_info;
+            bool found = false;
+            {
+                std::scoped_lock lock(g_socket_info_mutex);
+                auto it = g_socket_info.find(fd);
+                if (it != g_socket_info.end()) {
+                    socket_info = it->second;
+                    found = true;
+                }
+            }
+
+            if (!found) {
                 LOG_WARN("BSD Connect fd=%d not tracked, forwarding to real service", fd);
                 // Fall through to normal connect
             } else {
@@ -792,7 +847,7 @@ Result BsdMitmService::Connect(
 
                 // If not bound yet, create one and auto-bind
                 if (proxy == nullptr) {
-                    proxy = manager.CreateProxySocket(fd, it->second.type, it->second.protocol);
+                    proxy = manager.CreateProxySocket(fd, socket_info.type, socket_info.protocol);
                     if (proxy == nullptr) {
                         LOG_ERROR("BSD Connect fd=%d failed to create proxy socket", fd);
                         out_errno.SetValue(static_cast<s32>(ryu_ldn::bsd::BsdErrno::NoMem));
@@ -800,7 +855,7 @@ Result BsdMitmService::Connect(
                     }
 
                     // Auto-bind with ephemeral port and local LDN IP
-                    uint16_t ephemeral = manager.AllocatePort(it->second.protocol);
+                    uint16_t ephemeral = manager.AllocatePort(socket_info.protocol);
                     if (ephemeral == 0) {
                         LOG_ERROR("BSD Connect fd=%d failed to allocate ephemeral port", fd);
                         out_errno.SetValue(static_cast<s32>(ryu_ldn::bsd::BsdErrno::AddrInUse));
@@ -817,7 +872,7 @@ Result BsdMitmService::Connect(
                     Result bind_result = proxy->Bind(local_addr);
                     if (R_FAILED(bind_result)) {
                         LOG_ERROR("BSD Connect fd=%d auto-bind failed: 0x%x", fd, bind_result.GetValue());
-                        manager.ReleasePort(ephemeral, it->second.protocol);
+                        manager.ReleasePort(ephemeral, socket_info.protocol);
                         out_errno.SetValue(bind_result.GetValue());
                         R_SUCCEED();
                     }
@@ -834,7 +889,13 @@ Result BsdMitmService::Connect(
                 }
 
                 // Mark as proxy socket
-                it->second.is_proxy = true;
+                {
+                    std::scoped_lock lock(g_socket_info_mutex);
+                    auto it = g_socket_info.find(fd);
+                    if (it != g_socket_info.end()) {
+                        it->second.is_proxy = true;
+                    }
+                }
 
                 LOG_INFO("BSD Connect fd=%d successfully connected to LDN proxy", fd);
                 out_errno.SetValue(0);
@@ -1080,8 +1141,16 @@ Result BsdMitmService::Send(
     LOG_VERBOSE("BSD Send fd=%d flags=%d size=%zu", fd, flags, buffer.GetSize());
 
     // Check if this is a proxy socket
-    auto it = g_socket_info.find(fd);
-    if (it != g_socket_info.end() && it->second.is_proxy) {
+    bool is_proxy = false;
+    {
+        std::scoped_lock lock(g_socket_info_mutex);
+        auto it = g_socket_info.find(fd);
+        if (it != g_socket_info.end() && it->second.is_proxy) {
+            is_proxy = true;
+        }
+    }
+
+    if (is_proxy) {
         auto& manager = ProxySocketManager::GetInstance();
         ProxySocket* proxy = manager.GetProxySocket(fd);
 
@@ -1174,8 +1243,19 @@ Result BsdMitmService::SendTo(
                 fd, flags, buffer.GetSize(), addr.GetSize());
 
     // Check if this is a proxy socket or if dest is LDN
-    auto it = g_socket_info.find(fd);
-    bool is_proxy = (it != g_socket_info.end() && it->second.is_proxy);
+    bool is_proxy = false;
+    SocketInfo socket_info;
+    bool found = false;
+
+    {
+        std::scoped_lock lock(g_socket_info_mutex);
+        auto it = g_socket_info.find(fd);
+        if (it != g_socket_info.end()) {
+            socket_info = it->second;
+            found = true;
+            is_proxy = it->second.is_proxy;
+        }
+    }
 
     // Also check destination address for LDN
     if (addr.GetSize() >= sizeof(ryu_ldn::bsd::SockAddrIn)) {
@@ -1188,16 +1268,16 @@ Result BsdMitmService::SendTo(
             is_proxy = true;
 
             // If socket not yet marked as proxy, mark it now
-            if (it != g_socket_info.end() && !it->second.is_proxy) {
+            if (found && !socket_info.is_proxy) {
                 auto& manager = ProxySocketManager::GetInstance();
 
                 // Create proxy socket if needed
                 ProxySocket* proxy = manager.GetProxySocket(fd);
                 if (proxy == nullptr) {
-                    proxy = manager.CreateProxySocket(fd, it->second.type, it->second.protocol);
+                    proxy = manager.CreateProxySocket(fd, socket_info.type, socket_info.protocol);
                     if (proxy != nullptr) {
                         // Auto-bind
-                        uint16_t ephemeral = manager.AllocatePort(it->second.protocol);
+                        uint16_t ephemeral = manager.AllocatePort(socket_info.protocol);
                         if (ephemeral != 0) {
                             ryu_ldn::bsd::SockAddrIn local_addr{};
                             local_addr.sin_len = sizeof(local_addr);
@@ -1208,7 +1288,15 @@ Result BsdMitmService::SendTo(
                         }
                     }
                 }
-                it->second.is_proxy = true;
+
+                // Mark as proxy
+                {
+                    std::scoped_lock lock(g_socket_info_mutex);
+                    auto it = g_socket_info.find(fd);
+                    if (it != g_socket_info.end()) {
+                        it->second.is_proxy = true;
+                    }
+                }
             }
         }
     }
@@ -1306,8 +1394,16 @@ Result BsdMitmService::Recv(
     LOG_VERBOSE("BSD Recv fd=%d flags=%d buf_size=%zu", fd, flags, buffer.GetSize());
 
     // Check if this is a proxy socket
-    auto it = g_socket_info.find(fd);
-    if (it != g_socket_info.end() && it->second.is_proxy) {
+    bool is_proxy = false;
+    {
+        std::scoped_lock lock(g_socket_info_mutex);
+        auto it = g_socket_info.find(fd);
+        if (it != g_socket_info.end() && it->second.is_proxy) {
+            is_proxy = true;
+        }
+    }
+
+    if (is_proxy) {
         auto& manager = ProxySocketManager::GetInstance();
         ProxySocket* proxy = manager.GetProxySocket(fd);
 
@@ -1392,8 +1488,16 @@ Result BsdMitmService::RecvFrom(
     LOG_VERBOSE("BSD RecvFrom fd=%d flags=%d buf_size=%zu", fd, flags, buffer.GetSize());
 
     // Check if this is a proxy socket
-    auto it = g_socket_info.find(fd);
-    if (it != g_socket_info.end() && it->second.is_proxy) {
+    bool is_proxy = false;
+    {
+        std::scoped_lock lock(g_socket_info_mutex);
+        auto it = g_socket_info.find(fd);
+        if (it != g_socket_info.end() && it->second.is_proxy) {
+            is_proxy = true;
+        }
+    }
+
+    if (is_proxy) {
         auto& manager = ProxySocketManager::GetInstance();
         ProxySocket* proxy = manager.GetProxySocket(fd);
 

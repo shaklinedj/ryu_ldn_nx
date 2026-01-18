@@ -12,6 +12,12 @@
  * 2. Tracks sockets that bind/connect to LDN addresses (10.114.x.x)
  * 3. Proxies send/recv for tracked sockets via ProxyData packets
  *
+ * ## IPC Format Notes
+ *
+ * IMPORTANT: nnSdk sends RegisterClient data as RAW INLINE data, not as buffers.
+ * The input is a 48-byte struct: LibraryConfigData(32) + pid_placeholder(8) + tmem_size(8)
+ * Reference: libnx bsd.c _bsdRegisterClient()
+ *
  * @copyright Copyright (c) 2026 ryu_ldn_nx contributors
  * @license GPL-2.0-or-later
  */
@@ -19,6 +25,7 @@
 #pragma once
 
 #include <stratosphere.hpp>
+#include "../bsd_types.hpp"
 
 /**
  * @brief Interface definition for IBsdMitmService
@@ -36,12 +43,18 @@
  */
 #define AMS_RYU_BSD_MITM_SERVICE(C, H)                                                                                  \
     /* Cmd 0: RegisterClient - Initialize socket library for client */                                                  \
+    /* Input: LibraryConfigData (32 bytes) + ClientProcessId (8 bytes via send_pid) + tmem_size (8 bytes)             */\
+    /*        + CopyHandle(tmem). Total raw data = 48 bytes.                                                          */\
+    /* Note: sf sorts InData by alignment (ascending). LibraryConfigData align=4 comes first, then                    */\
+    /*       ClientProcessId and tmem_size both align=8 in declaration order. This matches libnx layout.              */\
+    /* Output: u64 pid (NOT errno - RegisterClient is special)                                                        */\
     AMS_SF_METHOD_INFO(C, H, 0,   Result, RegisterClient,                                                               \
-        (ams::sf::Out<s32> out_errno, u32 config_size,                                                                  \
-         const ams::sf::InAutoSelectBuffer &config,                                                                     \
+        (ams::sf::Out<u64> out_pid,                                                                                     \
+         const ryu_ldn::bsd::LibraryConfigData &config,                                                                 \
          const ams::sf::ClientProcessId &client_pid,                                                                    \
+         u64 tmem_size,                                                                                                 \
          ams::sf::CopyHandle &&transfer_memory),                                                                        \
-        (out_errno, config_size, config, client_pid, std::move(transfer_memory)))                                       \
+        (out_pid, config, client_pid, tmem_size, std::move(transfer_memory)))                                                       \
     /* Cmd 1: StartMonitoring - Start socket monitoring */                                                              \
     AMS_SF_METHOD_INFO(C, H, 1,   Result, StartMonitoring,                                                              \
         (ams::sf::Out<s32> out_errno, u64 pid),                                                                         \

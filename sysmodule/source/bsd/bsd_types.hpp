@@ -217,6 +217,21 @@ struct __attribute__((packed)) LibraryConfigData {
 };
 static_assert(sizeof(LibraryConfigData) == 32, "LibraryConfigData must be 32 bytes");
 
+/**
+ * @brief RegisterClient IPC input structure
+ *
+ * This is the exact structure sent by nnSdk/libnx for RegisterClient (cmd 0).
+ * The data is sent inline in the IPC raw data section, NOT as a buffer.
+ *
+ * Reference: libnx bsd.c _bsdRegisterClient()
+ */
+struct __attribute__((packed)) RegisterClientInput {
+    LibraryConfigData config;     ///< Socket library configuration (32 bytes)
+    uint64_t pid_placeholder;     ///< PID placeholder (filled by in_send_pid)
+    uint64_t tmem_size;           ///< Transfer memory size
+};
+static_assert(sizeof(RegisterClientInput) == 48, "RegisterClientInput must be 48 bytes");
+
 // =============================================================================
 // Socket Options
 // =============================================================================

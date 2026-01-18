@@ -53,6 +53,12 @@
 #include <cstddef>
 #include <cstdarg>
 
+#ifdef __SWITCH__
+#include <stratosphere/os/os_mutex.hpp>
+#else
+#include <mutex>
+#endif
+
 // Forward declaration to avoid circular include
 namespace ryu_ldn::config {
     struct DebugConfig;
@@ -305,6 +311,12 @@ private:
     bool m_header_written = false;   // Track if header was written this session
 
     static constexpr uint64_t FILE_IDLE_TIMEOUT_NS = 5000000000ULL;  // 5 seconds in nanoseconds
+
+#ifdef __SWITCH__
+    mutable ams::os::Mutex m_mutex{false};  // Mutex for thread-safe logging
+#else
+    mutable std::mutex m_mutex;  // Mutex for thread-safe logging (PC)
+#endif
 };
 
 // =============================================================================

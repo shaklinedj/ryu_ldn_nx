@@ -50,4 +50,14 @@ Result LdnMitMService::CreateUserLocalCommunicationService(
     R_SUCCEED();
 }
 
+Result LdnMitMService::CreateClientProcessMonitor(
+    sf::Out<sf::SharedPointer<IClientProcessMonitorInterface>> out)
+{
+    LOG_INFO("Creating ClientProcessMonitor");
+    // Required for firmware 18.0.0+ compatibility
+    auto monitor = sf::CreateSharedObjectEmplaced<IClientProcessMonitorInterface, IClientProcessMonitor>();
+    out.SetValue(std::move(monitor));
+    R_SUCCEED();
+}
+
 } // namespace ams::mitm::ldn
