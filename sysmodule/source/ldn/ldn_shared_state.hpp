@@ -23,6 +23,7 @@
 #pragma once
 
 #include <stratosphere.hpp>
+#include <unordered_set>
 
 // Forward declare CommState to avoid circular includes
 // CommState is defined in ldn_types.hpp
@@ -142,6 +143,39 @@ public:
     bool IsLdnPid(u64 pid) const;
 
     // =========================================================================
+    // LDN Game Detection (for BSD MITM)
+    // =========================================================================
+
+    /**
+     * @brief Add a program_id to the set of known LDN games
+     *
+     * Called by ProcessMonitor when a game with LDN support starts.
+     * BSD ShouldMitm queries this to decide whether to intercept.
+     *
+     * @param program_id The program ID that supports LDN
+     */
+    void AddLdnGame(u64 program_id);
+
+    /**
+     * @brief Check if a program_id is a known LDN game
+     *
+     * Called by BSD ShouldMitm to decide whether to intercept.
+     *
+     * @param program_id The program ID to check
+     * @return true if this program supports LDN
+     */
+    bool IsLdnGame(u64 program_id) const;
+
+    /**
+     * @brief Remove a program_id from the set of known LDN games
+     *
+     * Called when a game exits (optional cleanup).
+     *
+     * @param program_id The program ID to remove
+     */
+    void RemoveLdnGame(u64 program_id);
+
+    // =========================================================================
     // LDN State
     // =========================================================================
 
@@ -251,6 +285,7 @@ private:
     bool m_is_host = false;
     u32 m_last_rtt_ms = 0;
     bool m_reconnect_requested = false;
+    std::unordered_set<u64> m_ldn_games;  ///< Set of program_ids with LDN support
 };
 
 } // namespace ams::mitm::ldn

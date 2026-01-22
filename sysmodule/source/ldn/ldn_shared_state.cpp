@@ -8,6 +8,7 @@
 
 #include "ldn_shared_state.hpp"
 #include "ldn_types.hpp"
+#include "../debug/log.hpp"
 
 namespace ams::mitm::ldn {
 
@@ -61,7 +62,10 @@ u64 SharedState::GetActiveProcessId() const {
 
 void SharedState::SetLdnPid(u64 pid) {
     std::scoped_lock lk(m_mutex);
+    u64 old_pid = m_ldn_pid;
     m_ldn_pid = pid;
+    LOG_INFO("SharedState::SetLdnPid: %lu -> %lu (BSD sessions opened after this will be intercepted)",
+             old_pid, pid);
 }
 
 u64 SharedState::GetLdnPid() const {
@@ -72,6 +76,27 @@ u64 SharedState::GetLdnPid() const {
 bool SharedState::IsLdnPid(u64 pid) const {
     std::scoped_lock lk(m_mutex);
     return m_ldn_pid != 0 && m_ldn_pid == pid;
+}
+
+// =============================================================================
+// LDN Game Detection (for BSD MITM)
+// =============================================================================
+
+void SharedState::AddLdnGame(u64 program_id) {
+    std::scoped_lock lk(m_mutex);
+    m_ldn_games.insert(program_id);
+    LOG_INFO("SharedState::AddLdnGame: 0x%016lx (total: %zu)", program_id, m_ldn_games.size());
+}
+
+bool SharedState::IsLdnGame(u64 program_id) const {
+    std::scoped_lock lk(m_mutex);
+    return m_ldn_games.find(program_id) != m_ldn_games.end();
+}
+
+void SharedState::RemoveLdnGame(u64 program_id) {
+    std::scoped_lock lk(m_mutex);
+    m_ldn_games.erase(program_id);
+    LOG_INFO("SharedState::RemoveLdnGame: 0x%016lx (total: %zu)", program_id, m_ldn_games.size());
 }
 
 // =============================================================================

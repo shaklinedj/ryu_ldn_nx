@@ -168,19 +168,29 @@ BsdMitmService::~BsdMitmService() {
  *
  * ## Strategy
  *
- * We intercept ALL application processes (program_id >= 0x0100000000000000).
- * This is necessary because games typically open bsd:u BEFORE ldn:u, so we
- * can't know at this point if they will use LDN.
+ * We intercept BSD sessions from games that SUPPORT LDN, detected by the
+ * ProcessMonitor which checks NACP when games launch (before any services
+ * are opened). Results are stored in SharedState.
  *
- * The overhead is minimal because:
- * 1. We only intercept applications, not system services
- * 2. All calls are forwarded transparently to the real service
- * 3. Proxy sockets are only created when LDN addresses are detected
+ * This solves the startup order problem:
+ * - On Switch: Game opens BSD BEFORE LDN
+ * - ProcessMonitor detects game launch and checks NACP
+ * - When BSD ShouldMitm is called, we just check the cached result
+ *
+ * This is efficient because:
+ * 1. We only intercept games with LDN support, not all applications
+ * 2. System services are skipped
+ * 3. Non-LDN games are not intercepted at all
+ * 4. No blocking service calls in ShouldMitm (just cache lookup)
  *
  * @param client_info Process information (PID, program ID, etc.)
- * @return true For application processes, false for system services
+ * @return true For games with LDN support, false otherwise
  */
 bool BsdMitmService::ShouldMitm(const sm::MitmProcessInfo& client_info) {
+    // Static counter to track all ShouldMitm calls for debugging
+    static u32 s_call_count = 0;
+    u32 call_id = ++s_call_count;
+
     // Our sysmodule's program_id - do not intercept ourselves
     constexpr u64 OUR_PROGRAM_ID = 0x4200000000000010ULL;
 
@@ -189,40 +199,23 @@ bool BsdMitmService::ShouldMitm(const sm::MitmProcessInfo& client_info) {
         return false;
     }
 
-    // =========================================================================
-    // CRITICAL WARNING - DO NOT INTERCEPT ALL BSD SESSIONS!
-    // =========================================================================
-    //
-    // Unlike Ryujinx (emulator), the real Nintendo Switch CANNOT handle having
-    // all BSD sessions intercepted. Attempting to MITM all BSD traffic causes
-    // the system to freeze completely during RegisterClient.
-    //
-    // The fundamental problem is the startup order:
-    // - On Switch: Game opens BSD BEFORE LDN (we can't intercept BSD early)
-    // - On Ryujinx: LDN initializes BEFORE BSD sockets are created
-    //
-    // Current limitation: We can only intercept BSD sessions opened AFTER
-    // the game has opened ldn:u. This means BSD sessions opened before LDN
-    // are not intercepted, and their sockets won't be proxied.
-    //
-    // TODO: Find an alternative approach that doesn't require intercepting
-    // all BSD sessions. Possible solutions:
-    // - Hook at a different level (kernel?)
-    // - Use a different interception mechanism
-    // - Coordinate with LDN MITM differently
-    // =========================================================================
-
-    auto& shared_state = ams::mitm::ldn::SharedState::GetInstance();
     u64 pid = client_info.process_id.value;
+    u64 program_id = client_info.program_id.value;
 
-    if (!shared_state.IsLdnPid(pid)) {
-        LOG_VERBOSE("BSD ShouldMitm: skipping pid=%lu (LDN not yet opened), program_id=0x%016lx",
-                    pid, client_info.program_id.value);
+    // Check if ProcessMonitor detected this game as having LDN support
+    // This was checked when the game launched (before BSD opened)
+    auto& shared_state = ams::mitm::ldn::SharedState::GetInstance();
+    bool is_ldn_game = shared_state.IsLdnGame(program_id);
+
+    LOG_INFO("BSD ShouldMitm #%u: pid=%lu, program_id=0x%016lx, is_ldn_game=%s",
+             call_id, pid, program_id, is_ldn_game ? "YES" : "NO");
+
+    if (!is_ldn_game) {
+        LOG_INFO("BSD ShouldMitm #%u: SKIPPING (game not detected as LDN)", call_id);
         return false;
     }
 
-    LOG_INFO("BSD ShouldMitm: intercepting pid=%lu (LDN is active), program_id=0x%016lx",
-             pid, client_info.program_id.value);
+    LOG_INFO("BSD ShouldMitm #%u: INTERCEPTING (game supports LDN)", call_id);
     return true;
 }
 

@@ -23,6 +23,7 @@ extern "C" {
 #include "config/config.hpp"
 #include "config/config_ipc_service.hpp"
 #include "debug/log.hpp"
+#include "process_monitor/process_monitor.hpp"
 
 namespace ams {
 
@@ -351,6 +352,10 @@ namespace ams {
 
         void FinalizeSystemModule() {
             LOG_INFO("ryu_ldn_nx sysmodule shutting down");
+
+            // Stop process monitor
+            mitm::process_monitor::Finalize();
+
             ryu_ldn::debug::g_logger.flush();
             socketExit();
             bsdExit();
@@ -381,6 +386,13 @@ namespace ams {
     void Main() {
         // Initialize global configuration for IPC service
         ryu_ldn::ipc::InitializeConfig();
+
+        // ====================================================================
+        // Start process monitor (detects LDN games at launch)
+        // ====================================================================
+        LOG_INFO("Starting process monitor");
+        mitm::process_monitor::Initialize();
+        LOG_INFO("Process monitor started");
 
         // ====================================================================
         // Register ryu:cfg configuration service
