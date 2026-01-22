@@ -29,8 +29,11 @@ LdnMitMService::~LdnMitMService() {
     LOG_INFO("LDN MITM service destroyed for program_id=0x%016lx, pid=%lu",
              m_program_id.value, m_client_pid);
 
-    // Clear LDN PID so BSD MITM stops intercepting
-    SharedState::GetInstance().SetLdnPid(0);
+    // NOTE: Do NOT clear LDN PID here!
+    // LdnMitMService is a factory that creates ICommunicationService, and is destroyed
+    // right after. The ICommunicationService continues to live and the game will
+    // open BSD sockets later. The PID must remain set so BSD MITM can intercept.
+    // The PID will be cleared when ICommunicationService is destroyed.
 }
 
 bool LdnMitMService::ShouldMitm(const sm::MitmProcessInfo& client_info) {

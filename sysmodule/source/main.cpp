@@ -160,34 +160,52 @@ namespace ams {
 
             ServerManager g_server_manager;
 
+            // Global counters for session tracking
+            static u32 g_ldn_session_counter = 0;
+            static u32 g_bsd_session_counter = 0;
+
             Result ServerManager::OnNeedsToAccept(int port_index, Server* server) {
+                LOG_INFO("OnNeedsToAccept: port_index=%d, server=%p", port_index, server);
+
                 // Acknowledge the MITM session
                 std::shared_ptr<::Service> fsrv;
                 sm::MitmProcessInfo client_info;
                 server->AcknowledgeMitmSession(std::addressof(fsrv), std::addressof(client_info));
 
+                LOG_INFO("OnNeedsToAccept: Acknowledged session for pid=%lu, program_id=0x%016lx, fsrv=%p (handle=0x%x)",
+                         client_info.process_id.value, client_info.program_id.value,
+                         fsrv.get(), fsrv ? fsrv->session : 0);
+
                 Result rc;
                 switch (port_index) {
                     case PortIndex_LdnMitm:
-                        // LDN MITM service (ldn:u)
-                        rc = this->AcceptMitmImpl(
-                            server,
-                            sf::CreateSharedObjectEmplaced<
-                                mitm::ldn::ILdnMitMService,
-                                mitm::ldn::LdnMitMService>(decltype(fsrv)(fsrv), client_info),
-                            fsrv);
-                        LOG_INFO("LDN AcceptMitmImpl result: 0x%x", rc.GetValue());
+                        {
+                            u32 session_id = ++g_ldn_session_counter;
+                            LOG_INFO("LDN MITM: Creating session #%u for pid=%lu", session_id, client_info.process_id.value);
+                            // LDN MITM service (ldn:u)
+                            rc = this->AcceptMitmImpl(
+                                server,
+                                sf::CreateSharedObjectEmplaced<
+                                    mitm::ldn::ILdnMitMService,
+                                    mitm::ldn::LdnMitMService>(decltype(fsrv)(fsrv), client_info),
+                                fsrv);
+                            LOG_INFO("LDN AcceptMitmImpl result: 0x%x (session #%u)", rc.GetValue(), session_id);
+                        }
                         return rc;
 
                     case PortIndex_BsdMitm:
-                        // BSD MITM service (bsd:u)
-                        rc = this->AcceptMitmImpl(
-                            server,
-                            sf::CreateSharedObjectEmplaced<
-                                mitm::bsd::IBsdMitmService,
-                                mitm::bsd::BsdMitmService>(decltype(fsrv)(fsrv), client_info),
-                            fsrv);
-                        LOG_INFO("BSD AcceptMitmImpl result: 0x%x", rc.GetValue());
+                        {
+                            u32 session_id = ++g_bsd_session_counter;
+                            LOG_INFO("BSD MITM: Creating session #%u for pid=%lu", session_id, client_info.process_id.value);
+                            // BSD MITM service (bsd:u)
+                            rc = this->AcceptMitmImpl(
+                                server,
+                                sf::CreateSharedObjectEmplaced<
+                                    mitm::bsd::IBsdMitmService,
+                                    mitm::bsd::BsdMitmService>(decltype(fsrv)(fsrv), client_info),
+                                fsrv);
+                            LOG_INFO("BSD AcceptMitmImpl result: 0x%x (session #%u)", rc.GetValue(), session_id);
+                        }
                         return rc;
 
                     default:

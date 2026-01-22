@@ -129,9 +129,16 @@ static os::Mutex g_socket_info_mutex{false};
 BsdMitmService::BsdMitmService(std::shared_ptr<::Service>&& s, const sm::MitmProcessInfo& c)
     : MitmServiceImplBase(std::forward<std::shared_ptr<::Service>>(s), c)
     , m_client_pid(c.process_id.value)
+    , m_session_id(++s_next_session_id)
 {
-    LOG_INFO("BSD MITM service created for program_id=0x%016lx, pid=%lu, fwd_srv=%p",
-             c.program_id.value, m_client_pid, m_forward_service.get());
+    // Get more info about the forward service
+    ::Service* fwd = m_forward_service.get();
+    Handle session_handle = fwd ? fwd->session : INVALID_HANDLE;
+    bool is_domain = fwd ? serviceIsDomain(fwd) : false;
+    u32 object_id = fwd ? fwd->object_id : 0;
+
+    LOG_INFO("[BSD#%u] CONSTRUCTOR: program_id=0x%016lx, pid=%lu, fwd_srv=%p (handle=0x%x, domain=%d, object_id=%u)",
+             m_session_id, c.program_id.value, m_client_pid, fwd, session_handle, is_domain, object_id);
 }
 
 /**
@@ -146,7 +153,10 @@ BsdMitmService::BsdMitmService(std::shared_ptr<::Service>&& s, const sm::MitmPro
  * all tracked sockets for this client to prevent resource leaks.
  */
 BsdMitmService::~BsdMitmService() {
-    LOG_INFO("BSD MITM service destroyed for pid=%lu", m_client_pid);
+    ::Service* fwd = m_forward_service.get();
+    Handle session_handle = fwd ? fwd->session : INVALID_HANDLE;
+    LOG_INFO("[BSD#%u] DESTRUCTOR: pid=%lu, fwd_srv=%p (handle=0x%x), commands_received=%u",
+             m_session_id, m_client_pid, fwd, session_handle, m_command_count);
     // TODO: Story 8.4 - Cleanup tracked proxy sockets for this client
 }
 
@@ -179,28 +189,41 @@ bool BsdMitmService::ShouldMitm(const sm::MitmProcessInfo& client_info) {
         return false;
     }
 
-    // Games/applications start at 0100000000010000
-    // System titles are below this threshold
-    constexpr u64 MIN_APPLICATION_ID = 0x0100000000010000ULL;
+    // =========================================================================
+    // CRITICAL WARNING - DO NOT INTERCEPT ALL BSD SESSIONS!
+    // =========================================================================
+    //
+    // Unlike Ryujinx (emulator), the real Nintendo Switch CANNOT handle having
+    // all BSD sessions intercepted. Attempting to MITM all BSD traffic causes
+    // the system to freeze completely during RegisterClient.
+    //
+    // The fundamental problem is the startup order:
+    // - On Switch: Game opens BSD BEFORE LDN (we can't intercept BSD early)
+    // - On Ryujinx: LDN initializes BEFORE BSD sockets are created
+    //
+    // Current limitation: We can only intercept BSD sessions opened AFTER
+    // the game has opened ldn:u. This means BSD sessions opened before LDN
+    // are not intercepted, and their sockets won't be proxied.
+    //
+    // TODO: Find an alternative approach that doesn't require intercepting
+    // all BSD sessions. Possible solutions:
+    // - Hook at a different level (kernel?)
+    // - Use a different interception mechanism
+    // - Coordinate with LDN MITM differently
+    // =========================================================================
 
-    // Upper bound - titles above 0200000000000000 are not applications
-    // (This range is used for other purposes)
-    constexpr u64 MAX_APPLICATION_ID = 0x01FFFFFFFFFFFFFFULL;
+    auto& shared_state = ams::mitm::ldn::SharedState::GetInstance();
+    u64 pid = client_info.process_id.value;
 
-    u64 program_id = client_info.program_id.value;
-    bool is_app = (program_id >= MIN_APPLICATION_ID && program_id <= MAX_APPLICATION_ID);
-
-    // Intercept all application processes (games, homebrew)
-    // Skip system services to save memory
-    if (is_app) {
-        LOG_INFO("BSD ShouldMitm: intercepting application pid=%lu, program_id=0x%016lx",
-                 client_info.process_id.value, program_id);
-    } else {
-        LOG_VERBOSE("BSD ShouldMitm: skipping system service pid=%lu, program_id=0x%016lx",
-                    client_info.process_id.value, program_id);
+    if (!shared_state.IsLdnPid(pid)) {
+        LOG_VERBOSE("BSD ShouldMitm: skipping pid=%lu (LDN not yet opened), program_id=0x%016lx",
+                    pid, client_info.program_id.value);
+        return false;
     }
 
-    return is_app;
+    LOG_INFO("BSD ShouldMitm: intercepting pid=%lu (LDN is active), program_id=0x%016lx",
+             pid, client_info.program_id.value);
+    return true;
 }
 
 // =============================================================================
@@ -240,17 +263,21 @@ bool BsdMitmService::ShouldMitm(const sm::MitmProcessInfo& client_info) {
  * @return Result code from forwarding to real service
  */
 Result BsdMitmService::RegisterClient(
-    sf::Out<u64> out_pid,
+    sf::Out<u64> out_result,
     const ryu_ldn::bsd::LibraryConfigData& config,
     const sf::ClientProcessId& client_pid,
     u64 tmem_size,
     sf::CopyHandle&& transfer_memory)
 {
-    // Log detailed info about the call
-    // client_pid comes from IPC send_pid mechanism (sf extracts it from kernel)
-    LOG_INFO("BSD RegisterClient: client_pid=%lu, tmem_size=%lu, tmem_handle=0x%x",
-             client_pid.GetValue().value, tmem_size,
-             transfer_memory.GetOsHandle());
+    m_command_count++;
+
+    Handle tmem_handle = transfer_memory.GetOsHandle();
+    LOG_INFO("[BSD#%u] RegisterClient ENTRY: cmd_count=%u, client_pid=%lu, tmem_size=%lu, tmem_handle=0x%x",
+             m_session_id, m_command_count, client_pid.GetValue().value, tmem_size, tmem_handle);
+
+    if (tmem_handle == INVALID_HANDLE) {
+        LOG_ERROR("BSD RegisterClient: INVALID transfer memory handle!");
+    }
 
     LOG_VERBOSE("BSD RegisterClient config: version=%u, tcp_tx=%u, tcp_rx=%u, udp_tx=%u, udp_rx=%u, sb_eff=%u",
                 config.version, config.tcp_tx_buf_size, config.tcp_rx_buf_size,
@@ -264,23 +291,30 @@ Result BsdMitmService::RegisterClient(
         u64 tmem_size;
     } forward_input = { config, 0, tmem_size };
 
-    // Forward to the real service
-    // RegisterClient returns u64 pid, not s32 errno (it's special - cmd 0)
-    u64 pid_out = 0xDEADBEEF;  // Sentinel to detect if service writes to it
-    LOG_INFO("BSD RegisterClient: forwarding to real service (fwd_srv=%p)", m_forward_service.get());
+    // Forward to the real service - returns u64 (libnx expects this)
+    u64 result_out = 0;
 
     Result rc = serviceMitmDispatchInOut(
-        m_forward_service.get(), 0, forward_input, pid_out,
+        m_forward_service.get(), 0, forward_input, result_out,
         .in_send_pid = true,
         .in_num_handles = 1,
-        .in_handles = { transfer_memory.GetOsHandle() },
+        .in_handles = { tmem_handle },
         .override_pid = m_client_pid,
     );
 
-    LOG_INFO("BSD RegisterClient: forward returned rc=0x%x, pid_out=0x%lx (%lu)",
-             rc.GetValue(), pid_out, pid_out);
+    LOG_INFO("[BSD#%u] RegisterClient: forward returned rc=0x%x, result=0x%016lx",
+             m_session_id, rc.GetValue(), result_out);
 
-    out_pid.SetValue(pid_out);
+    // CRITICAL: Detach the handle to prevent sf::CopyHandle destructor from closing it.
+    // The handle was forwarded to the real BSD service via serviceMitmDispatchInOut,
+    // which creates a kernel-level copy. However, sf::CopyHandle is marked as "managed"
+    // by Atmosphere's command serialization, meaning its destructor would close our
+    // local handle. Since we're a MITM proxy, we must NOT close handles that belong
+    // to the client process - we only forward them.
+    transfer_memory.Detach();
+
+    out_result.SetValue(result_out);
+    LOG_INFO("[BSD#%u] RegisterClient EXIT: returning rc=0x%x, result=0x%lx", m_session_id, rc.GetValue(), result_out);
     R_RETURN(rc);
 }
 
@@ -305,7 +339,8 @@ Result BsdMitmService::RegisterClient(
  * @return Result code from forwarding
  */
 Result BsdMitmService::StartMonitoring(sf::Out<s32> out_errno, u64 pid) {
-    LOG_INFO("BSD StartMonitoring for pid=%lu", pid);
+    m_command_count++;
+    LOG_INFO("[BSD#%u] StartMonitoring ENTRY: cmd_count=%u, pid=%lu", m_session_id, m_command_count, pid);
 
     s32 errno_out = 0;
     Result rc = serviceMitmDispatchInOut(
@@ -313,6 +348,7 @@ Result BsdMitmService::StartMonitoring(sf::Out<s32> out_errno, u64 pid) {
     );
 
     out_errno.SetValue(errno_out);
+    LOG_INFO("[BSD#%u] StartMonitoring EXIT: rc=0x%x, errno=%d", m_session_id, rc.GetValue(), errno_out);
     R_RETURN(rc);
 }
 
@@ -357,7 +393,8 @@ Result BsdMitmService::Socket(
     sf::Out<s32> out_errno, sf::Out<s32> out_fd,
     s32 domain, s32 type, s32 protocol)
 {
-    LOG_INFO("BSD Socket domain=%d type=%d protocol=%d", domain, type, protocol);
+    m_command_count++;
+    LOG_INFO("[BSD#%u] Socket ENTRY: cmd_count=%u, domain=%d, type=%d, protocol=%d", m_session_id, m_command_count, domain, type, protocol);
 
     struct {
         s32 domain;
@@ -377,7 +414,7 @@ Result BsdMitmService::Socket(
     out_errno.SetValue(out.errno_val);
     out_fd.SetValue(out.fd);
 
-    LOG_VERBOSE("BSD Socket result: rc=0x%x fd=%d errno=%d", rc.GetValue(), out.fd, out.errno_val);
+    LOG_INFO("[BSD#%u] Socket result: rc=0x%x fd=%d errno=%d", m_session_id, rc.GetValue(), out.fd, out.errno_val);
 
     // Track socket info for later Bind/Connect calls
     if (R_SUCCEEDED(rc) && out.errno_val == 0 && out.fd >= 0) {
@@ -428,7 +465,8 @@ Result BsdMitmService::SocketExempt(
     sf::Out<s32> out_errno, sf::Out<s32> out_fd,
     s32 domain, s32 type, s32 protocol)
 {
-    LOG_VERBOSE("BSD SocketExempt domain=%d type=%d protocol=%d", domain, type, protocol);
+    m_command_count++;
+    LOG_INFO("[BSD#%u] SocketExempt ENTRY: cmd_count=%u, domain=%d, type=%d, protocol=%d", m_session_id, m_command_count, domain, type, protocol);
 
     struct {
         s32 domain;
@@ -500,7 +538,8 @@ Result BsdMitmService::Open(
     sf::Out<s32> out_errno, sf::Out<s32> out_fd,
     const sf::InBuffer& path)
 {
-    LOG_VERBOSE("BSD Open path_size=%zu", path.GetSize());
+    m_command_count++;
+    LOG_INFO("[BSD#%u] Open ENTRY: cmd_count=%u, path_size=%zu", m_session_id, m_command_count, path.GetSize());
 
     struct {
         s32 errno_val;
@@ -551,7 +590,8 @@ Result BsdMitmService::Close(
     sf::Out<s32> out_errno,
     s32 fd)
 {
-    LOG_VERBOSE("BSD Close fd=%d", fd);
+    m_command_count++;
+    LOG_INFO("[BSD#%u] Close ENTRY: cmd_count=%u, fd=%d", m_session_id, m_command_count, fd);
 
     // Check if this is a proxy socket
     {
@@ -608,7 +648,8 @@ Result BsdMitmService::DuplicateSocket(
     sf::Out<s32> out_errno, sf::Out<s32> out_fd,
     s32 fd, u64 target_pid)
 {
-    LOG_VERBOSE("BSD DuplicateSocket fd=%d target_pid=%lu", fd, target_pid);
+    m_command_count++;
+    LOG_INFO("[BSD#%u] DuplicateSocket ENTRY: cmd_count=%u, fd=%d, target_pid=%lu", m_session_id, m_command_count, fd, target_pid);
 
     struct {
         s32 fd;
@@ -627,6 +668,168 @@ Result BsdMitmService::DuplicateSocket(
 
     out_errno.SetValue(out.errno_val);
     out_fd.SetValue(out.new_fd);
+    R_RETURN(rc);
+}
+
+/**
+ * @brief Initialize BSD socket library (shared memory variant) (Command 33)
+ *
+ * Same as RegisterClient but the work-buffer is allocated in the sysmodule's
+ * memory instead of using TransferMemory from the client. Available from 10.0.0+.
+ *
+ * ## IPC Interface (from switchbrew)
+ *
+ * Same input/output as RegisterClient except this doesn't take an input handle.
+ * Output: s32 bsd_errno (0 on success)
+ *
+ * @param[out] out_errno BSD errno on failure (0 on success)
+ * @param[in] config LibraryConfigData with socket buffer settings
+ * @param[in] client_pid Client's process ID
+ * @param[in] tmem_size Size for work buffer
+ *
+ * @return Result code from forwarding to real service
+ */
+Result BsdMitmService::RegisterClientShared(
+    sf::Out<u64> out_result,
+    const ryu_ldn::bsd::LibraryConfigData& config,
+    const sf::ClientProcessId& client_pid,
+    u64 tmem_size)
+{
+    m_command_count++;
+
+    LOG_INFO("[BSD#%u] RegisterClientShared ENTRY: cmd_count=%u, client_pid=%lu, tmem_size=%lu",
+             m_session_id, m_command_count, client_pid.GetValue().value, tmem_size);
+
+    LOG_VERBOSE("BSD RegisterClientShared config: version=%u, tcp_tx=%u, tcp_rx=%u, udp_tx=%u, udp_rx=%u, sb_eff=%u",
+                config.version, config.tcp_tx_buf_size, config.tcp_rx_buf_size,
+                config.udp_tx_buf_size, config.udp_rx_buf_size, config.sb_efficiency);
+
+    // Reconstruct the input structure - same as RegisterClient but no handle
+    // Layout: [config 32 bytes][pid_placeholder 8 bytes][tmem_size 8 bytes]
+    const struct {
+        ryu_ldn::bsd::LibraryConfigData config;
+        u64 pid_placeholder;
+        u64 tmem_size;
+    } forward_input = { config, 0, tmem_size };
+
+    // Forward to real service - returns u64
+    u64 result_out = 0;
+
+    Result rc = serviceMitmDispatchInOut(
+        m_forward_service.get(), 33, forward_input, result_out,
+        .in_send_pid = true,
+        .override_pid = m_client_pid,
+    );
+
+    LOG_INFO("[BSD#%u] RegisterClientShared: forward returned rc=0x%x, result=0x%lx",
+             m_session_id, rc.GetValue(), result_out);
+
+    out_result.SetValue(result_out);
+    R_RETURN(rc);
+}
+
+// =============================================================================
+// Commands 28-32 (Resource Statistics and Multi-Message)
+// =============================================================================
+
+Result BsdMitmService::GetResourceStatistics(
+    sf::Out<s32> out_errno,
+    sf::OutBuffer out_stats,
+    u64 pid)
+{
+    m_command_count++;
+    LOG_INFO("BSD GetResourceStatistics: pid=%lu", pid);
+
+    s32 errno_out = 0;
+    Result rc = serviceMitmDispatchInOut(
+        m_forward_service.get(), 28, pid, errno_out,
+        .buffer_attrs = { SfBufferAttr_Out | SfBufferAttr_HipcMapAlias },
+        .buffers = { { out_stats.GetPointer(), out_stats.GetSize() } },
+    );
+
+    out_errno.SetValue(errno_out);
+    R_RETURN(rc);
+}
+
+Result BsdMitmService::RecvMMsg(
+    sf::Out<s32> out_errno, sf::Out<s32> out_count,
+    s32 fd, s32 vlen, s32 flags, s32 timeout,
+    sf::OutAutoSelectBuffer out_data)
+{
+    m_command_count++;
+    LOG_VERBOSE("BSD RecvMMsg: fd=%d, vlen=%d, flags=%d, timeout=%d", fd, vlen, flags, timeout);
+
+    struct { s32 fd; s32 vlen; s32 flags; s32 timeout; } in = { fd, vlen, flags, timeout };
+    struct { s32 errno_val; s32 count; } out = {};
+
+    Result rc = serviceMitmDispatchInOut(
+        m_forward_service.get(), 29, in, out,
+        .buffer_attrs = { SfBufferAttr_Out | SfBufferAttr_HipcAutoSelect },
+        .buffers = { { out_data.GetPointer(), out_data.GetSize() } },
+    );
+
+    out_errno.SetValue(out.errno_val);
+    out_count.SetValue(out.count);
+    R_RETURN(rc);
+}
+
+Result BsdMitmService::SendMMsg(
+    sf::Out<s32> out_errno, sf::Out<s32> out_count,
+    s32 fd, s32 vlen, s32 flags,
+    const sf::InAutoSelectBuffer& in_data)
+{
+    m_command_count++;
+    LOG_VERBOSE("BSD SendMMsg: fd=%d, vlen=%d, flags=%d", fd, vlen, flags);
+
+    struct { s32 fd; s32 vlen; s32 flags; } in = { fd, vlen, flags };
+    struct { s32 errno_val; s32 count; } out = {};
+
+    Result rc = serviceMitmDispatchInOut(
+        m_forward_service.get(), 30, in, out,
+        .buffer_attrs = { SfBufferAttr_In | SfBufferAttr_HipcAutoSelect },
+        .buffers = { { const_cast<void*>(static_cast<const void*>(in_data.GetPointer())), in_data.GetSize() } },
+    );
+
+    out_errno.SetValue(out.errno_val);
+    out_count.SetValue(out.count);
+    R_RETURN(rc);
+}
+
+Result BsdMitmService::EventFd(
+    sf::Out<s32> out_errno, sf::Out<s32> out_fd,
+    u64 initval, s32 flags)
+{
+    m_command_count++;
+    LOG_INFO("BSD EventFd: initval=%lu, flags=%d", initval, flags);
+
+    struct { u64 initval; s32 flags; u32 _pad; } in = { initval, flags, 0 };
+    struct { s32 errno_val; s32 fd; } out = {};
+
+    Result rc = serviceMitmDispatchInOut(
+        m_forward_service.get(), 31, in, out
+    );
+
+    out_errno.SetValue(out.errno_val);
+    out_fd.SetValue(out.fd);
+    R_RETURN(rc);
+}
+
+Result BsdMitmService::RegisterResourceStatisticsName(
+    sf::Out<s32> out_errno,
+    u64 pid,
+    const sf::InBuffer& name)
+{
+    m_command_count++;
+    LOG_INFO("BSD RegisterResourceStatisticsName: pid=%lu", pid);
+
+    s32 errno_out = 0;
+    Result rc = serviceMitmDispatchInOut(
+        m_forward_service.get(), 32, pid, errno_out,
+        .buffer_attrs = { SfBufferAttr_In | SfBufferAttr_HipcMapAlias },
+        .buffers = { { const_cast<void*>(static_cast<const void*>(name.GetPointer())), name.GetSize() } },
+    );
+
+    out_errno.SetValue(errno_out);
     R_RETURN(rc);
 }
 
@@ -668,7 +871,8 @@ Result BsdMitmService::Bind(
     s32 fd,
     const sf::InAutoSelectBuffer& addr)
 {
-    LOG_VERBOSE("BSD Bind fd=%d addr_size=%zu", fd, addr.GetSize());
+    m_command_count++;
+    LOG_INFO("[BSD#%u] Bind ENTRY: cmd_count=%u, fd=%d, addr_size=%zu", m_session_id, m_command_count, fd, addr.GetSize());
 
     // Check if this is an LDN address (10.114.x.x)
     if (addr.GetSize() >= sizeof(ryu_ldn::bsd::SockAddrIn)) {
@@ -806,7 +1010,8 @@ Result BsdMitmService::Connect(
     s32 fd,
     const sf::InAutoSelectBuffer& addr)
 {
-    LOG_VERBOSE("BSD Connect fd=%d addr_size=%zu", fd, addr.GetSize());
+    m_command_count++;
+    LOG_INFO("[BSD#%u] Connect ENTRY: cmd_count=%u, fd=%d, addr_size=%zu", m_session_id, m_command_count, fd, addr.GetSize());
 
     // Check if this is an LDN address (10.114.x.x)
     if (addr.GetSize() >= sizeof(ryu_ldn::bsd::SockAddrIn)) {
@@ -949,7 +1154,8 @@ Result BsdMitmService::Accept(
     s32 fd,
     sf::OutAutoSelectBuffer addr_out)
 {
-    LOG_VERBOSE("BSD Accept fd=%d", fd);
+    m_command_count++;
+    LOG_INFO("[BSD#%u] Accept ENTRY: cmd_count=%u, fd=%d", m_session_id, m_command_count, fd);
 
     struct {
         s32 errno_val;
@@ -998,7 +1204,8 @@ Result BsdMitmService::GetPeerName(
     s32 fd,
     sf::OutAutoSelectBuffer addr_out)
 {
-    LOG_VERBOSE("BSD GetPeerName fd=%d", fd);
+    m_command_count++;
+    LOG_VERBOSE("[BSD#%u] GetPeerName: cmd_count=%u, fd=%d", m_session_id, m_command_count, fd);
 
     // Check if this is a proxy socket
     auto& manager = ProxySocketManager::GetInstance();
@@ -1060,7 +1267,8 @@ Result BsdMitmService::GetSockName(
     s32 fd,
     sf::OutAutoSelectBuffer addr_out)
 {
-    LOG_VERBOSE("BSD GetSockName fd=%d", fd);
+    m_command_count++;
+    LOG_VERBOSE("[BSD#%u] GetSockName: cmd_count=%u, fd=%d", m_session_id, m_command_count, fd);
 
     // Check if this is a proxy socket
     auto& manager = ProxySocketManager::GetInstance();
@@ -1138,7 +1346,8 @@ Result BsdMitmService::Send(
     s32 fd, s32 flags,
     const sf::InAutoSelectBuffer& buffer)
 {
-    LOG_VERBOSE("BSD Send fd=%d flags=%d size=%zu", fd, flags, buffer.GetSize());
+    m_command_count++;
+    LOG_VERBOSE("[BSD#%u] Send: cmd_count=%u, fd=%d, flags=%d, size=%zu", m_session_id, m_command_count, fd, flags, buffer.GetSize());
 
     // Check if this is a proxy socket
     bool is_proxy = false;
@@ -1239,8 +1448,9 @@ Result BsdMitmService::SendTo(
     const sf::InAutoSelectBuffer& buffer,
     const sf::InAutoSelectBuffer& addr)
 {
-    LOG_VERBOSE("BSD SendTo fd=%d flags=%d size=%zu addr_size=%zu",
-                fd, flags, buffer.GetSize(), addr.GetSize());
+    m_command_count++;
+    LOG_VERBOSE("[BSD#%u] SendTo: cmd_count=%u, fd=%d, flags=%d, size=%zu, addr_size=%zu",
+                m_session_id, m_command_count, fd, flags, buffer.GetSize(), addr.GetSize());
 
     // Check if this is a proxy socket or if dest is LDN
     bool is_proxy = false;
@@ -1391,7 +1601,8 @@ Result BsdMitmService::Recv(
     s32 fd, s32 flags,
     sf::OutAutoSelectBuffer buffer)
 {
-    LOG_VERBOSE("BSD Recv fd=%d flags=%d buf_size=%zu", fd, flags, buffer.GetSize());
+    m_command_count++;
+    LOG_VERBOSE("[BSD#%u] Recv: cmd_count=%u, fd=%d, flags=%d, buf_size=%zu", m_session_id, m_command_count, fd, flags, buffer.GetSize());
 
     // Check if this is a proxy socket
     bool is_proxy = false;
@@ -1485,7 +1696,8 @@ Result BsdMitmService::RecvFrom(
     sf::OutAutoSelectBuffer buffer,
     sf::OutAutoSelectBuffer addr_out)
 {
-    LOG_VERBOSE("BSD RecvFrom fd=%d flags=%d buf_size=%zu", fd, flags, buffer.GetSize());
+    m_command_count++;
+    LOG_VERBOSE("[BSD#%u] RecvFrom: cmd_count=%u, fd=%d, flags=%d, buf_size=%zu", m_session_id, m_command_count, fd, flags, buffer.GetSize());
 
     // Check if this is a proxy socket
     bool is_proxy = false;
@@ -1582,7 +1794,8 @@ Result BsdMitmService::Write(
     s32 fd,
     const sf::InAutoSelectBuffer& buffer)
 {
-    LOG_VERBOSE("BSD Write fd=%d size=%zu", fd, buffer.GetSize());
+    m_command_count++;
+    LOG_VERBOSE("[BSD#%u] Write: cmd_count=%u, fd=%d, size=%zu", m_session_id, m_command_count, fd, buffer.GetSize());
 
     // TODO: Story 8.6 - Same as Send for LDN sockets
 
@@ -1635,7 +1848,8 @@ Result BsdMitmService::Read(
     s32 fd,
     sf::OutAutoSelectBuffer buffer)
 {
-    LOG_VERBOSE("BSD Read fd=%d buf_size=%zu", fd, buffer.GetSize());
+    m_command_count++;
+    LOG_VERBOSE("[BSD#%u] Read: cmd_count=%u, fd=%d, buf_size=%zu", m_session_id, m_command_count, fd, buffer.GetSize());
 
     // TODO: Story 8.6 - Same as Recv for LDN sockets
 
@@ -1709,7 +1923,8 @@ Result BsdMitmService::Select(
     sf::OutAutoSelectBuffer writefds_out,
     sf::OutAutoSelectBuffer errorfds_out)
 {
-    LOG_VERBOSE("BSD Select nfds=%d", nfds);
+    m_command_count++;
+    LOG_VERBOSE("[BSD#%u] Select: cmd_count=%u, nfds=%d", m_session_id, m_command_count, nfds);
 
     // fd_set is a bitmask array: each bit represents an fd
     // FD_SETSIZE on Switch is typically 1024, so max ~128 bytes per set
@@ -1888,7 +2103,8 @@ Result BsdMitmService::Poll(
     sf::OutAutoSelectBuffer fds_out,
     s32 nfds, s32 timeout)
 {
-    LOG_VERBOSE("BSD Poll nfds=%d timeout=%d", nfds, timeout);
+    m_command_count++;
+    LOG_VERBOSE("[BSD#%u] Poll: cmd_count=%u, nfds=%d, timeout=%d", m_session_id, m_command_count, nfds, timeout);
 
     // Copy input to output first
     if (fds_out.GetSize() >= fds_in.GetSize()) {
@@ -2045,7 +2261,8 @@ Result BsdMitmService::Sysctl(
     sf::OutBuffer old_val_out,
     const sf::InBuffer& new_val)
 {
-    LOG_VERBOSE("BSD Sysctl");
+    m_command_count++;
+    LOG_VERBOSE("[BSD#%u] Sysctl: cmd_count=%u", m_session_id, m_command_count);
 
     s32 errno_out = 0;
     Result rc = serviceMitmDispatchOut(
@@ -2102,7 +2319,8 @@ Result BsdMitmService::Ioctl(
     const sf::InAutoSelectBuffer& buf_in,
     sf::OutAutoSelectBuffer buf_out)
 {
-    LOG_VERBOSE("BSD Ioctl fd=%d request=0x%08x bufcount=%u", fd, request, bufcount);
+    m_command_count++;
+    LOG_VERBOSE("[BSD#%u] Ioctl: cmd_count=%u, fd=%d, request=0x%08x, bufcount=%u", m_session_id, m_command_count, fd, request, bufcount);
 
     // Check if this is a proxy socket and handle FIONREAD
     auto& manager = ProxySocketManager::GetInstance();
@@ -2185,7 +2403,8 @@ Result BsdMitmService::Fcntl(
     sf::Out<s32> out_errno, sf::Out<s32> out_result,
     s32 fd, s32 cmd, s32 arg)
 {
-    LOG_VERBOSE("BSD Fcntl fd=%d cmd=%d arg=%d", fd, cmd, arg);
+    m_command_count++;
+    LOG_VERBOSE("[BSD#%u] Fcntl: cmd_count=%u, fd=%d, cmd=%d, arg=%d", m_session_id, m_command_count, fd, cmd, arg);
 
     // Check if this is a proxy socket and handle non-blocking flag
     auto& manager = ProxySocketManager::GetInstance();
@@ -2268,7 +2487,8 @@ Result BsdMitmService::GetSockOpt(
     s32 fd, s32 level, s32 optname,
     sf::OutAutoSelectBuffer optval)
 {
-    LOG_VERBOSE("BSD GetSockOpt fd=%d level=%d optname=%d", fd, level, optname);
+    m_command_count++;
+    LOG_VERBOSE("[BSD#%u] GetSockOpt: cmd_count=%u, fd=%d, level=%d, optname=%d", m_session_id, m_command_count, fd, level, optname);
 
     // Check if this is a proxy socket
     auto& manager = ProxySocketManager::GetInstance();
@@ -2338,7 +2558,8 @@ Result BsdMitmService::SetSockOpt(
     s32 fd, s32 level, s32 optname,
     const sf::InAutoSelectBuffer& optval)
 {
-    LOG_VERBOSE("BSD SetSockOpt fd=%d level=%d optname=%d", fd, level, optname);
+    m_command_count++;
+    LOG_VERBOSE("[BSD#%u] SetSockOpt: cmd_count=%u, fd=%d, level=%d, optname=%d", m_session_id, m_command_count, fd, level, optname);
 
     // Check if this is a proxy socket
     auto& manager = ProxySocketManager::GetInstance();
@@ -2402,7 +2623,8 @@ Result BsdMitmService::Listen(
     sf::Out<s32> out_errno,
     s32 fd, s32 backlog)
 {
-    LOG_VERBOSE("BSD Listen fd=%d backlog=%d", fd, backlog);
+    m_command_count++;
+    LOG_INFO("[BSD#%u] Listen ENTRY: cmd_count=%u, fd=%d, backlog=%d", m_session_id, m_command_count, fd, backlog);
 
     struct {
         s32 fd;
@@ -2442,7 +2664,8 @@ Result BsdMitmService::Shutdown(
     sf::Out<s32> out_errno,
     s32 fd, s32 how)
 {
-    LOG_VERBOSE("BSD Shutdown fd=%d how=%d", fd, how);
+    m_command_count++;
+    LOG_INFO("[BSD#%u] Shutdown ENTRY: cmd_count=%u, fd=%d, how=%d", m_session_id, m_command_count, fd, how);
 
     struct {
         s32 fd;
@@ -2482,7 +2705,8 @@ Result BsdMitmService::ShutdownAllSockets(
     sf::Out<s32> out_errno,
     u64 pid, s32 how)
 {
-    LOG_VERBOSE("BSD ShutdownAllSockets pid=%lu how=%d", pid, how);
+    m_command_count++;
+    LOG_INFO("[BSD#%u] ShutdownAllSockets ENTRY: cmd_count=%u, pid=%lu, how=%d", m_session_id, m_command_count, pid, how);
 
     struct {
         u64 pid;

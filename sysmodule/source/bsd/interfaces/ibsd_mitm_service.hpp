@@ -47,14 +47,14 @@
     /*        + CopyHandle(tmem). Total raw data = 48 bytes.                                                          */\
     /* Note: sf sorts InData by alignment (ascending). LibraryConfigData align=4 comes first, then                    */\
     /*       ClientProcessId and tmem_size both align=8 in declaration order. This matches libnx layout.              */\
-    /* Output: u64 pid (NOT errno - RegisterClient is special)                                                        */\
+    /* Output: u64 (real service returns 8 bytes - libnx treats as pid, low 32 bits are errno)                        */\
     AMS_SF_METHOD_INFO(C, H, 0,   Result, RegisterClient,                                                               \
-        (ams::sf::Out<u64> out_pid,                                                                                     \
+        (ams::sf::Out<u64> out_result,                                                                                  \
          const ryu_ldn::bsd::LibraryConfigData &config,                                                                 \
          const ams::sf::ClientProcessId &client_pid,                                                                    \
          u64 tmem_size,                                                                                                 \
          ams::sf::CopyHandle &&transfer_memory),                                                                        \
-        (out_pid, config, client_pid, tmem_size, std::move(transfer_memory)))                                                       \
+        (out_result, config, client_pid, tmem_size, std::move(transfer_memory)))                                                       \
     /* Cmd 1: StartMonitoring - Start socket monitoring */                                                              \
     AMS_SF_METHOD_INFO(C, H, 1,   Result, StartMonitoring,                                                              \
         (ams::sf::Out<s32> out_errno, u64 pid),                                                                         \
@@ -217,7 +217,50 @@
     AMS_SF_METHOD_INFO(C, H, 27,  Result, DuplicateSocket,                                                              \
         (ams::sf::Out<s32> out_errno, ams::sf::Out<s32> out_fd,                                                         \
          s32 fd, u64 target_pid),                                                                                       \
-        (out_errno, out_fd, fd, target_pid))
+        (out_errno, out_fd, fd, target_pid))                                                                            \
+    /* Cmd 28: GetResourceStatistics - Get socket resource statistics */                                               \
+    AMS_SF_METHOD_INFO(C, H, 28,  Result, GetResourceStatistics,                                                        \
+        (ams::sf::Out<s32> out_errno,                                                                                   \
+         ams::sf::OutBuffer out_stats,                                                                                  \
+         u64 pid),                                                                                                      \
+        (out_errno, out_stats, pid))                                                                                    \
+    /* Cmd 29: RecvMMsg - Receive multiple messages [3.0.0+] */                                                        \
+    AMS_SF_METHOD_INFO(C, H, 29,  Result, RecvMMsg,                                                                     \
+        (ams::sf::Out<s32> out_errno, ams::sf::Out<s32> out_count,                                                      \
+         s32 fd, s32 vlen, s32 flags, s32 timeout,                                                                      \
+         ams::sf::OutAutoSelectBuffer out_data),                                                                        \
+        (out_errno, out_count, fd, vlen, flags, timeout, out_data),                                                     \
+        hos::Version_3_0_0)                                                                                             \
+    /* Cmd 30: SendMMsg - Send multiple messages [3.0.0+] */                                                           \
+    AMS_SF_METHOD_INFO(C, H, 30,  Result, SendMMsg,                                                                     \
+        (ams::sf::Out<s32> out_errno, ams::sf::Out<s32> out_count,                                                      \
+         s32 fd, s32 vlen, s32 flags,                                                                                   \
+         const ams::sf::InAutoSelectBuffer &in_data),                                                                   \
+        (out_errno, out_count, fd, vlen, flags, in_data),                                                               \
+        hos::Version_3_0_0)                                                                                             \
+    /* Cmd 31: EventFd - Create event file descriptor [7.0.0+] */                                                      \
+    AMS_SF_METHOD_INFO(C, H, 31,  Result, EventFd,                                                                      \
+        (ams::sf::Out<s32> out_errno, ams::sf::Out<s32> out_fd,                                                         \
+         u64 initval, s32 flags),                                                                                       \
+        (out_errno, out_fd, initval, flags),                                                                            \
+        hos::Version_7_0_0)                                                                                             \
+    /* Cmd 32: RegisterResourceStatisticsName - Register stats name [15.0.0+] */                                       \
+    AMS_SF_METHOD_INFO(C, H, 32,  Result, RegisterResourceStatisticsName,                                               \
+        (ams::sf::Out<s32> out_errno,                                                                                   \
+         u64 pid,                                                                                                       \
+         const ams::sf::InBuffer &name),                                                                                \
+        (out_errno, pid, name),                                                                                         \
+        hos::Version_15_0_0)                                                                                            \
+    /* Cmd 33: RegisterClientShared - Initialize socket library (10.0.0+, no TransferMemory) */                        \
+    /* Same input/output as RegisterClient except no input handle - work-buffer is in sysmodule memory instead */      \
+    /* Output: u64 (same as RegisterClient)                                                                           */\
+    AMS_SF_METHOD_INFO(C, H, 33,  Result, RegisterClientShared,                                                         \
+        (ams::sf::Out<u64> out_result,                                                                                  \
+         const ryu_ldn::bsd::LibraryConfigData &config,                                                                 \
+         const ams::sf::ClientProcessId &client_pid,                                                                    \
+         u64 tmem_size),                                                                                                \
+        (out_result, config, client_pid, tmem_size),                                                                    \
+        hos::Version_10_0_0)
 
 // Define the MITM interface with a unique ID
 AMS_SF_DEFINE_MITM_INTERFACE(ams::mitm::bsd, IBsdMitmService, AMS_RYU_BSD_MITM_SERVICE, 0xB5D50C81)

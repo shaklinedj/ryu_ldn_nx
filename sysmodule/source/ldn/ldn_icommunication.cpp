@@ -189,6 +189,13 @@ ICommunicationService::~ICommunicationService() {
     DisconnectP2pProxy();
     // Ensure server is disconnected
     DisconnectFromServer();
+
+    // NOTE: Do NOT clear LDN PID here!
+    // The game may open BSD sockets between LDN sessions (e.g., after connection
+    // failure and retry). If we clear the PID here, BSD MITM won't intercept
+    // those sockets. The PID remains set for the lifetime of the game process.
+    // When the game closes, the PID becomes stale but harmless (new processes
+    // will have different PIDs).
 }
 
 // ============================================================================

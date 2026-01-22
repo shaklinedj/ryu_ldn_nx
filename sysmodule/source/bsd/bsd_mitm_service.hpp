@@ -66,7 +66,7 @@ public:
     // =========================================================================
 
     Result RegisterClient(
-        sf::Out<u64> out_pid,
+        sf::Out<u64> out_result,
         const ryu_ldn::bsd::LibraryConfigData& config,
         const sf::ClientProcessId& client_pid,
         u64 tmem_size,
@@ -206,9 +206,45 @@ public:
         sf::Out<s32> out_errno, sf::Out<s32> out_fd,
         s32 fd, u64 target_pid);
 
+    Result GetResourceStatistics(
+        sf::Out<s32> out_errno,
+        sf::OutBuffer out_stats,
+        u64 pid);
+
+    Result RecvMMsg(
+        sf::Out<s32> out_errno, sf::Out<s32> out_count,
+        s32 fd, s32 vlen, s32 flags, s32 timeout,
+        sf::OutAutoSelectBuffer out_data);
+
+    Result SendMMsg(
+        sf::Out<s32> out_errno, sf::Out<s32> out_count,
+        s32 fd, s32 vlen, s32 flags,
+        const sf::InAutoSelectBuffer& in_data);
+
+    Result EventFd(
+        sf::Out<s32> out_errno, sf::Out<s32> out_fd,
+        u64 initval, s32 flags);
+
+    Result RegisterResourceStatisticsName(
+        sf::Out<s32> out_errno,
+        u64 pid,
+        const sf::InBuffer& name);
+
+    Result RegisterClientShared(
+        sf::Out<u64> out_result,
+        const ryu_ldn::bsd::LibraryConfigData& config,
+        const sf::ClientProcessId& client_pid,
+        u64 tmem_size);
+
 private:
     /// Client process ID for this session
     u64 m_client_pid;
+    /// Number of commands received on this session (for debugging)
+    u32 m_command_count = 0;
+    /// Unique session ID for debugging (assigned in constructor)
+    u32 m_session_id = 0;
+    /// Static counter for session IDs
+    static inline u32 s_next_session_id = 0;
 };
 
 // Verify interface compliance
