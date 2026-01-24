@@ -52,6 +52,7 @@
 #include "bsd_types.hpp"
 #include "../debug/log.hpp"
 #include "../ldn/ldn_shared_state.hpp"
+#include "../config/game_whitelist.hpp"
 
 // Atmosphere MITM dispatch macros for IPC forwarding
 #include <stratosphere/sf/sf_mitm_dispatch.h>
@@ -168,54 +169,49 @@ BsdMitmService::~BsdMitmService() {
  *
  * ## Strategy
  *
- * We intercept BSD sessions from games that SUPPORT LDN, detected by the
- * ProcessMonitor which checks NACP when games launch (before any services
- * are opened). Results are stored in SharedState.
- *
- * This solves the startup order problem:
- * - On Switch: Game opens BSD BEFORE LDN
- * - ProcessMonitor detects game launch and checks NACP
- * - When BSD ShouldMitm is called, we just check the cached result
- *
- * This is efficient because:
- * 1. We only intercept games with LDN support, not all applications
- * 2. System services are skipped
- * 3. Non-LDN games are not intercepted at all
- * 4. No blocking service calls in ShouldMitm (just cache lookup)
+ * We intercept BSD sessions from applications that are in the LDN
+ * game whitelist (fetched from Ryujinx server at startup).
  *
  * @param client_info Process information (PID, program ID, etc.)
- * @return true For games with LDN support, false otherwise
+ * @return true For games in the whitelist, false otherwise
  */
 bool BsdMitmService::ShouldMitm(const sm::MitmProcessInfo& client_info) {
     // Static counter to track all ShouldMitm calls for debugging
     static u32 s_call_count = 0;
     u32 call_id = ++s_call_count;
 
+    LOG_INFO("BSD ShouldMitm #%u: ENTER pid=%lu, program_id=0x%016lx",
+             call_id, client_info.process_id.value, client_info.program_id.value);
+
     // Our sysmodule's program_id - do not intercept ourselves
     constexpr u64 OUR_PROGRAM_ID = 0x4200000000000010ULL;
 
     // Skip our own sysmodule to avoid infinite recursion
     if (client_info.program_id.value == OUR_PROGRAM_ID) {
+        LOG_INFO("BSD ShouldMitm #%u: SKIP (our sysmodule)", call_id);
         return false;
     }
 
-    u64 pid = client_info.process_id.value;
     u64 program_id = client_info.program_id.value;
 
-    // Check if ProcessMonitor detected this game as having LDN support
-    // This was checked when the game launched (before BSD opened)
-    auto& shared_state = ams::mitm::ldn::SharedState::GetInstance();
-    bool is_ldn_game = shared_state.IsLdnGame(program_id);
-
-    LOG_INFO("BSD ShouldMitm #%u: pid=%lu, program_id=0x%016lx, is_ldn_game=%s",
-             call_id, pid, program_id, is_ldn_game ? "YES" : "NO");
-
-    if (!is_ldn_game) {
-        LOG_INFO("BSD ShouldMitm #%u: SKIPPING (game not detected as LDN)", call_id);
+    // Skip non-applications (system services, applets, etc.)
+    if (program_id < 0x0100000000000000ULL) {
+        LOG_INFO("BSD ShouldMitm #%u: SKIP (system 0x%016lx)", call_id, program_id);
         return false;
     }
 
-    LOG_INFO("BSD ShouldMitm #%u: INTERCEPTING (game supports LDN)", call_id);
+    LOG_INFO("BSD ShouldMitm #%u: checking whitelist for 0x%016lx...", call_id, program_id);
+
+    // Check if this game is in the LDN whitelist (searches file on-demand)
+    bool is_whitelisted = ryu_ldn::config::IsGameInWhitelist(program_id);
+
+    LOG_INFO("BSD ShouldMitm #%u: whitelist result=%s", call_id, is_whitelisted ? "YES" : "NO");
+
+    if (!is_whitelisted) {
+        return false;
+    }
+
+    LOG_INFO("BSD ShouldMitm #%u: INTERCEPTING", call_id);
     return true;
 }
 

@@ -24,6 +24,7 @@
 
 #include <stratosphere.hpp>
 #include <unordered_set>
+#include <vector>
 
 // Forward declare CommState to avoid circular includes
 // CommState is defined in ldn_types.hpp
@@ -143,37 +144,35 @@ public:
     bool IsLdnPid(u64 pid) const;
 
     // =========================================================================
-    // LDN Game Detection (for BSD MITM)
+    // LDN Game Whitelist (for BSD MITM)
     // =========================================================================
 
     /**
-     * @brief Add a program_id to the set of known LDN games
+     * @brief Load the LDN game whitelist
      *
-     * Called by ProcessMonitor when a game with LDN support starts.
-     * BSD ShouldMitm queries this to decide whether to intercept.
+     * Called at startup to load the list of games that support LDN.
+     * This replaces any existing whitelist.
      *
-     * @param program_id The program ID that supports LDN
+     * @param game_ids Vector of program IDs that support LDN
      */
-    void AddLdnGame(u64 program_id);
+    void LoadLdnWhitelist(const std::vector<u64>& game_ids);
 
     /**
-     * @brief Check if a program_id is a known LDN game
+     * @brief Check if a program_id is in the LDN whitelist
      *
      * Called by BSD ShouldMitm to decide whether to intercept.
      *
      * @param program_id The program ID to check
-     * @return true if this program supports LDN
+     * @return true if this program is in the whitelist
      */
     bool IsLdnGame(u64 program_id) const;
 
     /**
-     * @brief Remove a program_id from the set of known LDN games
+     * @brief Get the number of games in the whitelist
      *
-     * Called when a game exits (optional cleanup).
-     *
-     * @param program_id The program ID to remove
+     * @return Number of games loaded
      */
-    void RemoveLdnGame(u64 program_id);
+    size_t GetWhitelistSize() const;
 
     // =========================================================================
     // LDN State

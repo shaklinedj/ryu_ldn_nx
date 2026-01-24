@@ -22,8 +22,8 @@ extern "C" {
 #include "bsd/bsd_mitm_service.hpp"
 #include "config/config.hpp"
 #include "config/config_ipc_service.hpp"
+#include "config/game_whitelist.hpp"
 #include "debug/log.hpp"
-#include "process_monitor/process_monitor.hpp"
 
 namespace ams {
 
@@ -339,6 +339,9 @@ namespace ams {
             ryu_ldn::debug::g_logger.init(config.debug, ryu_ldn::config::LOG_PATH);
             LOG_INFO("ryu_ldn_nx sysmodule starting");
             LOG_INFO("Config loaded from %s", ryu_ldn::config::CONFIG_PATH);
+
+            // Load game whitelist from file (once at startup)
+            ryu_ldn::config::LoadWhitelist();
             LOG_VERBOSE("Server: %s:%u, TLS: %s", config.server.host, config.server.port,
                         config.server.use_tls ? "enabled" : "disabled");
 
@@ -352,9 +355,6 @@ namespace ams {
 
         void FinalizeSystemModule() {
             LOG_INFO("ryu_ldn_nx sysmodule shutting down");
-
-            // Stop process monitor
-            mitm::process_monitor::Finalize();
 
             ryu_ldn::debug::g_logger.flush();
             socketExit();
@@ -386,13 +386,6 @@ namespace ams {
     void Main() {
         // Initialize global configuration for IPC service
         ryu_ldn::ipc::InitializeConfig();
-
-        // ====================================================================
-        // Start process monitor (detects LDN games at launch)
-        // ====================================================================
-        LOG_INFO("Starting process monitor");
-        mitm::process_monitor::Initialize();
-        LOG_INFO("Process monitor started");
 
         // ====================================================================
         // Register ryu:cfg configuration service

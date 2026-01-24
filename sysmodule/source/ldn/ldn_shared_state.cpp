@@ -79,13 +79,16 @@ bool SharedState::IsLdnPid(u64 pid) const {
 }
 
 // =============================================================================
-// LDN Game Detection (for BSD MITM)
+// LDN Game Whitelist (for BSD MITM)
 // =============================================================================
 
-void SharedState::AddLdnGame(u64 program_id) {
+void SharedState::LoadLdnWhitelist(const std::vector<u64>& game_ids) {
     std::scoped_lock lk(m_mutex);
-    m_ldn_games.insert(program_id);
-    LOG_INFO("SharedState::AddLdnGame: 0x%016lx (total: %zu)", program_id, m_ldn_games.size());
+    m_ldn_games.clear();
+    for (u64 id : game_ids) {
+        m_ldn_games.insert(id);
+    }
+    LOG_INFO("SharedState::LoadLdnWhitelist: Loaded %zu games", m_ldn_games.size());
 }
 
 bool SharedState::IsLdnGame(u64 program_id) const {
@@ -93,10 +96,9 @@ bool SharedState::IsLdnGame(u64 program_id) const {
     return m_ldn_games.find(program_id) != m_ldn_games.end();
 }
 
-void SharedState::RemoveLdnGame(u64 program_id) {
+size_t SharedState::GetWhitelistSize() const {
     std::scoped_lock lk(m_mutex);
-    m_ldn_games.erase(program_id);
-    LOG_INFO("SharedState::RemoveLdnGame: 0x%016lx (total: %zu)", program_id, m_ldn_games.size());
+    return m_ldn_games.size();
 }
 
 // =============================================================================
