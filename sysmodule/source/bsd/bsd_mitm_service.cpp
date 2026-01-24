@@ -200,18 +200,20 @@ bool BsdMitmService::ShouldMitm(const sm::MitmProcessInfo& client_info) {
         return false;
     }
 
+    // First check: is this game in the LDN whitelist?
     LOG_INFO("BSD ShouldMitm #%u: checking whitelist for 0x%016lx...", call_id, program_id);
-
-    // Check if this game is in the LDN whitelist (searches file on-demand)
     bool is_whitelisted = ryu_ldn::config::IsGameInWhitelist(program_id);
-
     LOG_INFO("BSD ShouldMitm #%u: whitelist result=%s", call_id, is_whitelisted ? "YES" : "NO");
 
     if (!is_whitelisted) {
         return false;
     }
 
-    LOG_INFO("BSD ShouldMitm #%u: INTERCEPTING", call_id);
+    // Intercept all BSD sessions from whitelisted games.
+    // The distinction between LDN traffic (10.114.x.x) and normal traffic
+    // is made in Bind/Connect - normal traffic is forwarded transparently,
+    // only LDN addresses are handled by our proxy.
+    LOG_INFO("BSD ShouldMitm #%u: INTERCEPTING (whitelist match)", call_id);
     return true;
 }
 
@@ -272,27 +274,30 @@ Result BsdMitmService::RegisterClient(
                 config.version, config.tcp_tx_buf_size, config.tcp_rx_buf_size,
                 config.udp_tx_buf_size, config.udp_rx_buf_size, config.sb_efficiency);
 
-    // Reconstruct the input structure that libnx sends
-    // Layout: [config 32 bytes][pid_placeholder 8 bytes][tmem_size 8 bytes]
+    // According to libnx source (_bsdRegisterClient in bsd.c), format is:
+    // - InRaw: [config 32 bytes][pid_placeholder 8 bytes = 0][tmem_sz 8 bytes] = 48 bytes
+    // - CopyHandle: transfer_memory
+    // - send_pid: true
+    // - Output: u64 pid_out (not errno!)
+
     const struct {
         ryu_ldn::bsd::LibraryConfigData config;
-        u64 pid_placeholder;
+        u64 pid_placeholder;  // Always 0
         u64 tmem_size;
     } forward_input = { config, 0, tmem_size };
 
-    // Forward to the real service - returns u64 (libnx expects this)
-    u64 result_out = 0;
+    u64 pid_out = 0;
 
     Result rc = serviceMitmDispatchInOut(
-        m_forward_service.get(), 0, forward_input, result_out,
+        m_forward_service.get(), 0, forward_input, pid_out,
         .in_send_pid = true,
         .in_num_handles = 1,
         .in_handles = { tmem_handle },
         .override_pid = m_client_pid,
     );
 
-    LOG_INFO("[BSD#%u] RegisterClient: forward returned rc=0x%x, result=0x%016lx",
-             m_session_id, rc.GetValue(), result_out);
+    LOG_INFO("[BSD#%u] RegisterClient: forward returned rc=0x%x, pid_out=0x%lx",
+             m_session_id, rc.GetValue(), pid_out);
 
     // CRITICAL: Detach the handle to prevent sf::CopyHandle destructor from closing it.
     // The handle was forwarded to the real BSD service via serviceMitmDispatchInOut,
@@ -302,8 +307,9 @@ Result BsdMitmService::RegisterClient(
     // to the client process - we only forward them.
     transfer_memory.Detach();
 
-    out_result.SetValue(result_out);
-    LOG_INFO("[BSD#%u] RegisterClient EXIT: returning rc=0x%x, result=0x%lx", m_session_id, rc.GetValue(), result_out);
+    // Return the pid_out value from real service
+    out_result.SetValue(pid_out);
+    LOG_INFO("[BSD#%u] RegisterClient EXIT: returning rc=0x%x, pid_out=0x%lx", m_session_id, rc.GetValue(), pid_out);
     R_RETURN(rc);
 }
 
@@ -693,27 +699,26 @@ Result BsdMitmService::RegisterClientShared(
                 config.version, config.tcp_tx_buf_size, config.tcp_rx_buf_size,
                 config.udp_tx_buf_size, config.udp_rx_buf_size, config.sb_efficiency);
 
-    // Reconstruct the input structure - same as RegisterClient but no handle
-    // Layout: [config 32 bytes][pid_placeholder 8 bytes][tmem_size 8 bytes]
+    // Same format as RegisterClient but without the CopyHandle.
+    // InRaw: [config 32 bytes][pid_placeholder 8 bytes = 0][tmem_size 8 bytes] = 48 bytes
     const struct {
         ryu_ldn::bsd::LibraryConfigData config;
         u64 pid_placeholder;
         u64 tmem_size;
     } forward_input = { config, 0, tmem_size };
 
-    // Forward to real service - returns u64
-    u64 result_out = 0;
+    u64 pid_out = 0;
 
     Result rc = serviceMitmDispatchInOut(
-        m_forward_service.get(), 33, forward_input, result_out,
+        m_forward_service.get(), 33, forward_input, pid_out,
         .in_send_pid = true,
         .override_pid = m_client_pid,
     );
 
-    LOG_INFO("[BSD#%u] RegisterClientShared: forward returned rc=0x%x, result=0x%lx",
-             m_session_id, rc.GetValue(), result_out);
+    LOG_INFO("[BSD#%u] RegisterClientShared: forward returned rc=0x%x, pid_out=0x%lx",
+             m_session_id, rc.GetValue(), pid_out);
 
-    out_result.SetValue(result_out);
+    out_result.SetValue(pid_out);
     R_RETURN(rc);
 }
 

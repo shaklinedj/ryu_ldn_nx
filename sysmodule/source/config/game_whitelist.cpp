@@ -14,7 +14,7 @@
 
 #include <stratosphere.hpp>
 #include <cstring>
-#include <cstdlib>
+#include <new>
 
 namespace ryu_ldn::config {
 
@@ -22,11 +22,12 @@ namespace {
 
 constexpr const char* WHITELIST_PATH = "sdmc:/config/ryu_ldn_nx/gamelist.txt";
 
-// Maximum number of games in whitelist
-constexpr size_t MAX_WHITELIST_SIZE = 5000;
+// Average bytes per line in gamelist.txt (e.g., "0x0100152000022000\n" = ~19 bytes)
+constexpr size_t BYTES_PER_ENTRY = 18;
 
-// Dynamically allocated whitelist (to avoid large static allocation)
+// Dynamically allocated whitelist (sized based on file)
 static u64* g_whitelist = nullptr;
+static size_t g_whitelist_capacity = 0;
 static size_t g_whitelist_count = 0;
 static bool g_whitelist_loaded = false;
 
@@ -74,14 +75,6 @@ void LoadWhitelist() {
 
     LOG_INFO("GameWhitelist: loading from %s", WHITELIST_PATH);
 
-    // Allocate whitelist array dynamically
-    g_whitelist = static_cast<u64*>(std::malloc(MAX_WHITELIST_SIZE * sizeof(u64)));
-    if (!g_whitelist) {
-        LOG_ERROR("GameWhitelist: failed to allocate memory");
-        g_whitelist_loaded = true;
-        return;
-    }
-
     // Open the file
     ams::fs::FileHandle file;
     ams::Result rc = ams::fs::OpenFile(std::addressof(file), WHITELIST_PATH, ams::fs::OpenMode_Read);
@@ -104,6 +97,17 @@ void LoadWhitelist() {
 
     LOG_INFO("GameWhitelist: file_size=%lld bytes", file_size);
 
+    // Calculate capacity based on file size and allocate
+    g_whitelist_capacity = static_cast<size_t>(file_size / BYTES_PER_ENTRY) + 100;  // +100 margin
+    g_whitelist = new (std::nothrow) u64[g_whitelist_capacity];
+    if (!g_whitelist) {
+        ams::fs::CloseFile(file);
+        LOG_ERROR("GameWhitelist: failed to allocate %zu entries", g_whitelist_capacity);
+        g_whitelist_loaded = true;
+        return;
+    }
+    LOG_INFO("GameWhitelist: allocated %zu entries", g_whitelist_capacity);
+
     // Read file in chunks and parse lines
     constexpr size_t CHUNK_SIZE = 512;
     constexpr size_t LINE_BUF_SIZE = 24;
@@ -112,7 +116,7 @@ void LoadWhitelist() {
     size_t line_len = 0;
     s64 offset = 0;
 
-    while (offset < file_size && g_whitelist_count < MAX_WHITELIST_SIZE) {
+    while (offset < file_size && g_whitelist_count < g_whitelist_capacity) {
         size_t to_read = static_cast<size_t>(
             (file_size - offset) < static_cast<s64>(CHUNK_SIZE)
             ? (file_size - offset)
@@ -127,7 +131,7 @@ void LoadWhitelist() {
         }
 
         // Process chunk byte by byte
-        for (size_t i = 0; i < bytes_read && g_whitelist_count < MAX_WHITELIST_SIZE; i++) {
+        for (size_t i = 0; i < bytes_read && g_whitelist_count < g_whitelist_capacity; i++) {
             char c = chunk[i];
 
             if (c == '\n' || c == '\r') {
@@ -148,7 +152,7 @@ void LoadWhitelist() {
     }
 
     // Check last line if no trailing newline
-    if (line_len > 0 && g_whitelist_count < MAX_WHITELIST_SIZE) {
+    if (line_len > 0 && g_whitelist_count < g_whitelist_capacity) {
         u64 id = ParseHexId(line_buf, line_len);
         if (id != 0) {
             g_whitelist[g_whitelist_count++] = id;

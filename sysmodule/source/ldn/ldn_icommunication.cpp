@@ -343,6 +343,8 @@ Result ICommunicationService::Finalize() {
     // Update shared state - game is no longer active
     auto& shared_state = SharedState::GetInstance();
     shared_state.SetGameActive(false, 0);
+    shared_state.SetLdnPid(0);  // Clear so BSD MITM stops intercepting
+    LOG_INFO("Finalize: cleared LDN PID");
 
     // Clear client info
     m_client_process_id = 0;

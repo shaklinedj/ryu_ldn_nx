@@ -105,8 +105,8 @@ namespace ams {
         os::ThreadType g_thread;
 
         // Heap for dynamic allocations
-        // NOTE: Keep small to avoid memory exhaustion
-        alignas(0x40) constinit u8 g_heap_memory[64_KB];
+        // NOTE: Increased to 96KB for game whitelist (~40KB) + other allocations
+        alignas(0x40) constinit u8 g_heap_memory[96_KB];
         constinit lmem::HeapHandle g_heap_handle;
         constinit bool g_heap_initialized;
         constinit os::SdkMutex g_heap_init_mutex;
