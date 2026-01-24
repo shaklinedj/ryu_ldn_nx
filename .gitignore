@@ -221,3 +221,6 @@ release/
 
 # Lock Files (For build priorities)
 .lock-*
+
+# Local test files
+config/ryu_ldn_nx/gamelist.*
