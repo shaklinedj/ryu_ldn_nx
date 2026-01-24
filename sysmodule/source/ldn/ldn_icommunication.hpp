@@ -432,16 +432,6 @@ private:
     u64 m_local_communication_id;                           ///< LocalCommunicationId from NACP (for LDN filtering)
 
     /**
-     * @brief Load LocalCommunicationId from NACP
-     *
-     * Reads the application's NACP to get the first LocalCommunicationId.
-     * This is the ID used by LDN for game filtering, which may differ from program_id.
-     *
-     * @return First LocalCommunicationId from NACP, or 0 on failure
-     */
-    u64 LoadLocalCommunicationIdFromNacp();
-
-    /**
      * @brief Static callback for inactivity timeout
      *
      * Called when the timeout expires. Disconnects from server.

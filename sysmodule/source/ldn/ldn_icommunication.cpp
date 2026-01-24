@@ -12,8 +12,6 @@
 #include "../debug/log.hpp"
 #include "../bsd/proxy_socket_manager.hpp"
 #include <arpa/inet.h>
-#include <switch/services/ns.h>
-#include <switch/nacp.h>
 
 namespace ams::mitm::ldn {
 
@@ -144,10 +142,12 @@ ICommunicationService::ICommunicationService(ncm::ProgramId program_id)
 {
     LOG_INFO("ICommunicationService created with program_id=0x%016lx", m_program_id.value);
 
-    // Load LocalCommunicationId from NACP (this is NOT the same as program_id)
-    // Games use LocalCommunicationId for LDN filtering, which is stored in the NACP
-    m_local_communication_id = LoadLocalCommunicationIdFromNacp();
-    LOG_INFO("LocalCommunicationId from NACP: 0x%016lx", m_local_communication_id);
+    // Use program_id as LocalCommunicationId
+    // NOTE: Technically LocalCommunicationId can differ from program_id (stored in NACP),
+    // but reading NACP via nsGetApplicationControlData() causes deadlocks in MITM context.
+    // For most games, program_id == LocalCommunicationId, and the server will accept either.
+    m_local_communication_id = m_program_id.value;
+    LOG_INFO("LocalCommunicationId: 0x%016lx (using program_id)", m_local_communication_id);
 
     // Configure packet callback to receive server responses
     // Use static callback with user_data to route to instance method
@@ -196,77 +196,6 @@ ICommunicationService::~ICommunicationService() {
     // those sockets. The PID remains set for the lifetime of the game process.
     // When the game closes, the PID becomes stale but harmless (new processes
     // will have different PIDs).
-}
-
-// ============================================================================
-// NACP LocalCommunicationId Loading
-// ============================================================================
-
-u64 ICommunicationService::LoadLocalCommunicationIdFromNacp() {
-    // Read the NACP from the application to get the real LocalCommunicationId
-    // This is what the Nintendo SDK does internally when LocalCommunicationId=-1
-    // See: https://switchbrew.org/wiki/LDN_services - "When -1, this is overwritten
-    // with the first LocalCommunicationId from the user-process NACP"
-
-    Result rc;
-    u64 local_comm_id = 0;
-
-    // Initialize ns service
-    rc = nsInitialize();
-    if (R_FAILED(rc)) {
-        LOG_ERROR("Failed to initialize ns service: 0x%x", rc);
-        // Fallback to program_id if ns fails
-        return m_program_id.value;
-    }
-
-    // Allocate buffer for control data (NACP + icon)
-    // NsApplicationControlData is large (~128KB) due to the icon, allocate on heap
-    NsApplicationControlData* control_data = static_cast<NsApplicationControlData*>(std::malloc(sizeof(NsApplicationControlData)));
-    if (!control_data) {
-        LOG_ERROR("Failed to allocate memory for NsApplicationControlData");
-        nsExit();
-        return m_program_id.value;
-    }
-
-    std::memset(control_data, 0, sizeof(NsApplicationControlData));
-
-    u64 actual_size = 0;
-    rc = nsGetApplicationControlData(
-        NsApplicationControlSource_Storage,
-        m_program_id.value,
-        control_data,
-        sizeof(NsApplicationControlData),
-        &actual_size
-    );
-
-    if (R_SUCCEEDED(rc) && actual_size >= sizeof(NacpStruct)) {
-        // Get the first LocalCommunicationId from NACP
-        local_comm_id = control_data->nacp.local_communication_id[0];
-        LOG_INFO("Read LocalCommunicationId[0] from NACP: 0x%016lx", local_comm_id);
-
-        // Log other LocalCommunicationIds if present (for debugging)
-        for (int i = 1; i < 8; i++) {
-            u64 other_id = control_data->nacp.local_communication_id[i];
-            if (other_id != 0) {
-                LOG_VERBOSE("LocalCommunicationId[%d]: 0x%016lx", i, other_id);
-            }
-        }
-    } else {
-        LOG_ERROR("Failed to get application control data: 0x%x (size=%lu)", rc, actual_size);
-        // Fallback to program_id
-        local_comm_id = m_program_id.value;
-    }
-
-    std::free(control_data);
-    nsExit();
-
-    // If LocalCommunicationId is 0 in NACP, fallback to program_id
-    if (local_comm_id == 0) {
-        LOG_INFO("NACP LocalCommunicationId is 0, using program_id as fallback");
-        local_comm_id = m_program_id.value;
-    }
-
-    return local_comm_id;
 }
 
 // ============================================================================
