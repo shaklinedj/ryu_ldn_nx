@@ -37,8 +37,9 @@ LdnMitMService::~LdnMitMService() {
 }
 
 bool LdnMitMService::ShouldMitm(const sm::MitmProcessInfo& client_info) {
-    // We always want to intercept LDN calls
-    LOG_VERBOSE("LDN ShouldMitm called for program_id=0x%016lx", client_info.program_id.value);
+    // We always want to intercept LDN calls from applications
+    LOG_INFO("LDN ShouldMitm called for pid=%lu, program_id=0x%016lx",
+             client_info.process_id.value, client_info.program_id.value);
     return true;
 }
 
