@@ -251,16 +251,34 @@ jobs:
           fi
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
 
+      - name: Download and convert LDN game whitelist
+        run: |
+          # Download JSON
+          curl -sL "https://git.ryujinx.app/ryubing/ldn/-/raw/master/Utils/gamelist.json?ref_type=heads" -o gamelist.json
+          # Convert to simple text format (one ID per line)
+          python3 -c "
+          import json
+          with open('gamelist.json', 'r') as f:
+              data = json.load(f)
+          with open('gamelist.txt', 'w') as f:
+              for game in data:
+                  f.write(game['id'] + '\n')
+          print(f'Converted {len(data)} games to gamelist.txt')
+          "
+
       - name: Prepare SD card structure
         run: |
           mkdir -p release/atmosphere/contents/4200000000000010/flags
           mkdir -p release/switch/.overlays
+          mkdir -p release/config/ryu_ldn_nx
 
           cp sysmodule-artifacts/ryu_ldn_nx.nsp release/atmosphere/contents/4200000000000010/exefs.nsp
           cp sysmodule-artifacts/ryu_ldn_nx.npdm release/atmosphere/contents/4200000000000010/main.npdm
           cp sysmodule-artifacts/res/toolbox.json release/atmosphere/contents/4200000000000010/ || true
           touch release/atmosphere/contents/4200000000000010/flags/boot2.flag
           cp overlay-artifacts/ryu_ldn_nx_overlay.ovl release/switch/.overlays/
+          cp gamelist.txt release/config/ryu_ldn_nx/
+          cp config/ryu_ldn_nx/config.ini.example release/config/ryu_ldn_nx/config.ini
 
           echo "=== Release contents ==="
           find release -type f
