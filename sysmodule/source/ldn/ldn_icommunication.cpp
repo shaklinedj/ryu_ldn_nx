@@ -955,8 +955,9 @@ Result ICommunicationService::Connect(ConnectNetworkData dat, const NetworkInfo&
     m_network_connected = true;
     m_inactivity_timeout.DisableTimeout();
 
-    // Store network info
-    std::memcpy(&m_network_info, &data, sizeof(m_network_info));
+    // Note: m_network_info is already set by the Connected packet handler
+    // with the updated node list from the server. Don't overwrite it with
+    // the scan results passed by the game (which only has node_count=1).
 
     // Update shared state
     SharedState::GetInstance().SetLdnState(CommState::StationConnected);
@@ -1255,6 +1256,13 @@ void ICommunicationService::HandleServerPacket(ryu_ldn::protocol::PacketId id, c
                          m_network_info.ldn.nodeCount,
                          m_network_info.ldn.nodeCountMax);
 
+                // Debug: log each node's info
+                for (u8 i = 0; i < m_network_info.ldn.nodeCount && i < 8; i++) {
+                    const auto& node = m_network_info.ldn.nodes[i];
+                    LOG_INFO("  Node[%u]: ip=0x%08X, nodeId=%u, isConnected=%u",
+                             i, node.ipv4Address, node.nodeId, node.isConnected);
+                }
+
                 // Update session info in shared state
                 auto& shared_state = SharedState::GetInstance();
                 bool is_host = (m_network_info.ldn.nodes[0].isConnected &&
@@ -1404,9 +1412,12 @@ void ICommunicationService::HandleServerPacket(ryu_ldn::protocol::PacketId id, c
                 m_proxy_config = *config;
                 LOG_INFO("Received ProxyConfig: ip=0x%08X, mask=0x%08X",
                          config->proxy_ip, config->proxy_subnet_mask);
-                // Note: On Ryujinx this registers an LdnProxy for socket interception.
-                // On Switch sysmodule, we just store the config for reference.
-                // The actual proxying is handled by the game's LDN implementation.
+
+                // Set local IP in ProxySocketManager for BSD MITM
+                // This is used when creating proxy sockets for INADDR_ANY binds
+                auto& socket_manager = mitm::bsd::ProxySocketManager::GetInstance();
+                socket_manager.SetLocalIp(config->proxy_ip);
+                LOG_INFO("ProxySocketManager: local IP set to 0x%08X", config->proxy_ip);
             }
             break;
         }

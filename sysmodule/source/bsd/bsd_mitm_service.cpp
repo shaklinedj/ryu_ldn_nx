@@ -101,6 +101,16 @@ static std::unordered_map<s32, SocketInfo> g_socket_info;
  */
 static os::Mutex g_socket_info_mutex{false};
 
+/**
+ * @brief Map of PIDs to session count for BSD MITM
+ *
+ * Games open bsd:u twice - first session is unused, second is the real one.
+ * We skip the first session and intercept the second.
+ * Value: number of times ShouldMitm returned true for this PID.
+ */
+static std::unordered_map<u64, u32> g_mitm_pid_count;
+static os::Mutex g_mitm_pids_mutex{false};
+
 // =============================================================================
 // Constructor / Destructor
 // =============================================================================
@@ -154,11 +164,24 @@ BsdMitmService::BsdMitmService(std::shared_ptr<::Service>&& s, const sm::MitmPro
  * all tracked sockets for this client to prevent resource leaks.
  */
 BsdMitmService::~BsdMitmService() {
+    // Decrement the session count for this PID
+    {
+        std::scoped_lock lock(g_mitm_pids_mutex);
+        auto it = g_mitm_pid_count.find(m_client_pid);
+        if (it != g_mitm_pid_count.end()) {
+            if (it->second > 0) {
+                it->second--;
+            }
+            if (it->second == 0) {
+                g_mitm_pid_count.erase(it);
+            }
+        }
+    }
+
     ::Service* fwd = m_forward_service.get();
     Handle session_handle = fwd ? fwd->session : INVALID_HANDLE;
     LOG_INFO("[BSD#%u] DESTRUCTOR: pid=%lu, fwd_srv=%p (handle=0x%x), commands_received=%u",
              m_session_id, m_client_pid, fwd, session_handle, m_command_count);
-    // TODO: Story 8.4 - Cleanup tracked proxy sockets for this client
 }
 
 /**
@@ -209,11 +232,26 @@ bool BsdMitmService::ShouldMitm(const sm::MitmProcessInfo& client_info) {
         return false;
     }
 
-    // Intercept all BSD sessions from whitelisted games.
-    // The distinction between LDN traffic (10.114.x.x) and normal traffic
-    // is made in Bind/Connect - normal traffic is forwarded transparently,
-    // only LDN addresses are handled by our proxy.
-    LOG_INFO("BSD ShouldMitm #%u: INTERCEPTING (whitelist match)", call_id);
+    // Games open bsd:u twice - first session is unused, second is the real one.
+    // Skip the first session, intercept the second.
+    {
+        std::scoped_lock lock(g_mitm_pids_mutex);
+        u32& count = g_mitm_pid_count[client_info.process_id.value];
+
+        if (count == 0) {
+            // First session for this PID - skip it, the game won't use it
+            count = 1;  // Mark that we've seen the first session
+            LOG_INFO("BSD ShouldMitm #%u: SKIP (first session for pid=%lu, waiting for second)",
+                     call_id, client_info.process_id.value);
+            return false;
+        }
+
+        // Second (or later) session - this is the one the game actually uses
+        count++;
+    }
+
+    // Intercept this BSD session from whitelisted game.
+    LOG_INFO("BSD ShouldMitm #%u: INTERCEPTING (second session for pid)", call_id);
     return true;
 }
 
@@ -872,83 +910,130 @@ Result BsdMitmService::Bind(
     if (addr.GetSize() >= sizeof(ryu_ldn::bsd::SockAddrIn)) {
         const auto* sock_addr = reinterpret_cast<const ryu_ldn::bsd::SockAddrIn*>(addr.GetPointer());
 
-        // Check address family is IPv4 and address is LDN
-        if (sock_addr->sin_family == static_cast<uint8_t>(ryu_ldn::bsd::AddressFamily::Inet) &&
-            sock_addr->IsLdnAddress())
-        {
-            LOG_INFO("BSD Bind fd=%d detected LDN address %u.%u.%u.%u:%u",
-                     fd,
-                     (sock_addr->sin_addr >> 0) & 0xFF,
-                     (sock_addr->sin_addr >> 8) & 0xFF,
-                     (sock_addr->sin_addr >> 16) & 0xFF,
-                     (sock_addr->sin_addr >> 24) & 0xFF,
-                     sock_addr->GetPort());
+        // Log the bind address for debugging
+        LOG_INFO("[BSD#%u] Bind fd=%d address: family=%u, addr=0x%08x (%u.%u.%u.%u), port=%u",
+                 m_session_id, fd,
+                 sock_addr->sin_family,
+                 sock_addr->sin_addr,
+                 (sock_addr->sin_addr >> 0) & 0xFF,
+                 (sock_addr->sin_addr >> 8) & 0xFF,
+                 (sock_addr->sin_addr >> 16) & 0xFF,
+                 (sock_addr->sin_addr >> 24) & 0xFF,
+                 sock_addr->GetPort());
 
-            // Get socket info (type and protocol) under lock
-            SocketInfo socket_info;
-            bool found = false;
-            {
-                std::scoped_lock lock(g_socket_info_mutex);
-                auto it = g_socket_info.find(fd);
-                if (it != g_socket_info.end()) {
-                    socket_info = it->second;
-                    found = true;
-                }
-            }
+        // Check address family is IPv4
+        if (sock_addr->sin_family == static_cast<uint8_t>(ryu_ldn::bsd::AddressFamily::Inet)) {
+            // Check if this is an LDN address OR INADDR_ANY (0.0.0.0)
+            // Games often bind to 0.0.0.0 to accept from any interface - we need to proxy these too
+            bool is_ldn = sock_addr->IsLdnAddress();
+            bool is_inaddr_any = (sock_addr->sin_addr == 0);
 
-            if (!found) {
-                LOG_WARN("BSD Bind fd=%d not tracked, forwarding to real service", fd);
-                // Fall through to normal bind
-            } else {
-                // Create proxy socket
-                auto& manager = ProxySocketManager::GetInstance();
-                ProxySocket* proxy = manager.CreateProxySocket(fd, socket_info.type, socket_info.protocol);
+            if (is_ldn || is_inaddr_any) {
+                LOG_INFO("BSD Bind fd=%d detected %s address, port=%u",
+                         fd,
+                         is_ldn ? "LDN" : "INADDR_ANY",
+                         sock_addr->GetPort());
 
-                if (proxy != nullptr) {
-                    // Handle ephemeral port (port 0)
-                    ryu_ldn::bsd::SockAddrIn bind_addr = *sock_addr;
-                    if (bind_addr.GetPort() == 0) {
-                        uint16_t ephemeral = manager.AllocatePort(socket_info.protocol);
-                        if (ephemeral == 0) {
-                            LOG_ERROR("BSD Bind fd=%d failed to allocate ephemeral port", fd);
-                            out_errno.SetValue(static_cast<s32>(ryu_ldn::bsd::BsdErrno::AddrInUse));
-                            R_SUCCEED();
-                        }
-                        bind_addr.sin_port = __builtin_bswap16(ephemeral);
-                        LOG_VERBOSE("BSD Bind fd=%d allocated ephemeral port %u", fd, ephemeral);
-                    } else {
-                        // Reserve the specific port
-                        if (!manager.ReservePort(bind_addr.GetPort(), socket_info.protocol)) {
-                            LOG_WARN("BSD Bind fd=%d port %u already in use", fd, bind_addr.GetPort());
-                            out_errno.SetValue(static_cast<s32>(ryu_ldn::bsd::BsdErrno::AddrInUse));
-                            R_SUCCEED();
-                        }
+                // Get socket info (type and protocol) under lock
+                SocketInfo socket_info;
+                bool found = false;
+                {
+                    std::scoped_lock lock(g_socket_info_mutex);
+                    auto it = g_socket_info.find(fd);
+                    if (it != g_socket_info.end()) {
+                        socket_info = it->second;
+                        found = true;
                     }
+                }
 
-                    // Bind the proxy socket
-                    Result bind_result = proxy->Bind(bind_addr);
-                    if (R_FAILED(bind_result)) {
-                        LOG_ERROR("BSD Bind fd=%d proxy bind failed: 0x%x", fd, bind_result.GetValue());
-                        out_errno.SetValue(bind_result.GetValue());
+                if (!found) {
+                    LOG_WARN("BSD Bind fd=%d not tracked, forwarding to real service", fd);
+                    // Fall through to normal bind
+                } else {
+                    // Create proxy socket
+                    auto& manager = ProxySocketManager::GetInstance();
+                    ProxySocket* proxy = manager.CreateProxySocket(fd, socket_info.type, socket_info.protocol);
+
+                    if (proxy != nullptr) {
+                        // Build bind address - use local LDN IP for INADDR_ANY
+                        ryu_ldn::bsd::SockAddrIn bind_addr = *sock_addr;
+                        if (is_inaddr_any) {
+                            // Replace 0.0.0.0 with our local LDN IP
+                            uint32_t local_ip = manager.GetLocalIp();
+                            if (local_ip == 0) {
+                                // Local IP not set yet - use 0.0.0.0 which will match any dest
+                                LOG_WARN("BSD Bind fd=%d: local LDN IP not set, using INADDR_ANY", fd);
+                            } else {
+                                bind_addr.sin_addr = __builtin_bswap32(local_ip);
+                                LOG_INFO("BSD Bind fd=%d: using local LDN IP 0x%08x", fd, local_ip);
+                            }
+                        }
+
+                        // Handle ephemeral port (port 0)
+                        if (bind_addr.GetPort() == 0) {
+                            uint16_t ephemeral = manager.AllocatePort(socket_info.protocol);
+                            if (ephemeral == 0) {
+                                LOG_ERROR("BSD Bind fd=%d failed to allocate ephemeral port", fd);
+                                out_errno.SetValue(static_cast<s32>(ryu_ldn::bsd::BsdErrno::AddrInUse));
+                                R_SUCCEED();
+                            }
+                            bind_addr.sin_port = __builtin_bswap16(ephemeral);
+                            LOG_VERBOSE("BSD Bind fd=%d allocated ephemeral port %u", fd, ephemeral);
+                        } else {
+                            // Reserve the specific port
+                            if (!manager.ReservePort(bind_addr.GetPort(), socket_info.protocol)) {
+                                LOG_WARN("BSD Bind fd=%d port %u already in use", fd, bind_addr.GetPort());
+                                out_errno.SetValue(static_cast<s32>(ryu_ldn::bsd::BsdErrno::AddrInUse));
+                                R_SUCCEED();
+                            }
+                        }
+
+                        // Bind the proxy socket
+                        Result bind_result = proxy->Bind(bind_addr);
+                        if (R_FAILED(bind_result)) {
+                            LOG_ERROR("BSD Bind fd=%d proxy bind failed: 0x%x", fd, bind_result.GetValue());
+                            out_errno.SetValue(bind_result.GetValue());
+                            R_SUCCEED();
+                        }
+
+                        // Mark as proxy socket
+                        {
+                            std::scoped_lock lock(g_socket_info_mutex);
+                            auto it = g_socket_info.find(fd);
+                            if (it != g_socket_info.end()) {
+                                it->second.is_proxy = true;
+                            }
+                        }
+
+                        LOG_INFO("BSD Bind fd=%d successfully bound to LDN proxy (addr=0x%08x, port=%u)",
+                                 fd, bind_addr.GetAddr(), bind_addr.GetPort());
+
+                        // For INADDR_ANY binds, also forward to real service
+                        // so the game can also use non-LDN addresses
+                        if (is_inaddr_any) {
+                            s32 real_errno = 0;
+                            Result real_rc = serviceMitmDispatchInOut(
+                                m_forward_service.get(), 13, fd, real_errno,
+                                .buffer_attrs = {
+                                    SfBufferAttr_In | SfBufferAttr_HipcAutoSelect,
+                                },
+                                .buffers = {
+                                    { addr.GetPointer(), addr.GetSize() },
+                                }
+                            );
+                            if (R_FAILED(real_rc) || real_errno != 0) {
+                                LOG_WARN("BSD Bind fd=%d real bind failed (rc=0x%x, errno=%d), proxy-only mode",
+                                         fd, real_rc.GetValue(), real_errno);
+                            }
+                        }
+
+                        out_errno.SetValue(0);
+                        R_SUCCEED();
+                    } else {
+                        LOG_ERROR("BSD Bind fd=%d failed to create proxy socket", fd);
+                        out_errno.SetValue(static_cast<s32>(ryu_ldn::bsd::BsdErrno::NoMem));
                         R_SUCCEED();
                     }
-
-                    // Mark as proxy socket
-                    {
-                        std::scoped_lock lock(g_socket_info_mutex);
-                        auto it = g_socket_info.find(fd);
-                        if (it != g_socket_info.end()) {
-                            it->second.is_proxy = true;
-                        }
-                    }
-
-                    LOG_INFO("BSD Bind fd=%d successfully bound to LDN proxy", fd);
-                    out_errno.SetValue(0);
-                    R_SUCCEED();
-                } else {
-                    LOG_ERROR("BSD Bind fd=%d failed to create proxy socket", fd);
-                    out_errno.SetValue(static_cast<s32>(ryu_ldn::bsd::BsdErrno::NoMem));
-                    R_SUCCEED();
                 }
             }
         }
