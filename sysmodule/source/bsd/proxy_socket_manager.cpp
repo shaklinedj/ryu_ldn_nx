@@ -270,13 +270,26 @@ bool ProxySocketManager::RouteIncomingData(uint32_t source_ip, uint16_t source_p
     // Find socket matching destination
     ProxySocket* socket = FindSocketByDestination(dest_ip, dest_port, protocol);
     if (socket == nullptr) {
-        // No matching socket found
+        // No matching socket - buffer the packet for later delivery
+        if (m_pending_packets.size() >= MaxPendingPackets) {
+            m_pending_packets.pop_front();  // Drop oldest
+        }
+        PendingPacket pkt;
+        pkt.source_ip = source_ip;
+        pkt.source_port = source_port;
+        pkt.dest_ip = dest_ip;
+        pkt.dest_port = dest_port;
+        pkt.protocol = protocol;
+        pkt.data.assign(static_cast<const uint8_t*>(data),
+                       static_cast<const uint8_t*>(data) + data_len);
+        m_pending_packets.push_back(std::move(pkt));
         return false;
     }
 
     // Build source address for RecvFrom
+    // Note: sin_len is set to 0 to match Ryujinx's BsdSockAddr.FromIPEndPoint behavior
     ryu_ldn::bsd::SockAddrIn from_addr{};
-    from_addr.sin_len = sizeof(from_addr);
+    from_addr.sin_len = 0;
     from_addr.sin_family = static_cast<uint8_t>(ryu_ldn::bsd::AddressFamily::Inet);
     from_addr.sin_port = __builtin_bswap16(source_port);
     from_addr.sin_addr = __builtin_bswap32(source_ip);
@@ -364,6 +377,45 @@ size_t ProxySocketManager::GetActiveSocketCount() const {
 
 size_t ProxySocketManager::GetAvailablePortCount(ryu_ldn::bsd::ProtocolType protocol) const {
     return m_port_pool.GetAvailableCount(protocol);
+}
+
+// =============================================================================
+// Pending Packet Delivery
+// =============================================================================
+
+void ProxySocketManager::DeliverPendingPackets(ProxySocket* socket, uint16_t port,
+                                                ryu_ldn::bsd::ProtocolType protocol) {
+    // Called after bind - deliver any buffered packets matching this socket
+    // Caller must NOT hold m_mutex (we take it here)
+    std::scoped_lock lock(m_mutex);
+
+    if (socket == nullptr || m_pending_packets.empty()) {
+        return;
+    }
+
+    auto it = m_pending_packets.begin();
+    while (it != m_pending_packets.end()) {
+        const auto& pkt = *it;
+
+        // Check if packet matches this socket
+        if (pkt.protocol == protocol && pkt.dest_port == port) {
+            // Build source address
+            // Note: sin_len is set to 0 to match Ryujinx's BsdSockAddr.FromIPEndPoint behavior
+            ryu_ldn::bsd::SockAddrIn from_addr{};
+            from_addr.sin_len = 0;
+            from_addr.sin_family = static_cast<uint8_t>(ryu_ldn::bsd::AddressFamily::Inet);
+            from_addr.sin_port = __builtin_bswap16(pkt.source_port);
+            from_addr.sin_addr = __builtin_bswap32(pkt.source_ip);
+
+            // Deliver to socket
+            socket->IncomingData(pkt.data.data(), pkt.data.size(), from_addr);
+
+            // Remove from pending
+            it = m_pending_packets.erase(it);
+        } else {
+            ++it;
+        }
+    }
 }
 
 } // namespace ams::mitm::bsd

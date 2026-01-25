@@ -432,6 +432,18 @@ public:
      */
     size_t GetAvailablePortCount(ryu_ldn::bsd::ProtocolType protocol) const;
 
+    /**
+     * @brief Deliver pending packets to a newly bound socket
+     *
+     * Called after Bind() to deliver any packets that arrived before
+     * the socket was bound.
+     *
+     * @param socket The socket to deliver to
+     * @param port The port the socket is bound to
+     * @param protocol The protocol type
+     */
+    void DeliverPendingPackets(ProxySocket* socket, uint16_t port, ryu_ldn::bsd::ProtocolType protocol);
+
 private:
     /**
      * @brief Private constructor (singleton)
@@ -485,6 +497,23 @@ private:
      * @brief Callback for sending ProxyConnect to LDN server (TCP handshake)
      */
     SendProxyConnectCallback m_proxy_connect_callback{nullptr};
+
+    // =========================================================================
+    // Packet Buffering (for packets arriving before socket bind)
+    // =========================================================================
+
+    static constexpr size_t MaxPendingPackets = 32;
+
+    struct PendingPacket {
+        uint32_t source_ip;
+        uint16_t source_port;
+        uint32_t dest_ip;
+        uint16_t dest_port;
+        ryu_ldn::bsd::ProtocolType protocol;
+        std::vector<uint8_t> data;
+    };
+
+    std::deque<PendingPacket> m_pending_packets;
 };
 
 } // namespace ams::mitm::bsd

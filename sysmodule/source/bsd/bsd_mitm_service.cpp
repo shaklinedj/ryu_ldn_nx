@@ -77,6 +77,7 @@ struct SocketInfo {
     ryu_ldn::bsd::SocketType type;
     ryu_ldn::bsd::ProtocolType protocol;
     bool is_proxy;  // True if this socket is an LDN proxy socket
+    bool broadcast; // SO_BROADCAST option (tracked before proxy creation)
 };
 
 /**
@@ -468,6 +469,7 @@ Result BsdMitmService::Socket(
                 .type = static_cast<ryu_ldn::bsd::SocketType>(type),
                 .protocol = proto,
                 .is_proxy = false,
+                .broadcast = false,
             };
         }
         LOG_VERBOSE("BSD Socket tracked fd=%d type=%d proto=%d", out.fd, type, static_cast<s32>(proto));
@@ -536,6 +538,7 @@ Result BsdMitmService::SocketExempt(
                 .type = static_cast<ryu_ldn::bsd::SocketType>(type),
                 .protocol = proto,
                 .is_proxy = false,
+                .broadcast = false,
             };
         }
         LOG_VERBOSE("BSD SocketExempt tracked fd=%d type=%d proto=%d", out.fd, type, static_cast<s32>(proto));
@@ -955,6 +958,11 @@ Result BsdMitmService::Bind(
                     ProxySocket* proxy = manager.CreateProxySocket(fd, socket_info.type, socket_info.protocol);
 
                     if (proxy != nullptr) {
+                        // Apply saved socket options
+                        if (socket_info.broadcast) {
+                            proxy->SetBroadcastEnabled(true);
+                            LOG_INFO("BSD Bind fd=%d: applied saved SO_BROADCAST=1", fd);
+                        }
                         // Build bind address - use local LDN IP for INADDR_ANY
                         ryu_ldn::bsd::SockAddrIn bind_addr = *sock_addr;
                         if (is_inaddr_any) {
@@ -1007,6 +1015,9 @@ Result BsdMitmService::Bind(
 
                         LOG_INFO("BSD Bind fd=%d successfully bound to LDN proxy (addr=0x%08x, port=%u)",
                                  fd, bind_addr.GetAddr(), bind_addr.GetPort());
+
+                        // Deliver any pending packets that arrived before bind
+                        manager.DeliverPendingPackets(proxy, bind_addr.GetPort(), socket_info.protocol);
 
                         // For INADDR_ANY binds, also forward to real service
                         // so the game can also use non-LDN addresses
@@ -1426,7 +1437,7 @@ Result BsdMitmService::Send(
     const sf::InAutoSelectBuffer& buffer)
 {
     m_command_count++;
-    LOG_VERBOSE("[BSD#%u] Send: cmd_count=%u, fd=%d, flags=%d, size=%zu", m_session_id, m_command_count, fd, flags, buffer.GetSize());
+    LOG_INFO("[BSD#%u] Send ENTRY: cmd_count=%u, fd=%d, flags=%d, size=%zu", m_session_id, m_command_count, fd, flags, buffer.GetSize());
 
     // Check if this is a proxy socket
     bool is_proxy = false;
@@ -1528,8 +1539,8 @@ Result BsdMitmService::SendTo(
     const sf::InAutoSelectBuffer& addr)
 {
     m_command_count++;
-    LOG_VERBOSE("[BSD#%u] SendTo: cmd_count=%u, fd=%d, flags=%d, size=%zu, addr_size=%zu",
-                m_session_id, m_command_count, fd, flags, buffer.GetSize(), addr.GetSize());
+    LOG_INFO("[BSD#%u] SendTo ENTRY: cmd_count=%u, fd=%d, flags=%d, size=%zu",
+             m_session_id, m_command_count, fd, flags, buffer.GetSize());
 
     // Check if this is a proxy socket or if dest is LDN
     bool is_proxy = false;
@@ -1809,6 +1820,10 @@ Result BsdMitmService::RecvFrom(
                 if (addr_out.GetSize() >= sizeof(ryu_ldn::bsd::SockAddrIn)) {
                     std::memcpy(addr_out.GetPointer(), &from_addr, sizeof(from_addr));
                 }
+
+                LOG_INFO("BSD RecvFrom fd=%d proxy: %d bytes from %08x:%u (len=%u, family=%u)",
+                         fd, result, from_addr.GetAddr(), from_addr.GetPort(),
+                         from_addr.sin_len, from_addr.sin_family);
             }
 
             LOG_VERBOSE("BSD RecvFrom fd=%d proxy received %d bytes", fd, result);
@@ -2654,6 +2669,20 @@ Result BsdMitmService::SetSockOpt(
         }
         LOG_INFO("BSD SetSockOpt fd=%d level=%d optname=%d -> proxy", fd, level, optname);
         R_SUCCEED();
+    }
+
+    // Track SO_BROADCAST in SocketInfo for when proxy is created later
+    if (level == static_cast<s32>(ryu_ldn::bsd::SocketOptionLevel::Socket) &&
+        optname == static_cast<s32>(ryu_ldn::bsd::SocketOption::Broadcast)) {
+        if (optval.GetSize() >= sizeof(s32)) {
+            s32 value = *reinterpret_cast<const s32*>(optval.GetPointer());
+            std::scoped_lock lock(g_socket_info_mutex);
+            auto it = g_socket_info.find(fd);
+            if (it != g_socket_info.end()) {
+                it->second.broadcast = (value != 0);
+                LOG_INFO("BSD SetSockOpt fd=%d SO_BROADCAST=%d (saved for proxy)", fd, value);
+            }
+        }
     }
 
     // Forward to real BSD service for non-proxy sockets

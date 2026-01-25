@@ -845,24 +845,31 @@ Result ICommunicationService::SetStationAcceptPolicy(u8 policy) {
 // ============================================================================
 
 Result ICommunicationService::OpenStation() {
+    LOG_INFO("OpenStation() called");
     auto result = m_state_machine.OpenStation();
     R_UNLESS(result == StateTransitionResult::Success, MAKERESULT(0x10, 1));
+
+    LOG_INFO("OpenStation: state transitioned to Station");
 
     // Connect to RyuLdn server
     Result rc = ConnectToServer();
     if (R_FAILED(rc)) {
         // Rollback state on connection failure
+        LOG_WARN("OpenStation: ConnectToServer failed, rolling back state");
         m_state_machine.CloseStation();
         R_RETURN(rc);
     }
 
     // Update shared state
     SharedState::GetInstance().SetLdnState(CommState::Station);
+    LOG_INFO("OpenStation: completed successfully");
 
     R_SUCCEED();
 }
 
 Result ICommunicationService::CloseStation() {
+    LOG_INFO("CloseStation() called");
+
     // NOTE: Do NOT disconnect from server here!
     // The game may call OpenStation/CloseStation many times during scanning.
     // Disconnecting each time hits the server's firewall rate limit (10/min).
@@ -877,6 +884,8 @@ Result ICommunicationService::CloseStation() {
 
     // Update shared state
     SharedState::GetInstance().SetLdnState(CommState::Initialized);
+
+    LOG_INFO("CloseStation: state transitioned to Initialized");
 
     R_SUCCEED();
 }
@@ -1256,11 +1265,18 @@ void ICommunicationService::HandleServerPacket(ryu_ldn::protocol::PacketId id, c
                          m_network_info.ldn.nodeCount,
                          m_network_info.ldn.nodeCountMax);
 
-                // Debug: log each node's info
+                // Debug: log each node's info including MAC and username
                 for (u8 i = 0; i < m_network_info.ldn.nodeCount && i < 8; i++) {
                     const auto& node = m_network_info.ldn.nodes[i];
-                    LOG_INFO("  Node[%u]: ip=0x%08X, nodeId=%u, isConnected=%u",
-                             i, node.ipv4Address, node.nodeId, node.isConnected);
+                    LOG_INFO("  Node[%u]: ip=0x%08X, nodeId=%u, isConnected=%u, MAC=%02X:%02X:%02X:%02X:%02X:%02X",
+                             i, node.ipv4Address, node.nodeId, node.isConnected,
+                             node.macAddress.raw[0], node.macAddress.raw[1], node.macAddress.raw[2],
+                             node.macAddress.raw[3], node.macAddress.raw[4], node.macAddress.raw[5]);
+                    // Log first 16 chars of username (null-terminated)
+                    char username[17] = {0};
+                    std::memcpy(username, node.userName, 16);
+                    LOG_INFO("  Node[%u]: username='%s', localCommVer=%u",
+                             i, username, node.localCommunicationVersion);
                 }
 
                 // Update session info in shared state

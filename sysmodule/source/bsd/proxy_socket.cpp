@@ -12,6 +12,7 @@
 
 #include "proxy_socket.hpp"
 #include "proxy_socket_manager.hpp"
+#include "../debug/log.hpp"
 
 namespace ams::mitm::bsd {
 
@@ -257,7 +258,7 @@ s32 ProxySocket::RecvFrom(void* buffer, size_t len, s32 flags, ryu_ldn::bsd::Soc
     }
 
     bool peek = (flags & 0x2) != 0; // MSG_PEEK = 0x2
-    bool dontwait = (flags & 0x40) != 0 || m_non_blocking; // MSG_DONTWAIT = 0x40
+    bool dontwait = (flags & 0x80) != 0 || m_non_blocking; // MSG_DONTWAIT = 0x80 (Nintendo Switch)
 
     // Try to get data from queue
     {
@@ -321,6 +322,18 @@ s32 ProxySocket::RecvFrom(void* buffer, size_t len, s32 flags, ryu_ldn::bsd::Soc
 }
 
 void ProxySocket::IncomingData(const void* data, size_t len, const ryu_ldn::bsd::SockAddrIn& from) {
+    // Log first 32 bytes of data for debugging
+    if (len > 0 && data != nullptr) {
+        const uint8_t* bytes = static_cast<const uint8_t*>(data);
+        size_t log_len = std::min(len, size_t(32));
+        char hex_buf[128];
+        char* p = hex_buf;
+        for (size_t i = 0; i < log_len && (p - hex_buf) < 120; i++) {
+            p += std::snprintf(p, 4, "%02X ", bytes[i]);
+        }
+        LOG_INFO("ProxySocket IncomingData: %zu bytes, first %zu: %s", len, log_len, hex_buf);
+    }
+
     // Check if this is a broadcast packet and filter if SO_BROADCAST not set
     // Broadcast packets have destination IP matching the broadcast address
     // (e.g., 10.114.255.255 for LDN network)
