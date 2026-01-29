@@ -78,6 +78,7 @@ struct SocketInfo {
     ryu_ldn::bsd::ProtocolType protocol;
     bool is_proxy;  // True if this socket is an LDN proxy socket
     bool broadcast; // SO_BROADCAST option (tracked before proxy creation)
+    u32 session_id; // Session ID that owns this socket (for cleanup on session close)
 };
 
 /**
@@ -105,12 +106,26 @@ static os::Mutex g_socket_info_mutex{false};
 /**
  * @brief Map of PIDs to session count for BSD MITM
  *
- * Games open bsd:u twice - first session is unused, second is the real one.
- * We skip the first session and intercept the second.
- * Value: number of times ShouldMitm returned true for this PID.
+ * Tracks how many BSD sessions have been intercepted per process.
+ * We intercept ALL BSD sessions from whitelisted games because some games
+ * (like Mario Kart 8) may use multiple sessions for different operations.
+ * Value: number of BSD sessions intercepted for this PID.
  */
 static std::unordered_map<u64, u32> g_mitm_pid_count;
 static os::Mutex g_mitm_pids_mutex{false};
+
+/**
+ * @brief List of abandoned forward services (sessions that never got RegisterClient)
+ *
+ * When a BSD MITM session is closed without ever receiving RegisterClient,
+ * we move its forward_service here instead of closing it. This prevents
+ * a system freeze that occurs when closing an unregistered bsd:u session.
+ *
+ * These services will be cleaned up when the game process exits or when
+ * we explicitly clean them (e.g., on LDN disconnect).
+ */
+static std::vector<std::shared_ptr<::Service>> g_abandoned_forward_services;
+static os::Mutex g_abandoned_services_mutex{false};
 
 // =============================================================================
 // Constructor / Destructor
@@ -165,6 +180,41 @@ BsdMitmService::BsdMitmService(std::shared_ptr<::Service>&& s, const sm::MitmPro
  * all tracked sockets for this client to prevent resource leaks.
  */
 BsdMitmService::~BsdMitmService() {
+    // Clean up all socket info entries belonging to this session
+    // This prevents memory leaks when games crash or exit without closing sockets
+    //
+    // IMPORTANT: We must NOT hold g_socket_info_mutex while calling CloseProxySocket
+    // because CloseProxySocket acquires ProxySocketManager::m_mutex, which could
+    // cause a deadlock if the mutex order is reversed elsewhere.
+    std::vector<s32> proxy_fds_to_close;
+    {
+        std::scoped_lock lock(g_socket_info_mutex);
+        size_t cleaned = 0;
+        for (auto it = g_socket_info.begin(); it != g_socket_info.end(); ) {
+            if (it->second.session_id == m_session_id) {
+                // Collect proxy sockets to close after releasing the lock
+                if (it->second.is_proxy) {
+                    proxy_fds_to_close.push_back(it->first);
+                }
+                it = g_socket_info.erase(it);
+                cleaned++;
+            } else {
+                ++it;
+            }
+        }
+        if (cleaned > 0) {
+            LOG_INFO("[BSD#%u] DESTRUCTOR: cleaned up %zu orphaned socket entries", m_session_id, cleaned);
+        }
+    }
+
+    // Now close proxy sockets without holding g_socket_info_mutex
+    if (!proxy_fds_to_close.empty()) {
+        auto& manager = ProxySocketManager::GetInstance();
+        for (s32 fd : proxy_fds_to_close) {
+            manager.CloseProxySocket(fd);
+        }
+    }
+
     // Decrement the session count for this PID
     {
         std::scoped_lock lock(g_mitm_pids_mutex);
@@ -181,8 +231,25 @@ BsdMitmService::~BsdMitmService() {
 
     ::Service* fwd = m_forward_service.get();
     Handle session_handle = fwd ? fwd->session : INVALID_HANDLE;
-    LOG_INFO("[BSD#%u] DESTRUCTOR: pid=%lu, fwd_srv=%p (handle=0x%x), commands_received=%u",
-             m_session_id, m_client_pid, fwd, session_handle, m_command_count);
+    LOG_INFO("[BSD#%u] DESTRUCTOR: pid=%lu, fwd_srv=%p (handle=0x%x), commands=%u, registered=%d",
+             m_session_id, m_client_pid, fwd, session_handle, m_command_count, m_registered);
+
+    // LAZY FORWARD SERVICE HANDLING:
+    // If this session was never registered (never received RegisterClient),
+    // we must NOT close the forward_service. Closing an unregistered bsd:u
+    // session causes a system freeze. Instead, we move it to an "abandoned"
+    // list where it stays alive until the game process exits.
+    if (!m_registered) {
+        if (m_forward_service) {
+            LOG_WARN("[BSD#%u] Session never registered - moving forward_service to abandoned list to prevent freeze",
+                     m_session_id);
+            std::scoped_lock lock(g_abandoned_services_mutex);
+            g_abandoned_forward_services.push_back(std::move(m_forward_service));
+            LOG_INFO("[BSD#%u] Abandoned services count: %zu", m_session_id, g_abandoned_forward_services.size());
+        }
+    }
+    // For registered sessions, m_forward_service will be closed normally
+    // when the base class destructor runs (shared_ptr goes out of scope)
 }
 
 /**
@@ -233,27 +300,56 @@ bool BsdMitmService::ShouldMitm(const sm::MitmProcessInfo& client_info) {
         return false;
     }
 
-    // Games open bsd:u twice - first session is unused, second is the real one.
-    // Skip the first session, intercept the second.
+    // Track session count and decide whether to intercept
     {
         std::scoped_lock lock(g_mitm_pids_mutex);
         u32& count = g_mitm_pid_count[client_info.process_id.value];
+        count++;
 
-        if (count == 0) {
-            // First session for this PID - skip it, the game won't use it
-            count = 1;  // Mark that we've seen the first session
-            LOG_INFO("BSD ShouldMitm #%u: SKIP (first session for pid=%lu, waiting for second)",
+        // Skip the first BSD session from each game process.
+        // Games typically open a "dummy" first session that is never used
+        // (no RegisterClient is ever called on it). Intercepting this session
+        // causes system instability/crashes even if we try to handle it gracefully.
+        // The actual networking happens on session #2+.
+        if (count == 1) {
+            LOG_INFO("BSD ShouldMitm #%u: SKIP first session for pid=%lu (dummy session)",
                      call_id, client_info.process_id.value);
             return false;
         }
 
-        // Second (or later) session - this is the one the game actually uses
-        count++;
+        LOG_INFO("BSD ShouldMitm #%u: INTERCEPTING session #%u for pid=%lu",
+                 call_id, count, client_info.process_id.value);
     }
 
-    // Intercept this BSD session from whitelisted game.
-    LOG_INFO("BSD ShouldMitm #%u: INTERCEPTING (second session for pid)", call_id);
     return true;
+}
+
+/**
+ * @brief Clean up abandoned forward services
+ *
+ * Sessions that never received RegisterClient have their forward_service
+ * moved to an abandoned list to prevent system freeze. This function
+ * cleans up those services by closing them safely.
+ *
+ * Should be called when LDN disconnects or when the game process exits.
+ */
+void BsdMitmService::CleanupAbandonedServices() {
+    std::scoped_lock lock(g_abandoned_services_mutex);
+
+    if (g_abandoned_forward_services.empty()) {
+        return;
+    }
+
+    LOG_INFO("BSD CleanupAbandonedServices: cleaning up %zu abandoned services",
+             g_abandoned_forward_services.size());
+
+    // Clear the vector - this will call serviceClose() on each service
+    // We do this here (during LDN disconnect) rather than during session
+    // destruction because it's safer to close these sessions when the
+    // game is no longer actively using BSD.
+    g_abandoned_forward_services.clear();
+
+    LOG_INFO("BSD CleanupAbandonedServices: cleanup complete");
 }
 
 // =============================================================================
@@ -346,9 +442,14 @@ Result BsdMitmService::RegisterClient(
     // to the client process - we only forward them.
     transfer_memory.Detach();
 
+    // Mark this session as registered
+    if (R_SUCCEEDED(rc)) {
+        m_registered = true;
+    }
+
     // Return the pid_out value from real service
     out_result.SetValue(pid_out);
-    LOG_INFO("[BSD#%u] RegisterClient EXIT: returning rc=0x%x, pid_out=0x%lx", m_session_id, rc.GetValue(), pid_out);
+    LOG_INFO("[BSD#%u] RegisterClient EXIT: returning rc=0x%x, pid_out=0x%lx, registered=%d", m_session_id, rc.GetValue(), pid_out, m_registered);
     R_RETURN(rc);
 }
 
@@ -470,9 +571,10 @@ Result BsdMitmService::Socket(
                 .protocol = proto,
                 .is_proxy = false,
                 .broadcast = false,
+                .session_id = m_session_id,
             };
         }
-        LOG_VERBOSE("BSD Socket tracked fd=%d type=%d proto=%d", out.fd, type, static_cast<s32>(proto));
+        LOG_VERBOSE("BSD Socket tracked fd=%d type=%d proto=%d session=%u", out.fd, type, static_cast<s32>(proto), m_session_id);
     }
 
     R_RETURN(rc);
@@ -539,9 +641,10 @@ Result BsdMitmService::SocketExempt(
                 .protocol = proto,
                 .is_proxy = false,
                 .broadcast = false,
+                .session_id = m_session_id,
             };
         }
-        LOG_VERBOSE("BSD SocketExempt tracked fd=%d type=%d proto=%d", out.fd, type, static_cast<s32>(proto));
+        LOG_VERBOSE("BSD SocketExempt tracked fd=%d type=%d proto=%d session=%u", out.fd, type, static_cast<s32>(proto), m_session_id);
     }
 
     R_RETURN(rc);
@@ -759,6 +862,11 @@ Result BsdMitmService::RegisterClientShared(
     LOG_INFO("[BSD#%u] RegisterClientShared: forward returned rc=0x%x, pid_out=0x%lx",
              m_session_id, rc.GetValue(), pid_out);
 
+    // Mark this session as registered
+    if (R_SUCCEEDED(rc)) {
+        m_registered = true;
+    }
+
     out_result.SetValue(pid_out);
     R_RETURN(rc);
 }
@@ -792,8 +900,27 @@ Result BsdMitmService::RecvMMsg(
     sf::OutAutoSelectBuffer out_data)
 {
     m_command_count++;
-    LOG_VERBOSE("BSD RecvMMsg: fd=%d, vlen=%d, flags=%d, timeout=%d", fd, vlen, flags, timeout);
+    LOG_INFO("[BSD#%u] RecvMMsg ENTRY: cmd_count=%u, fd=%d, vlen=%d, flags=%d, timeout=%d",
+             m_session_id, m_command_count, fd, vlen, flags, timeout);
 
+    // Check if this is a proxy socket
+    bool is_proxy = false;
+    {
+        std::scoped_lock lock(g_socket_info_mutex);
+        auto it = g_socket_info.find(fd);
+        if (it != g_socket_info.end() && it->second.is_proxy) {
+            is_proxy = true;
+        }
+    }
+
+    if (is_proxy) {
+        // RecvMMsg on proxy sockets is complex due to the mmsghdr format.
+        // For now, log a warning - if this is hit, we need to investigate the game.
+        LOG_WARN("BSD RecvMMsg on proxy socket fd=%d - multi-message not fully supported, forwarding anyway", fd);
+        // Fall through to forward to real service
+    }
+
+    // Forward to real service
     struct { s32 fd; s32 vlen; s32 flags; s32 timeout; } in = { fd, vlen, flags, timeout };
     struct { s32 errno_val; s32 count; } out = {};
 
@@ -814,8 +941,28 @@ Result BsdMitmService::SendMMsg(
     const sf::InAutoSelectBuffer& in_data)
 {
     m_command_count++;
-    LOG_VERBOSE("BSD SendMMsg: fd=%d, vlen=%d, flags=%d", fd, vlen, flags);
+    LOG_INFO("[BSD#%u] SendMMsg ENTRY: cmd_count=%u, fd=%d, vlen=%d, flags=%d, data_size=%zu",
+             m_session_id, m_command_count, fd, vlen, flags, in_data.GetSize());
 
+    // Check if this is a proxy socket
+    bool is_proxy = false;
+    {
+        std::scoped_lock lock(g_socket_info_mutex);
+        auto it = g_socket_info.find(fd);
+        if (it != g_socket_info.end() && it->second.is_proxy) {
+            is_proxy = true;
+        }
+    }
+
+    if (is_proxy) {
+        // SendMMsg on proxy sockets is complex due to the mmsghdr format.
+        // For now, log a warning - if this is hit, we need to investigate the game.
+        LOG_WARN("BSD SendMMsg on proxy socket fd=%d - multi-message not fully supported, forwarding anyway", fd);
+        // Fall through to forward to real service - this will likely fail for LDN addresses
+        // but at least we'll see this in the logs
+    }
+
+    // Forward to real service
     struct { s32 fd; s32 vlen; s32 flags; } in = { fd, vlen, flags };
     struct { s32 errno_val; s32 count; } out = {};
 
@@ -1889,10 +2036,41 @@ Result BsdMitmService::Write(
     const sf::InAutoSelectBuffer& buffer)
 {
     m_command_count++;
-    LOG_VERBOSE("[BSD#%u] Write: cmd_count=%u, fd=%d, size=%zu", m_session_id, m_command_count, fd, buffer.GetSize());
+    LOG_INFO("[BSD#%u] Write ENTRY: cmd_count=%u, fd=%d, size=%zu", m_session_id, m_command_count, fd, buffer.GetSize());
 
-    // TODO: Story 8.6 - Same as Send for LDN sockets
+    // Check if this is a proxy socket - treat same as Send()
+    bool is_proxy = false;
+    {
+        std::scoped_lock lock(g_socket_info_mutex);
+        auto it = g_socket_info.find(fd);
+        if (it != g_socket_info.end() && it->second.is_proxy) {
+            is_proxy = true;
+        }
+    }
 
+    if (is_proxy) {
+        auto& manager = ProxySocketManager::GetInstance();
+        ProxySocket* proxy = manager.GetProxySocket(fd);
+
+        if (proxy != nullptr) {
+            // Write is equivalent to Send with no flags
+            s32 result = proxy->Send(buffer.GetPointer(), buffer.GetSize(), 0);
+
+            if (result < 0) {
+                // Negative result is -errno
+                out_errno.SetValue(-result);
+                out_size.SetValue(0);
+            } else {
+                out_errno.SetValue(0);
+                out_size.SetValue(result);
+            }
+
+            LOG_INFO("BSD Write fd=%d proxy sent %d bytes", fd, result);
+            R_SUCCEED();
+        }
+    }
+
+    // Not a proxy socket - forward to real service
     struct {
         s32 errno_val;
         s32 size;
@@ -1943,10 +2121,41 @@ Result BsdMitmService::Read(
     sf::OutAutoSelectBuffer buffer)
 {
     m_command_count++;
-    LOG_VERBOSE("[BSD#%u] Read: cmd_count=%u, fd=%d, buf_size=%zu", m_session_id, m_command_count, fd, buffer.GetSize());
+    LOG_INFO("[BSD#%u] Read ENTRY: cmd_count=%u, fd=%d, buf_size=%zu", m_session_id, m_command_count, fd, buffer.GetSize());
 
-    // TODO: Story 8.6 - Same as Recv for LDN sockets
+    // Check if this is a proxy socket - treat same as Recv() with no flags
+    bool is_proxy = false;
+    {
+        std::scoped_lock lock(g_socket_info_mutex);
+        auto it = g_socket_info.find(fd);
+        if (it != g_socket_info.end() && it->second.is_proxy) {
+            is_proxy = true;
+        }
+    }
 
+    if (is_proxy) {
+        auto& manager = ProxySocketManager::GetInstance();
+        ProxySocket* proxy = manager.GetProxySocket(fd);
+
+        if (proxy != nullptr) {
+            // Read is equivalent to Recv with no flags
+            s32 result = proxy->Recv(buffer.GetPointer(), buffer.GetSize(), 0);
+
+            if (result < 0) {
+                // Negative result is -errno
+                out_errno.SetValue(-result);
+                out_size.SetValue(0);
+            } else {
+                out_errno.SetValue(0);
+                out_size.SetValue(result);
+            }
+
+            LOG_INFO("BSD Read fd=%d proxy received %d bytes", fd, result);
+            R_SUCCEED();
+        }
+    }
+
+    // Not a proxy socket - forward to real service
     struct {
         s32 errno_val;
         s32 size;

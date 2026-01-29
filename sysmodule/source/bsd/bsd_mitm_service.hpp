@@ -59,6 +59,16 @@ public:
      */
     static bool ShouldMitm(const sm::MitmProcessInfo& client_info);
 
+    /**
+     * @brief Clean up abandoned forward services
+     *
+     * Sessions that never received RegisterClient have their forward_service
+     * moved to an abandoned list to prevent system freeze. This function
+     * cleans up those services. Should be called when LDN disconnects or
+     * when the game process exits.
+     */
+    static void CleanupAbandonedServices();
+
 public:
     // =========================================================================
     // Command Implementations
@@ -243,8 +253,11 @@ private:
     u32 m_command_count = 0;
     /// Unique session ID for debugging (assigned in constructor)
     u32 m_session_id = 0;
-    /// Static counter for session IDs
-    static inline u32 s_next_session_id = 0;
+    /// Whether RegisterClient was called on this session
+    /// Sessions without RegisterClient should not be used for socket operations
+    bool m_registered = false;
+    /// Static counter for session IDs (atomic for thread safety)
+    static inline std::atomic<u32> s_next_session_id{0};
 };
 
 // Verify interface compliance
