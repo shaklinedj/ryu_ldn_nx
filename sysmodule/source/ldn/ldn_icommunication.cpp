@@ -1299,6 +1299,32 @@ void ICommunicationService::HandleServerPacket(ryu_ldn::protocol::PacketId id, c
                          m_network_info.ldn.nodeCount,
                          m_network_info.ldn.nodeCountMax);
 
+                // Debug: log NetworkInfo common fields
+                LOG_INFO("  NetworkInfo.common: bssid=%02X:%02X:%02X:%02X:%02X:%02X, channel=%d",
+                         m_network_info.common.bssid.raw[0], m_network_info.common.bssid.raw[1],
+                         m_network_info.common.bssid.raw[2], m_network_info.common.bssid.raw[3],
+                         m_network_info.common.bssid.raw[4], m_network_info.common.bssid.raw[5],
+                         m_network_info.common.channel);
+                LOG_INFO("  NetworkInfo.common: linkLevel=%d, netType=%u",
+                         m_network_info.common.linkLevel, m_network_info.common.networkType);
+
+                // Debug: log intent ID (localCommunicationId and sceneId)
+                LOG_INFO("  NetworkInfo.networkId: localCommId=0x%016llX, sceneId=%u",
+                         m_network_info.networkId.intentId.localCommunicationId,
+                         m_network_info.networkId.intentId.sceneId);
+                LOG_INFO("  NetworkInfo.ldn: advertiseDataSize=%u (max 384)",
+                         m_network_info.ldn.advertiseDataSize);
+
+                // Debug: log first 32 bytes of advertiseData if present
+                if (m_network_info.ldn.advertiseDataSize > 0) {
+                    size_t dump_len = std::min<size_t>(m_network_info.ldn.advertiseDataSize, 32);
+                    char hex_buf[97] = {0};
+                    for (size_t j = 0; j < dump_len; j++) {
+                        snprintf(hex_buf + j*3, 4, "%02X ", m_network_info.ldn.advertiseData[j]);
+                    }
+                    LOG_INFO("  NetworkInfo.ldn.advertiseData[0-%zu]: %s", dump_len-1, hex_buf);
+                }
+
                 // Debug: log each node's info including MAC and username
                 for (u8 i = 0; i < m_network_info.ldn.nodeCount && i < 8; i++) {
                     const auto& node = m_network_info.ldn.nodes[i];
