@@ -459,6 +459,9 @@ Result ICommunicationService::GetNetworkInfoLatestUpdate(
     ams::sf::Out<NetworkInfo> buffer,
     ams::sf::OutArray<NodeLatestUpdate> pUpdates)
 {
+    LOG_INFO("GetNetworkInfoLatestUpdate() called, node_count=%u, update_buf_size=%zu",
+             m_network_info.ldn.nodeCount, pUpdates.GetSize());
+
     buffer.SetValue(m_network_info);
 
     // Report node state changes since last call
@@ -472,8 +475,10 @@ Result ICommunicationService::GetNetworkInfoLatestUpdate(
 
             if (current_connected && !prev_connected) {
                 updates[i].stateChange = static_cast<u8>(NodeStateChange::Connect);
+                LOG_INFO("  Node[%zu]: stateChange=Connect (was disconnected, now connected)", i);
             } else if (!current_connected && prev_connected) {
                 updates[i].stateChange = static_cast<u8>(NodeStateChange::Disconnect);
+                LOG_INFO("  Node[%zu]: stateChange=Disconnect (was connected, now disconnected)", i);
             } else {
                 updates[i].stateChange = static_cast<u8>(NodeStateChange::None);
             }
