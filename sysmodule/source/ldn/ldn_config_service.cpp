@@ -7,6 +7,7 @@
  */
 
 #include "ldn_config_service.hpp"
+#include "ldn_shared_state.hpp"
 #include "../config/config.hpp"
 #include "../config/config_manager.hpp"
 
@@ -19,7 +20,7 @@ namespace ams::mitm::ldn {
 LdnConfigService::LdnConfigService(LdnICommunication* communication)
     : m_communication(communication)
 {
-    AMS_UNUSED(m_communication);  // TODO: Use when integration is complete
+    // m_communication can be null if created without a parent service
 }
 
 Result LdnConfigService::GetVersion(sf::Out<std::array<char, 32>> out) {
@@ -30,22 +31,38 @@ Result LdnConfigService::GetVersion(sf::Out<std::array<char, 32>> out) {
 }
 
 Result LdnConfigService::GetConnectionStatus(sf::Out<ConnectionStatus> out) {
-    // TODO: Get actual connection status from network client
-    // For now, return disconnected as placeholder
-    *out = ConnectionStatus::Disconnected;
+    auto& shared_state = SharedState::GetInstance();
+    CommState ldn_state = shared_state.GetLdnState();
+
+    // Map LDN state to connection status
+    switch (ldn_state) {
+        case CommState::AccessPointCreated:
+        case CommState::StationConnected:
+            *out = ConnectionStatus::Ready;
+            break;
+        case CommState::AccessPoint:
+        case CommState::Station:
+            *out = ConnectionStatus::Connected;
+            break;
+        case CommState::Initialized:
+            *out = ConnectionStatus::Connecting;
+            break;
+        default:
+            *out = ConnectionStatus::Disconnected;
+            break;
+    }
     R_SUCCEED();
 }
 
 Result LdnConfigService::GetLdnState(sf::Out<u32> out) {
-    // TODO: Get actual state from LdnICommunication
-    *out = 0;  // None
+    auto& shared_state = SharedState::GetInstance();
+    *out = static_cast<u32>(shared_state.GetLdnState());
     R_SUCCEED();
 }
 
 Result LdnConfigService::GetSessionInfo(sf::Out<SessionInfo> out) {
-    SessionInfo info{};
-    // TODO: Get actual session info from LdnICommunication
-    *out = info;
+    auto& shared_state = SharedState::GetInstance();
+    *out = shared_state.GetSessionInfoStruct();
     R_SUCCEED();
 }
 
@@ -63,7 +80,13 @@ Result LdnConfigService::SetServerAddress(ServerAddress address) {
     auto& cfg = ryu_ldn::config::ConfigManager::Instance();
     cfg.SetServerHost(address.host);
     cfg.SetServerPort(address.port);
-    // TODO: Trigger reconnection if connected
+
+    // Trigger reconnection if connected
+    auto& shared_state = SharedState::GetInstance();
+    CommState state = shared_state.GetLdnState();
+    if (state != CommState::None && state != CommState::Initialized) {
+        shared_state.RequestReconnect();
+    }
     R_SUCCEED();
 }
 
@@ -80,16 +103,15 @@ Result LdnConfigService::SetDebugEnabled(u32 enabled) {
 }
 
 Result LdnConfigService::ForceReconnect() {
-    // TODO: Trigger network client reconnection
-    // if (m_communication != nullptr) {
-    //     m_communication->ForceReconnect();
-    // }
+    // Request reconnection via shared state
+    auto& shared_state = SharedState::GetInstance();
+    shared_state.RequestReconnect();
     R_SUCCEED();
 }
 
 Result LdnConfigService::GetLastRtt(sf::Out<u32> out) {
-    // TODO: Get actual RTT from network client
-    *out = 0;
+    auto& shared_state = SharedState::GetInstance();
+    *out = shared_state.GetLastRtt();
     R_SUCCEED();
 }
 

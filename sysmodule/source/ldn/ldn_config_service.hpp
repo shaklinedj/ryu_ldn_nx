@@ -40,6 +40,7 @@
 #pragma once
 
 #include <stratosphere.hpp>
+#include "ldn_types.hpp"
 
 namespace ams::mitm::ldn {
 
@@ -57,18 +58,7 @@ enum class ConnectionStatus : u32 {
     Error = 4,          ///< Connection error
 };
 
-/**
- * @brief Session information structure for overlay
- */
-struct SessionInfo {
-    u8 node_count;           ///< Number of players in session
-    u8 node_count_max;       ///< Maximum players allowed
-    u8 local_node_id;        ///< Our node ID in the session
-    u8 is_host;              ///< 1 if we are the host, 0 if client
-    u32 session_duration_ms; ///< Time since session started (ms)
-    char game_name[64];      ///< Game name (if available)
-};
-static_assert(sizeof(SessionInfo) == 72);
+// SessionInfo is defined in ldn_types.hpp
 
 /**
  * @brief Server address structure
