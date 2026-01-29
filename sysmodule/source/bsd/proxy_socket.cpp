@@ -592,7 +592,16 @@ void ProxySocket::IncomingConnection(const ryu_ldn::protocol::ProxyConnectReques
     // Signal that a connection is available
     m_accept_event.Signal();
 
-    // TODO: Send ProxyConnectReply back to the peer via ProxySocketManager
+    // Send ProxyConnectReply back to the peer via ProxySocketManager
+    // This confirms the connection was accepted
+    auto& manager = ProxySocketManager::GetInstance();
+    uint32_t local_ip = m_local_addr.GetAddr();
+    uint16_t local_port = m_local_addr.GetPort();
+    uint32_t remote_ip = request.info.source_ipv4;
+    uint16_t remote_port = request.info.source_port;
+
+    manager.SendProxyConnectReply(local_ip, local_port, remote_ip, remote_port,
+                                   ryu_ldn::bsd::ProtocolType::Tcp);
 }
 
 void ProxySocket::HandleConnectResponse(const ryu_ldn::protocol::ProxyConnectResponse& response) {
@@ -649,7 +658,17 @@ Result ProxySocket::Close() {
         m_receive_queue.clear();
     }
 
-    // TODO: For TCP, send ProxyDisconnect to server
+    // For TCP, send ProxyDisconnect to notify the peer
+    if (m_protocol == ryu_ldn::bsd::ProtocolType::Tcp && m_remote_addr.GetPort() != 0) {
+        auto& manager = ProxySocketManager::GetInstance();
+        uint32_t local_ip = m_local_addr.GetAddr();
+        uint16_t local_port = m_local_addr.GetPort();
+        uint32_t remote_ip = m_remote_addr.GetAddr();
+        uint16_t remote_port = m_remote_addr.GetPort();
+
+        manager.SendProxyDisconnect(local_ip, local_port, remote_ip, remote_port,
+                                     ryu_ldn::bsd::ProtocolType::Tcp);
+    }
 
     R_SUCCEED();
 }

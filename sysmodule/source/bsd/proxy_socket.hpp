@@ -572,8 +572,16 @@ private:
      *
      * Most options are stored locally since we're proxying.
      * Format: map of (level << 16 | optname) -> value
+     * Currently stores integer options only (most common case).
      */
-    // TODO: Add options storage if needed
+    std::unordered_map<uint32_t, s32> m_socket_options;
+
+    /**
+     * @brief Helper to get option key from level and optname
+     */
+    static constexpr uint32_t MakeOptionKey(s32 level, s32 optname) {
+        return (static_cast<uint32_t>(level) << 16) | static_cast<uint32_t>(optname & 0xFFFF);
+    }
 };
 
 } // namespace ams::mitm::bsd

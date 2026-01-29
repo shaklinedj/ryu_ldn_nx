@@ -180,6 +180,16 @@ public:
      */
     void CloseAllProxySockets();
 
+    /**
+     * @brief Reset the entire manager state
+     *
+     * Closes all sockets, clears pending packets, resets local IP.
+     * Should be called when the LDN session ends to prevent memory leaks.
+     *
+     * @note Thread-safe
+     */
+    void Reset();
+
     // =========================================================================
     // Port Management
     // =========================================================================
@@ -346,6 +356,70 @@ public:
                           ryu_ldn::bsd::ProtocolType protocol);
 
     /**
+     * @brief Callback type for sending ProxyConnectReply to the LDN server
+     *
+     * This callback is invoked when a listening TCP socket accepts a connection.
+     */
+    using SendProxyConnectReplyCallback = bool (*)(uint32_t source_ip, uint16_t source_port,
+                                                    uint32_t dest_ip, uint16_t dest_port,
+                                                    ryu_ldn::bsd::ProtocolType protocol);
+
+    /**
+     * @brief Set the callback for sending ProxyConnectReply to the LDN server
+     *
+     * @param callback Function to call when TCP proxy sockets accept connections
+     */
+    void SetProxyConnectReplyCallback(SendProxyConnectReplyCallback callback);
+
+    /**
+     * @brief Send ProxyConnectReply for accepted TCP connection
+     *
+     * Called by ProxySocket::Accept to confirm a connection was accepted.
+     *
+     * @param source_ip Our IP (host byte order)
+     * @param source_port Our port (host byte order)
+     * @param dest_ip Remote IP (host byte order)
+     * @param dest_port Remote port (host byte order)
+     * @param protocol Protocol type (TCP)
+     * @return true if reply was sent, false if no callback or send failed
+     */
+    bool SendProxyConnectReply(uint32_t source_ip, uint16_t source_port,
+                                uint32_t dest_ip, uint16_t dest_port,
+                                ryu_ldn::bsd::ProtocolType protocol);
+
+    /**
+     * @brief Callback type for sending ProxyDisconnect to the LDN server
+     *
+     * This callback is invoked when a TCP proxy socket is closed.
+     */
+    using SendProxyDisconnectCallback = bool (*)(uint32_t source_ip, uint16_t source_port,
+                                                  uint32_t dest_ip, uint16_t dest_port,
+                                                  ryu_ldn::bsd::ProtocolType protocol);
+
+    /**
+     * @brief Set the callback for sending ProxyDisconnect to the LDN server
+     *
+     * @param callback Function to call when TCP proxy sockets are closed
+     */
+    void SetProxyDisconnectCallback(SendProxyDisconnectCallback callback);
+
+    /**
+     * @brief Send ProxyDisconnect for closed TCP connection
+     *
+     * Called by ProxySocket::Close to notify peer of connection close.
+     *
+     * @param source_ip Our IP (host byte order)
+     * @param source_port Our port (host byte order)
+     * @param dest_ip Remote IP (host byte order)
+     * @param dest_port Remote port (host byte order)
+     * @param protocol Protocol type (TCP)
+     * @return true if disconnect was sent, false if no callback or send failed
+     */
+    bool SendProxyDisconnect(uint32_t source_ip, uint16_t source_port,
+                              uint32_t dest_ip, uint16_t dest_port,
+                              ryu_ldn::bsd::ProtocolType protocol);
+
+    /**
      * @brief Route incoming ProxyConnectReply to the connecting socket
      *
      * Called by the LDN MITM service when a ProxyConnectReply packet arrives.
@@ -497,6 +571,16 @@ private:
      * @brief Callback for sending ProxyConnect to LDN server (TCP handshake)
      */
     SendProxyConnectCallback m_proxy_connect_callback{nullptr};
+
+    /**
+     * @brief Callback for sending ProxyConnectReply to LDN server (TCP accept)
+     */
+    SendProxyConnectReplyCallback m_proxy_connect_reply_callback{nullptr};
+
+    /**
+     * @brief Callback for sending ProxyDisconnect to LDN server (TCP close)
+     */
+    SendProxyDisconnectCallback m_proxy_disconnect_callback{nullptr};
 
     // =========================================================================
     // Packet Buffering (for packets arriving before socket bind)

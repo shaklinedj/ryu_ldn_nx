@@ -119,6 +119,34 @@ void ProxySocketManager::CloseAllProxySockets() {
     m_port_pool.ReleaseAll();
 }
 
+void ProxySocketManager::Reset() {
+    std::scoped_lock lock(m_mutex);
+
+    // Close all proxy sockets
+    for (auto& [fd, socket] : m_sockets) {
+        if (socket != nullptr) {
+            Result close_result = socket->Close();
+            AMS_UNUSED(close_result);
+        }
+    }
+    m_sockets.clear();
+
+    // Release all ports
+    m_port_pool.ReleaseAll();
+
+    // Clear pending packets buffer
+    m_pending_packets.clear();
+
+    // Reset local IP
+    m_local_ip = 0;
+
+    // Clear callbacks
+    m_send_callback = nullptr;
+    m_proxy_connect_callback = nullptr;
+    m_proxy_connect_reply_callback = nullptr;
+    m_proxy_disconnect_callback = nullptr;
+}
+
 // =============================================================================
 // Port Management
 // =============================================================================
@@ -173,6 +201,48 @@ bool ProxySocketManager::SendProxyConnect(uint32_t source_ip, uint16_t source_po
     {
         std::scoped_lock lock(m_mutex);
         callback = m_proxy_connect_callback;
+    }
+
+    if (callback == nullptr) {
+        return false;
+    }
+
+    return callback(source_ip, source_port, dest_ip, dest_port, protocol);
+}
+
+void ProxySocketManager::SetProxyConnectReplyCallback(SendProxyConnectReplyCallback callback) {
+    std::scoped_lock lock(m_mutex);
+    m_proxy_connect_reply_callback = callback;
+}
+
+bool ProxySocketManager::SendProxyConnectReply(uint32_t source_ip, uint16_t source_port,
+                                                uint32_t dest_ip, uint16_t dest_port,
+                                                ryu_ldn::bsd::ProtocolType protocol) {
+    SendProxyConnectReplyCallback callback;
+    {
+        std::scoped_lock lock(m_mutex);
+        callback = m_proxy_connect_reply_callback;
+    }
+
+    if (callback == nullptr) {
+        return false;
+    }
+
+    return callback(source_ip, source_port, dest_ip, dest_port, protocol);
+}
+
+void ProxySocketManager::SetProxyDisconnectCallback(SendProxyDisconnectCallback callback) {
+    std::scoped_lock lock(m_mutex);
+    m_proxy_disconnect_callback = callback;
+}
+
+bool ProxySocketManager::SendProxyDisconnect(uint32_t source_ip, uint16_t source_port,
+                                              uint32_t dest_ip, uint16_t dest_port,
+                                              ryu_ldn::bsd::ProtocolType protocol) {
+    SendProxyDisconnectCallback callback;
+    {
+        std::scoped_lock lock(m_mutex);
+        callback = m_proxy_disconnect_callback;
     }
 
     if (callback == nullptr) {
