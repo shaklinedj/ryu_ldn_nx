@@ -11,6 +11,7 @@
 #include "../config/config_ipc_service.hpp"
 #include "../debug/log.hpp"
 #include "../bsd/proxy_socket_manager.hpp"
+#include "../bsd/bsd_mitm_service.hpp"
 #include <arpa/inet.h>
 
 namespace ams::mitm::ldn {
@@ -127,6 +128,7 @@ ICommunicationService::ICommunicationService(ncm::ProgramId program_id)
     , m_advertise_data_size(0)
     , m_game_version{}
     , m_network_connected(false)
+    , m_prev_node_connected{}
     , m_last_network_error(ryu_ldn::protocol::NetworkErrorCode::None)
     , m_use_p2p_proxy(!ryu_ldn::ipc::g_config.ldn.disable_p2p)
     , m_proxy_config{}
@@ -290,8 +292,13 @@ void ICommunicationService::DisconnectFromServer() {
             }
         }
 
-        // Clear the send callback
-        mitm::bsd::ProxySocketManager::GetInstance().SetSendCallback(nullptr);
+        // Reset the ProxySocketManager - clears all sockets, pending packets, callbacks
+        // This prevents memory leaks when the game disconnects and reconnects
+        mitm::bsd::ProxySocketManager::GetInstance().Reset();
+
+        // Clean up abandoned BSD forward services (sessions that never got RegisterClient)
+        // This is safe to do now because we're disconnecting from LDN
+        mitm::bsd::BsdMitmService::CleanupAbandonedServices();
 
         m_server_client.disconnect();
         m_server_connected = false;
@@ -454,10 +461,32 @@ Result ICommunicationService::GetNetworkInfoLatestUpdate(
 {
     buffer.SetValue(m_network_info);
 
-    // Clear updates - no changes to report yet
-    // TODO: Track node changes and report them here
+    // Report node state changes since last call
     if (pUpdates.GetSize() > 0) {
-        std::memset(pUpdates.GetPointer(), 0, pUpdates.GetSize() * sizeof(NodeLatestUpdate));
+        NodeLatestUpdate* updates = pUpdates.GetPointer();
+        size_t update_count = std::min(pUpdates.GetSize(), static_cast<size_t>(NodeCountMax));
+
+        for (size_t i = 0; i < update_count; i++) {
+            bool current_connected = (i < NodeCountMax) && m_network_info.ldn.nodes[i].isConnected;
+            bool prev_connected = m_prev_node_connected[i];
+
+            if (current_connected && !prev_connected) {
+                updates[i].stateChange = static_cast<u8>(NodeStateChange::Connect);
+            } else if (!current_connected && prev_connected) {
+                updates[i].stateChange = static_cast<u8>(NodeStateChange::Disconnect);
+            } else {
+                updates[i].stateChange = static_cast<u8>(NodeStateChange::None);
+            }
+            std::memset(updates[i]._unk, 0, sizeof(updates[i]._unk));
+
+            // Update previous state for next call
+            m_prev_node_connected[i] = current_connected;
+        }
+
+        // Zero remaining entries if buffer is larger than NodeCountMax
+        for (size_t i = update_count; i < pUpdates.GetSize(); i++) {
+            std::memset(&updates[i], 0, sizeof(NodeLatestUpdate));
+        }
     }
 
     R_SUCCEED();
@@ -1286,7 +1315,7 @@ void ICommunicationService::HandleServerPacket(ryu_ldn::protocol::PacketId id, c
                 shared_state.SetSessionInfo(
                     m_network_info.ldn.nodeCount,
                     m_network_info.ldn.nodeCountMax,
-                    0, // local_node_id - TODO: determine from nodes array
+                    FindLocalNodeId(),
                     is_host
                 );
             } else {
@@ -1310,7 +1339,7 @@ void ICommunicationService::HandleServerPacket(ryu_ldn::protocol::PacketId id, c
                 shared_state.SetSessionInfo(
                     m_network_info.ldn.nodeCount,
                     m_network_info.ldn.nodeCountMax,
-                    0, // local_node_id
+                    FindLocalNodeId(),
                     m_state_machine.GetState() == CommState::AccessPointCreated
                 );
 
@@ -1872,6 +1901,17 @@ void ICommunicationService::BackgroundThreadFunc() {
     }
 
     LOG_VERBOSE("Background thread stopped");
+}
+
+u8 ICommunicationService::FindLocalNodeId() const {
+    // Search nodes array for our IP address
+    for (u8 i = 0; i < NodeCountMax; i++) {
+        const auto& node = m_network_info.ldn.nodes[i];
+        if (node.isConnected && node.ipv4Address == m_ipv4_address) {
+            return i;
+        }
+    }
+    return 0xFF; // Not found
 }
 
 } // namespace ams::mitm::ldn

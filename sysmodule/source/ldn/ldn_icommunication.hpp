@@ -398,6 +398,9 @@ private:
     // Network connected flag (like Ryujinx _networkConnected)
     bool m_network_connected;               ///< True when in active network session
 
+    // Node state tracking for GetNetworkInfoLatestUpdate
+    bool m_prev_node_connected[NodeCountMax]; ///< Previous connected state of each node
+
     // Last network error (like Ryujinx _lastError)
     ryu_ldn::protocol::NetworkErrorCode m_last_network_error; ///< Last error from server
 
@@ -437,6 +440,16 @@ private:
      * Called when the timeout expires. Disconnects from server.
      */
     static void OnInactivityTimeout();
+
+    /**
+     * @brief Find our local node ID in the network info
+     *
+     * Searches through the nodes array to find the node matching our
+     * m_ipv4_address. Returns 0xFF if not found.
+     *
+     * @return Node ID (0-7) or 0xFF if not found
+     */
+    u8 FindLocalNodeId() const;
 
     /**
      * @brief Set game version from local_communication_version
