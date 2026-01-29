@@ -605,7 +605,7 @@ ams::Result ConfigService::GetSessionInfo(ams::sf::Out<SessionInfoIpc> out) {
 
     // Copy to IPC structure
     out->node_count = info.node_count;
-    out->max_nodes = info.max_nodes;
+    out->max_nodes = info.node_count_max;
     out->local_node_id = info.local_node_id;
     out->is_host = info.is_host;
     std::memset(out->reserved, 0, sizeof(out->reserved));

@@ -307,6 +307,21 @@ struct NodeLatestUpdate : public ams::sf::PrefersPointerTransferMode {
 static_assert(sizeof(NodeLatestUpdate) == 8);
 
 /**
+ * @brief Session information for IPC with overlay
+ *
+ * Contains information about the current LDN session, exposed via ryu:cfg.
+ * Matches RyuLdnSessionInfo in overlay/source/ryu_ldn_ipc.h
+ */
+struct SessionInfo {
+    u8 node_count;           ///< Number of players in session
+    u8 node_count_max;       ///< Maximum players allowed
+    u8 local_node_id;        ///< Our node ID in the session
+    u8 is_host;              ///< 1 if we are the host, 0 if client
+    u8 reserved[4];          ///< Reserved for future use
+};
+static_assert(sizeof(SessionInfo) == 8);
+
+/**
  * @brief Security parameters from a network
  */
 struct SecurityParameter {

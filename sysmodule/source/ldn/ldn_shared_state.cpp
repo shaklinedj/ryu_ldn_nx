@@ -139,9 +139,10 @@ SessionInfo SharedState::GetSessionInfoStruct() const {
     std::scoped_lock lk(m_mutex);
     SessionInfo info{};
     info.node_count = m_node_count;
-    info.max_nodes = m_max_nodes;
+    info.node_count_max = m_max_nodes;
     info.local_node_id = m_local_node_id;
     info.is_host = m_is_host ? 1 : 0;
+    std::memset(info.reserved, 0, sizeof(info.reserved));
     return info;
 }
 

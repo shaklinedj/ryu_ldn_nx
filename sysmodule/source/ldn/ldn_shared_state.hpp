@@ -25,28 +25,11 @@
 #include <stratosphere.hpp>
 #include <unordered_set>
 #include <vector>
-
-// Forward declare CommState to avoid circular includes
-// CommState is defined in ldn_types.hpp
-namespace ams::mitm::ldn {
-    enum class CommState : u32;
-}
+#include "ldn_types.hpp"
 
 namespace ams::mitm::ldn {
 
-/**
- * @brief Session information structure
- *
- * Contains information about the current LDN session.
- */
-struct SessionInfo {
-    u8 node_count;      ///< Current number of nodes in session
-    u8 max_nodes;       ///< Maximum nodes allowed in session
-    u8 local_node_id;   ///< This node's ID in the session
-    u8 is_host;         ///< 1 if this node is the host, 0 otherwise
-    u8 reserved[4];     ///< Reserved for future use
-};
-static_assert(sizeof(SessionInfo) == 8, "SessionInfo must be 8 bytes for IPC");
+// SessionInfo and CommState are defined in ldn_types.hpp
 
 /**
  * @brief Shared runtime state singleton
