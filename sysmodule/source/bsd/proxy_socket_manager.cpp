@@ -10,6 +10,7 @@
  */
 
 #include "proxy_socket_manager.hpp"
+#include "../debug/log.hpp"
 
 namespace ams::mitm::bsd {
 
@@ -183,10 +184,17 @@ bool ProxySocketManager::SendProxyData(uint32_t source_ip, uint16_t source_port,
     }
 
     if (callback == nullptr) {
+        LOG_WARN("ProxySocketManager::SendProxyData: m_send_callback=nullptr (src=0x%08X:%u dst=0x%08X:%u)",
+                 source_ip, source_port, dest_ip, dest_port);
         return false;
     }
 
-    return callback(source_ip, source_port, dest_ip, dest_port, protocol, data, data_len);
+    bool ok = callback(source_ip, source_port, dest_ip, dest_port, protocol, data, data_len);
+    if (!ok) {
+        LOG_WARN("ProxySocketManager::SendProxyData: callback returned false (src=0x%08X:%u dst=0x%08X:%u len=%zu)",
+                 source_ip, source_port, dest_ip, dest_port, data_len);
+    }
+    return ok;
 }
 
 void ProxySocketManager::SetProxyConnectCallback(SendProxyConnectCallback callback) {

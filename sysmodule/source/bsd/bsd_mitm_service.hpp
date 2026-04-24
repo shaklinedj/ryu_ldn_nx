@@ -125,7 +125,7 @@ public:
         sf::OutAutoSelectBuffer buffer);
 
     Result RecvFrom(
-        sf::Out<s32> out_errno, sf::Out<s32> out_size,
+        sf::Out<s32> out_ret, sf::Out<s32> out_errno, sf::Out<u32> out_addrlen,
         s32 fd, s32 flags,
         sf::OutAutoSelectBuffer buffer,
         sf::OutAutoSelectBuffer addr_out);

@@ -71,6 +71,8 @@ static bool SendProxyDataCallback(uint32_t source_ip, uint16_t source_port,
     std::scoped_lock lock(g_active_service_mutex);
 
     if (g_active_ldn_service == nullptr) {
+        LOG_WARN("SendProxyDataCallback: g_active_ldn_service=nullptr, src=0x%08X:%u dst=0x%08X:%u",
+                 source_ip, source_port, dest_ip, dest_port);
         return false;
     }
 
@@ -90,6 +92,7 @@ static bool SendProxyDataCallback(uint32_t source_ip, uint16_t source_port,
             header.info.protocol = ryu_ldn::protocol::ProtocolType::Udp;
             break;
         default:
+            LOG_WARN("SendProxyDataCallback: unsupported protocol=%d", static_cast<int>(protocol));
             return false;
     }
 
@@ -97,6 +100,11 @@ static bool SendProxyDataCallback(uint32_t source_ip, uint16_t source_port,
 
     // Send via the LDN client
     auto result = g_active_ldn_service->SendProxyDataToServer(header, data, data_len);
+    if (result != ryu_ldn::network::ClientOpResult::Success) {
+        LOG_WARN("SendProxyDataCallback: SendProxyDataToServer failed: %s (src=0x%08X:%u dst=0x%08X:%u len=%zu)",
+                 ryu_ldn::network::client_op_result_to_string(result),
+                 source_ip, source_port, dest_ip, dest_port, data_len);
+    }
     return result == ryu_ldn::network::ClientOpResult::Success;
 }
 

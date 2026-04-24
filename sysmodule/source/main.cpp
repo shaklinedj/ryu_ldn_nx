@@ -105,8 +105,12 @@ namespace ams {
         os::ThreadType g_thread;
 
         // Heap for dynamic allocations
-        // NOTE: Increased to 96KB for game whitelist (~40KB) + other allocations
-        alignas(0x40) constinit u8 g_heap_memory[96_KB];
+        // NOTE: 384KB covers: game whitelist (~40KB), proxy socket receive queues
+        // (up to ~45KB under lobby traffic with 900+ byte packets), pending-packet
+        // buffer, ExpHeap overhead/fragmentation, and transient std::vector/std::deque
+        // allocations. 96KB saturated under real gameplay traffic and caused DABRT
+        // 0x101 on allocation failure.
+        alignas(0x40) constinit u8 g_heap_memory[384_KB];
         constinit lmem::HeapHandle g_heap_handle;
         constinit bool g_heap_initialized;
         constinit os::SdkMutex g_heap_init_mutex;

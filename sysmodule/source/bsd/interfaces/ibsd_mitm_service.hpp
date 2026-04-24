@@ -108,12 +108,15 @@
          ams::sf::OutAutoSelectBuffer buffer),                                                                          \
         (out_errno, out_size, fd, flags, buffer))                                                                       \
     /* Cmd 9: RecvFrom - Receive with source address */                                                                 \
+    /* Wire layout (verified against libnx bsdRecvFrom): raw[0]=s32 ret, raw[4]=s32 errno, raw[8]=u32 addrlen.        */\
+    /* Out arguments are laid out in declaration order within same alignment class (all s32/u32 = align 4).           */\
+    /* sf_impl_command_serialization.hpp:355-387 (RawDataOffsetCalculator) uses stable sort by alignment.             */\
     AMS_SF_METHOD_INFO(C, H, 9,   Result, RecvFrom,                                                                     \
-        (ams::sf::Out<s32> out_errno, ams::sf::Out<s32> out_size,                                                       \
+        (ams::sf::Out<s32> out_ret, ams::sf::Out<s32> out_errno, ams::sf::Out<u32> out_addrlen,                         \
          s32 fd, s32 flags,                                                                                             \
          ams::sf::OutAutoSelectBuffer buffer,                                                                           \
          ams::sf::OutAutoSelectBuffer addr_out),                                                                        \
-        (out_errno, out_size, fd, flags, buffer, addr_out))                                                             \
+        (out_ret, out_errno, out_addrlen, fd, flags, buffer, addr_out))                                                 \
     /* Cmd 10: Send - Send to connected socket */                                                                       \
     AMS_SF_METHOD_INFO(C, H, 10,  Result, Send,                                                                         \
         (ams::sf::Out<s32> out_errno, ams::sf::Out<s32> out_size,                                                       \

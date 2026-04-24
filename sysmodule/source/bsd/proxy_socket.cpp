@@ -211,9 +211,11 @@ s32 ProxySocket::SendTo(const void* data, size_t len, s32 flags, const ryu_ldn::
         return -static_cast<s32>(Errno::MsgSize);
     }
 
-    // Send via ProxySocketManager which routes to LDN server
-    // Extract addresses in host byte order for the manager
-    uint32_t source_ip = m_local_addr.GetAddr();
+    // Send via ProxySocketManager which routes to LDN server.
+    // m_local_addr.sin_addr is stored in Ryujinx format (no bswap was applied in Bind),
+    // so read it directly. dest comes from the game in network byte order, so GetAddr()
+    // bswaps it into Ryujinx format — which is what the server expects on the wire.
+    uint32_t source_ip = m_local_addr.sin_addr;
     uint16_t source_port = m_local_addr.GetPort();
     uint32_t dest_ip = dest.GetAddr();
     uint16_t dest_port = dest.GetPort();

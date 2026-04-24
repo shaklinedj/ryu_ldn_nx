@@ -1931,7 +1931,7 @@ Result BsdMitmService::Recv(
  * @return Result code from forwarding
  */
 Result BsdMitmService::RecvFrom(
-    sf::Out<s32> out_errno, sf::Out<s32> out_size,
+    sf::Out<s32> out_ret, sf::Out<s32> out_errno, sf::Out<u32> out_addrlen,
     s32 fd, s32 flags,
     sf::OutAutoSelectBuffer buffer,
     sf::OutAutoSelectBuffer addr_out)
@@ -1959,17 +1959,19 @@ Result BsdMitmService::RecvFrom(
             s32 result = proxy->RecvFrom(buffer.GetPointer(), buffer.GetSize(), flags, &from_addr);
 
             if (result < 0) {
-                // Negative result is -errno
+                out_ret.SetValue(-1);
                 out_errno.SetValue(-result);
-                out_size.SetValue(0);
+                out_addrlen.SetValue(0);
             } else {
+                out_ret.SetValue(result);
                 out_errno.SetValue(0);
-                out_size.SetValue(result);
 
-                // Copy source address to output buffer
+                u32 written_addr_len = 0;
                 if (addr_out.GetSize() >= sizeof(ryu_ldn::bsd::SockAddrIn)) {
                     std::memcpy(addr_out.GetPointer(), &from_addr, sizeof(from_addr));
+                    written_addr_len = sizeof(ryu_ldn::bsd::SockAddrIn);
                 }
+                out_addrlen.SetValue(written_addr_len);
 
                 LOG_INFO("BSD RecvFrom fd=%d proxy: %d bytes from %08x:%u (len=%u, family=%u)",
                          fd, result, from_addr.GetAddr(), from_addr.GetPort(),
@@ -1981,15 +1983,17 @@ Result BsdMitmService::RecvFrom(
         }
     }
 
-    // Not a proxy socket - forward to real service
+    // Not a proxy socket - forward to real service.
+    // Wire layout per libnx bsdRecvFrom disasm: raw[0]=ret, raw[4]=errno, raw[8]=addrlen.
     struct {
         s32 fd;
         s32 flags;
     } in = { fd, flags };
 
     struct {
+        s32 ret;
         s32 errno_val;
-        s32 size;
+        u32 addrlen;
     } out = {};
 
     Result rc = serviceMitmDispatchInOut(
@@ -2004,8 +2008,9 @@ Result BsdMitmService::RecvFrom(
         }
     );
 
+    out_ret.SetValue(out.ret);
     out_errno.SetValue(out.errno_val);
-    out_size.SetValue(out.size);
+    out_addrlen.SetValue(out.addrlen);
     R_RETURN(rc);
 }
 

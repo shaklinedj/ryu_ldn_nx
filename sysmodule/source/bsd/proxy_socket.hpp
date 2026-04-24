@@ -59,7 +59,7 @@ class ProxySocketManager;
  * Limits memory usage per socket. If the queue is full, oldest
  * packets are dropped (UDP behavior).
  */
-constexpr size_t PROXY_SOCKET_MAX_QUEUE_SIZE = 64;
+constexpr size_t PROXY_SOCKET_MAX_QUEUE_SIZE = 32;
 
 /**
  * @brief Maximum payload size for a single ProxyData packet
