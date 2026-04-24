@@ -433,6 +433,7 @@ private:
     // Program ID for LocalCommunicationId replacement (like Ryujinx NeedsRealId handling)
     ncm::ProgramId m_program_id;                            ///< Client program ID (title ID)
     u64 m_local_communication_id;                           ///< LocalCommunicationId from NACP (for LDN filtering)
+    u16 m_expected_scene_id;                                ///< Expected sceneId from game's Scan filter (Ryujinx may use 0)
 
     /**
      * @brief Static callback for inactivity timeout

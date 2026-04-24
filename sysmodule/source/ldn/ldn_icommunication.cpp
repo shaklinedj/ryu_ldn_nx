@@ -141,6 +141,7 @@ ICommunicationService::ICommunicationService(ncm::ProgramId program_id)
     , m_client_mutex(false)
     , m_program_id(program_id)
     , m_local_communication_id(0)
+    , m_expected_scene_id(0)
 {
     LOG_INFO("ICommunicationService created with program_id=0x%016lx", m_program_id.value);
 
@@ -330,7 +331,12 @@ Result ICommunicationService::Initialize(const ams::sf::ClientProcessId& client_
     shared_state.SetGameActive(true, m_client_process_id);
     shared_state.SetLdnState(static_cast<ams::mitm::ldn::CommState>(m_state_machine.GetState()));
 
-    LOG_VERBOSE("LDN Initialized successfully");
+    // Re-set LDN PID to enable BSD MITM interception
+    // This is critical for retry scenarios: after Finalize() clears the PID,
+    // a subsequent Initialize() must re-enable BSD interception
+    shared_state.SetLdnPid(m_client_process_id);
+
+    LOG_VERBOSE("LDN Initialized successfully (LdnPid=%lu)", m_client_process_id);
     R_SUCCEED();
 }
 
@@ -560,6 +566,12 @@ Result ICommunicationService::Scan(
     // Copy network ID (use potentially replaced local_comm_id)
     scan_filter.network_id.intent_id.local_communication_id = local_comm_id;
     scan_filter.network_id.intent_id.scene_id = filter.networkId.intentId.sceneId;
+
+    // Store expected scene_id - Ryujinx may create networks with sceneId=0
+    // We need to fix this in Connected/SyncNetwork handlers so the game sees its expected sceneId
+    m_expected_scene_id = filter.networkId.intentId.sceneId;
+    LOG_INFO("Scan: storing expected scene_id=%u for NetworkInfo correction", m_expected_scene_id);
+
     // SessionId is stored as a 16-byte blob
     std::memcpy(scan_filter.network_id.session_id.data, &filter.networkId.sessionId, 16);
 
@@ -1292,6 +1304,28 @@ void ICommunicationService::HandleServerPacket(ryu_ldn::protocol::PacketId id, c
                 // Copy to our local NetworkInfo (layout is compatible)
                 std::memcpy(&m_network_info, net_info, sizeof(m_network_info));
 
+                // NOTE: Keep node IPs in Ryujinx format (big-endian uint32, e.g., 10.114.0.1 = 0x0A720001).
+                // GetIpv4Address() returns proxy_ip in Ryujinx format, so NetworkInfo nodes must
+                // also be in Ryujinx format for the game to match its own IP in the player list.
+                // DO NOT bswap - Ryujinx doesn't convert these either.
+
+                // Fix sceneId - Ryujinx may create networks with sceneId=0 but the game
+                // expects its original sceneId (stored during Scan). This mismatch can cause
+                // the game to ignore UDP packets thinking they're from a different scene.
+                if (m_expected_scene_id != 0 && m_network_info.networkId.intentId.sceneId != m_expected_scene_id) {
+                    LOG_INFO("Connected: fixing sceneId %u -> %u (Ryujinx compatibility)",
+                             m_network_info.networkId.intentId.sceneId, m_expected_scene_id);
+                    m_network_info.networkId.intentId.sceneId = m_expected_scene_id;
+                }
+
+                // Also fix localCommunicationId if needed (like in Connect request)
+                if (m_local_communication_id != 0 &&
+                    m_network_info.networkId.intentId.localCommunicationId != m_local_communication_id) {
+                    LOG_INFO("Connected: fixing localCommId 0x%016llX -> 0x%016lx",
+                             m_network_info.networkId.intentId.localCommunicationId, m_local_communication_id);
+                    m_network_info.networkId.intentId.localCommunicationId = m_local_communication_id;
+                }
+
                 // Set network connected flag (like Ryujinx _networkConnected = true)
                 m_network_connected = true;
 
@@ -1361,6 +1395,18 @@ void ICommunicationService::HandleServerPacket(ryu_ldn::protocol::PacketId id, c
             if (size >= sizeof(ryu_ldn::protocol::NetworkInfo)) {
                 const auto* net_info = reinterpret_cast<const ryu_ldn::protocol::NetworkInfo*>(data);
                 std::memcpy(&m_network_info, net_info, sizeof(m_network_info));
+
+                // NOTE: Keep node IPs in Ryujinx format (same as Connected handler).
+                // DO NOT bswap - must match GetIpv4Address() format.
+
+                // Fix sceneId and localCommunicationId (same as Connected handler)
+                if (m_expected_scene_id != 0 && m_network_info.networkId.intentId.sceneId != m_expected_scene_id) {
+                    m_network_info.networkId.intentId.sceneId = m_expected_scene_id;
+                }
+                if (m_local_communication_id != 0 &&
+                    m_network_info.networkId.intentId.localCommunicationId != m_local_communication_id) {
+                    m_network_info.networkId.intentId.localCommunicationId = m_local_communication_id;
+                }
 
                 LOG_VERBOSE("Received SyncNetwork: node_count=%u",
                             m_network_info.ldn.nodeCount);
@@ -1456,6 +1502,20 @@ void ICommunicationService::HandleServerPacket(ryu_ldn::protocol::PacketId id, c
                 if (m_scan_result_count < MAX_SCAN_RESULTS) {
                     const auto* net_info = reinterpret_cast<const ryu_ldn::protocol::NetworkInfo*>(data);
                     std::memcpy(&m_scan_results[m_scan_result_count], net_info, sizeof(NetworkInfo));
+
+                    // Fix sceneId and localCommunicationId in scan results (Ryujinx compatibility)
+                    // Ryujinx creates networks with sceneId=0, but the game expects its own sceneId
+                    auto& result = m_scan_results[m_scan_result_count];
+                    if (m_expected_scene_id != 0 && result.networkId.intentId.sceneId != m_expected_scene_id) {
+                        LOG_INFO("ScanReply: fixing sceneId %u -> %u",
+                                 result.networkId.intentId.sceneId, m_expected_scene_id);
+                        result.networkId.intentId.sceneId = m_expected_scene_id;
+                    }
+                    if (m_local_communication_id != 0 &&
+                        result.networkId.intentId.localCommunicationId != m_local_communication_id) {
+                        result.networkId.intentId.localCommunicationId = m_local_communication_id;
+                    }
+
                     m_scan_result_count++;
                     // Log SessionId so we can compare with Connect request
                     const auto& sid = net_info->network_id.session_id;
@@ -1486,11 +1546,22 @@ void ICommunicationService::HandleServerPacket(ryu_ldn::protocol::PacketId id, c
             if (size >= sizeof(ryu_ldn::protocol::ProxyConfig)) {
                 const auto* config = reinterpret_cast<const ryu_ldn::protocol::ProxyConfig*>(data);
                 m_proxy_config = *config;
+
+                // CRITICAL: Update m_ipv4_address and m_subnet_mask!
+                // These are used by FindLocalNodeId() to identify our node in NetworkInfo.
+                // Keep in Ryujinx format (big-endian uint32) - same format as:
+                // - GetIpv4Address() returns to the game
+                // - NetworkInfo.nodes[].ipv4Address (no longer bswapped)
+                // - ProxySocketManager local IP
+                m_ipv4_address = config->proxy_ip;
+                m_subnet_mask = config->proxy_subnet_mask;
+
                 LOG_INFO("Received ProxyConfig: ip=0x%08X, mask=0x%08X",
-                         config->proxy_ip, config->proxy_subnet_mask);
+                         m_ipv4_address, m_subnet_mask);
 
                 // Set local IP in ProxySocketManager for BSD MITM
                 // This is used when creating proxy sockets for INADDR_ANY binds
+                // Keep in Ryujinx format for ProxySocketManager (it expects Ryujinx format)
                 auto& socket_manager = mitm::bsd::ProxySocketManager::GetInstance();
                 socket_manager.SetLocalIp(config->proxy_ip);
                 LOG_INFO("ProxySocketManager: local IP set to 0x%08X", config->proxy_ip);

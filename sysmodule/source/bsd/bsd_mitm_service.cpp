@@ -1114,12 +1114,13 @@ Result BsdMitmService::Bind(
                         ryu_ldn::bsd::SockAddrIn bind_addr = *sock_addr;
                         if (is_inaddr_any) {
                             // Replace 0.0.0.0 with our local LDN IP
+                            // CRITICAL: Do NOT bswap32 - must match Ryujinx/NetworkInfo format
                             uint32_t local_ip = manager.GetLocalIp();
                             if (local_ip == 0) {
                                 // Local IP not set yet - use 0.0.0.0 which will match any dest
                                 LOG_WARN("BSD Bind fd=%d: local LDN IP not set, using INADDR_ANY", fd);
                             } else {
-                                bind_addr.sin_addr = __builtin_bswap32(local_ip);
+                                bind_addr.sin_addr = local_ip;  // NO bswap32 - Ryujinx format
                                 LOG_INFO("BSD Bind fd=%d: using local LDN IP 0x%08x", fd, local_ip);
                             }
                         }
@@ -1305,11 +1306,12 @@ Result BsdMitmService::Connect(
                     }
 
                     // Create local address using our LDN IP
+                    // CRITICAL: Do NOT bswap32 - must match Ryujinx/NetworkInfo format
                     ryu_ldn::bsd::SockAddrIn local_addr{};
                     local_addr.sin_len = sizeof(local_addr);
                     local_addr.sin_family = static_cast<uint8_t>(ryu_ldn::bsd::AddressFamily::Inet);
                     local_addr.sin_port = __builtin_bswap16(ephemeral);
-                    local_addr.sin_addr = __builtin_bswap32(manager.GetLocalIp());
+                    local_addr.sin_addr = manager.GetLocalIp();  // NO bswap32 - Ryujinx format
 
                     Result bind_result = proxy->Bind(local_addr);
                     if (R_FAILED(bind_result)) {
@@ -1724,13 +1726,14 @@ Result BsdMitmService::SendTo(
                     proxy = manager.CreateProxySocket(fd, socket_info.type, socket_info.protocol);
                     if (proxy != nullptr) {
                         // Auto-bind
+                        // CRITICAL: Do NOT bswap32 - must match Ryujinx/NetworkInfo format
                         uint16_t ephemeral = manager.AllocatePort(socket_info.protocol);
                         if (ephemeral != 0) {
                             ryu_ldn::bsd::SockAddrIn local_addr{};
                             local_addr.sin_len = sizeof(local_addr);
                             local_addr.sin_family = static_cast<uint8_t>(ryu_ldn::bsd::AddressFamily::Inet);
                             local_addr.sin_port = __builtin_bswap16(ephemeral);
-                            local_addr.sin_addr = __builtin_bswap32(manager.GetLocalIp());
+                            local_addr.sin_addr = manager.GetLocalIp();  // NO bswap32 - Ryujinx format
                             R_TRY(proxy->Bind(local_addr));
                         }
                     }

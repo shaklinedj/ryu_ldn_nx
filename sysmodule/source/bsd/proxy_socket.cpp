@@ -578,9 +578,10 @@ void ProxySocket::IncomingConnection(const ryu_ldn::protocol::ProxyConnectReques
     accepted->m_state = ProxySocketState::Bound;
 
     // Set remote address from request
+    // CRITICAL: Do NOT bswap32 the IP - must match Ryujinx/NetworkInfo format
     accepted->m_remote_addr.sin_family = static_cast<uint8_t>(ryu_ldn::bsd::AddressFamily::Inet);
     accepted->m_remote_addr.sin_len = sizeof(ryu_ldn::bsd::SockAddrIn);
-    accepted->m_remote_addr.sin_addr = __builtin_bswap32(request.info.source_ipv4);
+    accepted->m_remote_addr.sin_addr = request.info.source_ipv4;  // NO bswap32 - Ryujinx format
     accepted->m_remote_addr.sin_port = __builtin_bswap16(request.info.source_port);
 
     // Mark as connected

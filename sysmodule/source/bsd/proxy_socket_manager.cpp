@@ -357,12 +357,21 @@ bool ProxySocketManager::RouteIncomingData(uint32_t source_ip, uint16_t source_p
     }
 
     // Build source address for RecvFrom
-    // Note: sin_len is set to 0 to match Ryujinx's BsdSockAddr.FromIPEndPoint behavior
+    // Note: Nintendo Switch uses BSD-style sockaddr with sin_len field
+    // sin_len must be sizeof(SockAddrIn) = 16 for the game to accept the address
+    //
+    // CRITICAL: Ryujinx stores IPs as uint in "big-endian read" format:
+    // For 10.114.0.1, Ryujinx stores 0x0A720001.
+    // BUT in BsdSockAddr, sin_addr must be in NETWORK BYTE ORDER (standard BSD).
+    // Ryujinx does Array.Reverse() when converting ProxyInfo.SourceIpV4 to IPEndPoint,
+    // then copies bytes directly to sin_addr, resulting in network byte order.
+    // So we must bswap32 to convert Ryujinx format -> network byte order.
+    // For 10.114.0.1: 0x0A720001 -> bswap32 -> 0x0100720A (network order)
     ryu_ldn::bsd::SockAddrIn from_addr{};
-    from_addr.sin_len = 0;
+    from_addr.sin_len = sizeof(ryu_ldn::bsd::SockAddrIn);
     from_addr.sin_family = static_cast<uint8_t>(ryu_ldn::bsd::AddressFamily::Inet);
     from_addr.sin_port = __builtin_bswap16(source_port);
-    from_addr.sin_addr = __builtin_bswap32(source_ip);
+    from_addr.sin_addr = __builtin_bswap32(source_ip);  // Convert Ryujinx format to network byte order
 
     // Queue data to socket
     socket->IncomingData(data, data_len, from_addr);
@@ -376,8 +385,17 @@ ProxySocket* ProxySocketManager::FindSocketByDestination(uint32_t dest_ip, uint1
 
     // Check if dest_ip is a broadcast address (ends in .255 or .255.255)
     // LDN subnet is 10.114.x.x with mask 255.255.0.0, so broadcast is 10.114.255.255
-    bool is_broadcast = ((dest_ip & 0xFF) == 0xFF) ||     // x.x.x.255
-                        ((dest_ip & 0xFFFF) == 0xFFFF);   // x.x.255.255
+    // CRITICAL: dest_ip is in Ryujinx format (Big Endian read as uint32)
+    // For 10.114.255.255: first octet (10) in HIGH byte, last octet (255) in LOW byte
+    // So 10.114.255.255 = 0x0A72FFFF where:
+    //   - 0x0A = 10 (first octet, bits 24-31)
+    //   - 0x72 = 114 (second octet, bits 16-23)
+    //   - 0xFF = 255 (third octet, bits 8-15)
+    //   - 0xFF = 255 (fourth octet, bits 0-7)
+    // To check .255 (last octet): mask 0x000000FF
+    // To check .255.255 (last two octets): mask 0x0000FFFF
+    bool is_broadcast = ((dest_ip & 0x000000FF) == 0x000000FF) ||   // x.x.x.255 in Ryujinx format
+                        ((dest_ip & 0x0000FFFF) == 0x0000FFFF);     // x.x.255.255 in Ryujinx format
 
     for (auto& [fd, socket] : m_sockets) {
         if (socket == nullptr) {
@@ -392,16 +410,18 @@ ProxySocket* ProxySocketManager::FindSocketByDestination(uint32_t dest_ip, uint1
         // Check local address matches destination
         const auto& local_addr = socket->GetLocalAddr();
 
-        // Port must match
+        // Port must match (GetPort does bswap16, but dest_port is in host order)
         if (local_addr.GetPort() != dest_port) {
             continue;
         }
 
         // IP matching:
+        // CRITICAL: sin_addr is now in Ryujinx format (NO bswap was applied in Bind).
+        // Use sin_addr directly instead of GetAddr() which does bswap32.
         // 1. INADDR_ANY (bound to 0.0.0.0 - accepts any destination)
         // 2. Exact match (bound to specific IP)
         // 3. Broadcast: any socket on the same port receives broadcast packets
-        uint32_t local_ip = local_addr.GetAddr();
+        uint32_t local_ip = local_addr.sin_addr;  // Direct access - Ryujinx format
         if (local_ip == 0) {
             // Bound to INADDR_ANY - accepts all
             return socket.get();
@@ -413,6 +433,8 @@ ProxySocket* ProxySocketManager::FindSocketByDestination(uint32_t dest_ip, uint1
         if (is_broadcast) {
             // Broadcast packet - deliver to any socket bound on this port
             // Check if socket is in the same subnet (10.114.x.x)
+            // In Ryujinx format: 0x0A72xxxx where 0x0A72 is the subnet (10.114)
+            // Subnet is in HIGH 16 bits, so mask is 0xFFFF0000
             if ((local_ip & 0xFFFF0000) == (dest_ip & 0xFFFF0000)) {
                 return socket.get();
             }
@@ -470,12 +492,14 @@ void ProxySocketManager::DeliverPendingPackets(ProxySocket* socket, uint16_t por
         // Check if packet matches this socket
         if (pkt.protocol == protocol && pkt.dest_port == port) {
             // Build source address
-            // Note: sin_len is set to 0 to match Ryujinx's BsdSockAddr.FromIPEndPoint behavior
+            // Note: Nintendo Switch uses BSD-style sockaddr with sin_len field
+            // CRITICAL: sin_addr must be in network byte order (standard BSD)
+            // bswap32 converts Ryujinx format to network byte order
             ryu_ldn::bsd::SockAddrIn from_addr{};
-            from_addr.sin_len = 0;
+            from_addr.sin_len = sizeof(ryu_ldn::bsd::SockAddrIn);
             from_addr.sin_family = static_cast<uint8_t>(ryu_ldn::bsd::AddressFamily::Inet);
             from_addr.sin_port = __builtin_bswap16(pkt.source_port);
-            from_addr.sin_addr = __builtin_bswap32(pkt.source_ip);
+            from_addr.sin_addr = __builtin_bswap32(pkt.source_ip);  // Convert to network byte order
 
             // Deliver to socket
             socket->IncomingData(pkt.data.data(), pkt.data.size(), from_addr);
