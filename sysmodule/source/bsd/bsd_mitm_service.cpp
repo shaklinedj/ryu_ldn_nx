@@ -1688,8 +1688,8 @@ Result BsdMitmService::SendTo(
     const sf::InAutoSelectBuffer& addr)
 {
     m_command_count++;
-    LOG_INFO("[BSD#%u] SendTo ENTRY: cmd_count=%u, fd=%d, flags=%d, size=%zu",
-             m_session_id, m_command_count, fd, flags, buffer.GetSize());
+    LOG_VERBOSE("[BSD#%u] SendTo ENTRY: cmd_count=%u, fd=%d, flags=%d, size=%zu",
+                m_session_id, m_command_count, fd, flags, buffer.GetSize());
 
     // Check if this is a proxy socket or if dest is LDN
     bool is_proxy = false;
@@ -1973,9 +1973,9 @@ Result BsdMitmService::RecvFrom(
                 }
                 out_addrlen.SetValue(written_addr_len);
 
-                LOG_INFO("BSD RecvFrom fd=%d proxy: %d bytes from %08x:%u (len=%u, family=%u)",
-                         fd, result, from_addr.GetAddr(), from_addr.GetPort(),
-                         from_addr.sin_len, from_addr.sin_family);
+                LOG_VERBOSE("BSD RecvFrom fd=%d proxy: %d bytes from %08x:%u (len=%u, family=%u)",
+                            fd, result, from_addr.GetAddr(), from_addr.GetPort(),
+                            from_addr.sin_len, from_addr.sin_family);
             }
 
             LOG_VERBOSE("BSD RecvFrom fd=%d proxy received %d bytes", fd, result);

@@ -324,8 +324,11 @@ s32 ProxySocket::RecvFrom(void* buffer, size_t len, s32 flags, ryu_ldn::bsd::Soc
 }
 
 void ProxySocket::IncomingData(const void* data, size_t len, const ryu_ldn::bsd::SockAddrIn& from) {
-    // Log first 32 bytes of data for debugging
-    if (len > 0 && data != nullptr) {
+    // Hex-dump first 32 bytes — only format and log at VERBOSE level, since this
+    // fires on every incoming packet and the snprintf loop is non-trivial under
+    // load (~100+ packets/sec during gameplay).
+    if (len > 0 && data != nullptr &&
+        ryu_ldn::debug::g_logger.should_log(ryu_ldn::debug::LogLevel::Verbose)) {
         const uint8_t* bytes = static_cast<const uint8_t*>(data);
         size_t log_len = std::min(len, size_t(32));
         char hex_buf[128];
@@ -333,7 +336,7 @@ void ProxySocket::IncomingData(const void* data, size_t len, const ryu_ldn::bsd:
         for (size_t i = 0; i < log_len && (p - hex_buf) < 120; i++) {
             p += std::snprintf(p, 4, "%02X ", bytes[i]);
         }
-        LOG_INFO("ProxySocket IncomingData: %zu bytes, first %zu: %s", len, log_len, hex_buf);
+        LOG_VERBOSE("ProxySocket IncomingData: %zu bytes, first %zu: %s", len, log_len, hex_buf);
     }
 
     // Check if this is a broadcast packet and filter if SO_BROADCAST not set

@@ -260,8 +260,14 @@ void Logger::output_message(const char* message) {
             line[msg_len] = '\n';
             line[msg_len + 1] = '\0';
 
+            // WriteOption::None — don't force an SD sync on every log line.
+            // Under real traffic the game logs 50-100+ lines/sec; each synced
+            // write is 10-50 ms of blocking I/O and stalls the whole sysmodule.
+            // The log maintenance thread periodically flushes via FlushFile, and
+            // close_file() flushes on idle timeout — we accept losing ~2 seconds
+            // of trailing log on crash in exchange for keeping the game playable.
             ams::fs::WriteFile(s_log_file_handle, m_file_offset, line, msg_len + 1,
-                               ams::fs::WriteOption::Flush);
+                               ams::fs::WriteOption::None);
             m_file_offset += msg_len + 1;
 
             // Update last write time
@@ -376,6 +382,10 @@ void Logger::check_idle_timeout() {
 
     if (elapsed_ns >= FILE_IDLE_TIMEOUT_NS) {
         close_file();
+    } else {
+        // Periodic flush — writes are done with WriteOption::None for speed,
+        // so force a sync here to cap data loss on crash to the maintenance tick.
+        ams::fs::FlushFile(s_log_file_handle);
     }
 #else
     std::lock_guard<std::mutex> lock(m_mutex);
