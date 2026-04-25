@@ -384,8 +384,9 @@ Result ICommunicationService::Finalize() {
 // ============================================================================
 
 Result ICommunicationService::GetState(ams::sf::Out<u32> state) {
-    // Process incoming packets (like pings) to keep connection alive
-    // This is critical because the server expects ping responses within ~6 seconds
+    // Process incoming packets (like pings) to keep connection alive.
+    // TcpClient is internally thread-safe (separate send/recv mutexes),
+    // so we no longer need external serialization with the BG thread.
     if (m_server_connected && m_server_client.is_connected()) {
         uint64_t current_time_ms = armTicksToNs(armGetSystemTick()) / 1000000ULL;
         m_server_client.update(current_time_ms);
@@ -407,7 +408,7 @@ Result ICommunicationService::GetState(ams::sf::Out<u32> state) {
 }
 
 Result ICommunicationService::GetNetworkInfo(ams::sf::Out<NetworkInfo> buffer) {
-    // Process incoming packets (like pings) to keep connection alive
+    // TcpClient is internally thread-safe — no external lock needed.
     if (m_server_connected && m_server_client.is_connected()) {
         uint64_t current_time_ms = armTicksToNs(armGetSystemTick()) / 1000000ULL;
         m_server_client.update(current_time_ms);
@@ -613,7 +614,7 @@ Result ICommunicationService::Scan(
     bool error_received = false;
 
     while ((current_time_ms - start_time_ms) < scan_timeout_ms) {
-        // Process incoming packets - this is required because we don't have async receive
+        // Process incoming packets. TcpClient serializes recv internally.
         m_server_client.update(current_time_ms);
 
         // Check if scan completed or error received
@@ -1715,7 +1716,7 @@ bool ICommunicationService::WaitForResponse(ryu_ldn::protocol::PacketId expected
     uint64_t current_time_ms = start_time_ms;
 
     while ((current_time_ms - start_time_ms) < timeout_ms) {
-        // Process incoming packets
+        // Process incoming packets (TcpClient serializes recv internally).
         m_server_client.update(current_time_ms);
 
         // Special case: Connected may have been processed by HandlePacket during update()
@@ -1994,20 +1995,20 @@ void ICommunicationService::BackgroundThreadFunc() {
     LOG_VERBOSE("Background thread started");
 
     while (m_background_thread_running.load()) {
-        // Process incoming packets (including pings) if connected
+        // Process incoming packets if connected. TcpClient now serializes
+        // recv/send internally via its own mutexes — no need for an external
+        // client-level mutex between this thread and MITM IPC handlers.
         if (m_server_connected) {
-            m_client_mutex.Lock();
             uint64_t current_time_ms = armTicksToNs(armGetSystemTick()) / 1000000ULL;
             m_server_client.update(current_time_ms);
-
-            // Also check inactivity timeout
             m_inactivity_timeout.CheckTimeout(current_time_ms);
-            m_client_mutex.Unlock();
         }
 
-        // Sleep 100ms between checks - fast enough to respond to pings
-        // (server pings after 10s of inactivity, so 100ms is plenty)
-        svcSleepThread(100 * 1000000ULL);  // 100ms
+        // Sleep 20 ms — with internal TcpClient synchronization, shorter
+        // intervals no longer cause races. 20 ms keeps packet delivery
+        // latency low under normal load; the recv_timeout in update() is
+        // the real bound on how long the BG thread sits in poll().
+        svcSleepThread(20 * 1000000ULL);  // 20 ms
     }
 
     LOG_VERBOSE("Background thread stopped");

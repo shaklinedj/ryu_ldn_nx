@@ -66,8 +66,18 @@ namespace network {
 RyuLdnClientConfig::RyuLdnClientConfig()
     : port(30456)
     , connect_timeout_ms(5000)
-    , recv_timeout_ms(100)
-    , ping_interval_ms(30000)
+    , recv_timeout_ms(20)  // 20 ms — short poll so process_packets drains
+                           // bursts quickly. Sends from MITM no longer take
+                           // m_client_mutex, so this only bounds how long
+                           // the BG thread itself stays in poll() and does
+                           // not block game sends.
+    , ping_interval_ms(0)  // Disabled — RyuLdn protocol is unidirectional:
+                           // only the SERVER initiates pings (Requester=0)
+                           // and the client echoes them back. The server's
+                           // HandlePing ignores client-initiated pings
+                           // (Requester=1), so sending one and waiting for
+                           // a pong always times out and incorrectly tears
+                           // down the connection. Mirrors Ryujinx's behavior.
     , reconnect()
     , auto_reconnect(true)
 {
@@ -86,8 +96,10 @@ RyuLdnClientConfig::RyuLdnClientConfig()
 RyuLdnClientConfig::RyuLdnClientConfig(const config::Config& cfg)
     : port(cfg.server.port)
     , connect_timeout_ms(cfg.network.connect_timeout_ms)
-    , recv_timeout_ms(100)  // Keep this short for responsive polling
-    , ping_interval_ms(cfg.network.ping_interval_ms)
+    , recv_timeout_ms(20)  // 20 ms — see default ctor
+    , ping_interval_ms(0)  // Forced 0 — see default ctor for protocol rationale.
+                           // Config value cfg.network.ping_interval_ms is ignored
+                           // because client-initiated pings break the connection.
     , reconnect()
     , auto_reconnect(cfg.network.max_reconnect_attempts != 0)
 {
@@ -478,7 +490,8 @@ void RyuLdnClient::update(uint64_t current_time_ms) {
             // Check for ping timeout (no pong received)
             if (m_pending_ping_count > 0 && m_ping_timeout_ms > 0) {
                 if (current_time_ms - m_last_ping_time_ms >= m_ping_timeout_ms) {
-                    // Connection appears dead - trigger reconnection
+                    LOG_INFO("update(Ready): ping timeout (%u pending, %lu ms since last ping)",
+                             m_pending_ping_count, current_time_ms - m_last_ping_time_ms);
                     m_state_machine.process_event(ConnectionEvent::ConnectionLost);
                     if (m_config.auto_reconnect) {
                         start_backoff();
@@ -490,9 +503,14 @@ void RyuLdnClient::update(uint64_t current_time_ms) {
             // Send ping if interval elapsed
             if (m_config.ping_interval_ms > 0) {
                 if (current_time_ms - m_last_ping_time_ms >= m_config.ping_interval_ms) {
-                    if (send_ping() == ClientOpResult::Success) {
+                    ClientOpResult ping_result = send_ping();
+                    if (ping_result == ClientOpResult::Success) {
+                        LOG_INFO("update(Ready): sent ping (pending=%u)", m_pending_ping_count + 1);
                         m_last_ping_time_ms = current_time_ms;
                         m_pending_ping_count++;
+                    } else {
+                        LOG_INFO("update(Ready): send_ping failed: %s",
+                                 client_op_result_to_string(ping_result));
                     }
                 }
             }
@@ -602,6 +620,7 @@ ClientOpResult RyuLdnClient::send_scan(const protocol::ScanFilterFull& filter) {
 
     ClientResult result = m_tcp_client.send_scan(filter);
     if (result != ClientResult::Success) {
+        LOG_INFO("send_scan: TCP send returned %d", static_cast<int>(result));
         if (result == ClientResult::ConnectionLost) {
             m_state_machine.process_event(ConnectionEvent::ConnectionLost);
         }
@@ -625,6 +644,7 @@ ClientOpResult RyuLdnClient::send_create_access_point(
 
     ClientResult result = m_tcp_client.send_create_access_point(request);
     if (result != ClientResult::Success) {
+        LOG_INFO("send_create_access_point: TCP send returned %d", static_cast<int>(result));
         if (result == ClientResult::ConnectionLost) {
             m_state_machine.process_event(ConnectionEvent::ConnectionLost);
         }
@@ -647,6 +667,7 @@ ClientOpResult RyuLdnClient::send_connect(const protocol::ConnectRequest& reques
 
     ClientResult result = m_tcp_client.send_connect(request);
     if (result != ClientResult::Success) {
+        LOG_INFO("send_connect: TCP send returned %d", static_cast<int>(result));
         if (result == ClientResult::ConnectionLost) {
             m_state_machine.process_event(ConnectionEvent::ConnectionLost);
         }
@@ -670,6 +691,7 @@ ClientOpResult RyuLdnClient::send_create_access_point_private(
 
     ClientResult result = m_tcp_client.send_create_access_point_private(request, nullptr, 0);
     if (result != ClientResult::Success) {
+        LOG_INFO("send_create_access_point_private: TCP send returned %d", static_cast<int>(result));
         if (result == ClientResult::ConnectionLost) {
             m_state_machine.process_event(ConnectionEvent::ConnectionLost);
         }
@@ -692,6 +714,7 @@ ClientOpResult RyuLdnClient::send_connect_private(const protocol::ConnectPrivate
 
     ClientResult result = m_tcp_client.send_connect_private(request);
     if (result != ClientResult::Success) {
+        LOG_INFO("send_connect_private: TCP send returned %d", static_cast<int>(result));
         if (result == ClientResult::ConnectionLost) {
             m_state_machine.process_event(ConnectionEvent::ConnectionLost);
         }
@@ -718,6 +741,7 @@ ClientOpResult RyuLdnClient::send_proxy_data(const protocol::ProxyDataHeader& he
 
     ClientResult result = m_tcp_client.send_proxy_data(header, data, size);
     if (result != ClientResult::Success) {
+        LOG_INFO("send_proxy_data: TCP send returned %d", static_cast<int>(result));
         if (result == ClientResult::ConnectionLost) {
             m_state_machine.process_event(ConnectionEvent::ConnectionLost);
         }
@@ -924,6 +948,7 @@ void RyuLdnClient::process_packets() {
         }
 
         if (result == ClientResult::ConnectionLost) {
+            LOG_INFO("process_packets: receive_packet returned ConnectionLost (server closed TCP)");
             m_state_machine.process_event(ConnectionEvent::ConnectionLost);
             if (m_config.auto_reconnect) {
                 start_backoff();
@@ -932,7 +957,8 @@ void RyuLdnClient::process_packets() {
         }
 
         if (result != ClientResult::Success) {
-            // Other error
+            LOG_INFO("process_packets: receive_packet returned %d (non-success), breaking",
+                     static_cast<int>(result));
             break;
         }
 

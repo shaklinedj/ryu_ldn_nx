@@ -30,6 +30,7 @@
 #include "tcp_client.hpp"
 #include "../debug/log.hpp"
 #include <cstring>
+#include <mutex>
 
 namespace ryu_ldn::network {
 
@@ -159,6 +160,8 @@ ClientResult TcpClient::send_packet(protocol::PacketId type, const void* payload
         return ClientResult::NotConnected;
     }
 
+    std::scoped_lock send_lock(m_send_mutex);
+
     // Encode packet into send buffer using encode_raw for arbitrary data
     size_t encoded_size = 0;
     protocol::EncodeResult encode_result = protocol::encode_raw(
@@ -192,6 +195,8 @@ ClientResult TcpClient::send_raw(const void* data, size_t size) {
         return ClientResult::NotConnected;
     }
 
+    std::scoped_lock send_lock(m_send_mutex);
+
     if (data == nullptr || size == 0) {
         return ClientResult::EncodingError;
     }
@@ -214,6 +219,8 @@ ClientResult TcpClient::send_initialize(const protocol::InitializeMessage& msg) 
         return ClientResult::NotConnected;
     }
 
+    std::scoped_lock send_lock(m_send_mutex);
+
     size_t encoded_size = 0;
     protocol::EncodeResult encode_result = protocol::encode(
         m_send_buffer, sizeof(m_send_buffer),
@@ -234,6 +241,8 @@ ClientResult TcpClient::send_passphrase(const protocol::PassphraseMessage& msg) 
     if (!m_socket.is_connected()) {
         return ClientResult::NotConnected;
     }
+
+    std::scoped_lock send_lock(m_send_mutex);
 
     size_t encoded_size = 0;
     protocol::EncodeResult encode_result = protocol::encode(
@@ -270,6 +279,8 @@ ClientResult TcpClient::send_ping(const protocol::PingMessage& msg) {
         return ClientResult::NotConnected;
     }
 
+    std::scoped_lock send_lock(m_send_mutex);
+
     size_t encoded_size = 0;
     protocol::EncodeResult encode_result = protocol::encode(
         m_send_buffer, sizeof(m_send_buffer),
@@ -291,6 +302,8 @@ ClientResult TcpClient::send_disconnect(const protocol::DisconnectMessage& msg) 
         return ClientResult::NotConnected;
     }
 
+    std::scoped_lock send_lock(m_send_mutex);
+
     size_t encoded_size = 0;
     protocol::EncodeResult encode_result = protocol::encode(
         m_send_buffer, sizeof(m_send_buffer),
@@ -311,6 +324,8 @@ ClientResult TcpClient::send_create_access_point(const protocol::CreateAccessPoi
     if (!m_socket.is_connected()) {
         return ClientResult::NotConnected;
     }
+
+    std::scoped_lock send_lock(m_send_mutex);
 
     size_t encoded_size = 0;
     protocol::EncodeResult encode_result = protocol::encode(
@@ -335,6 +350,8 @@ ClientResult TcpClient::send_connect(const protocol::ConnectRequest& request) {
     if (!m_socket.is_connected()) {
         return ClientResult::NotConnected;
     }
+
+    std::scoped_lock send_lock(m_send_mutex);
 
     size_t encoded_size = 0;
     protocol::EncodeResult encode_result = protocol::encode(
@@ -373,6 +390,8 @@ ClientResult TcpClient::send_create_access_point_private(
     if (!m_socket.is_connected()) {
         return ClientResult::NotConnected;
     }
+
+    std::scoped_lock send_lock(m_send_mutex);
 
     // Encode header + request + advertise data
     size_t total_payload_size = sizeof(request) + advertise_size;
@@ -413,6 +432,8 @@ ClientResult TcpClient::send_connect_private(const protocol::ConnectPrivateReque
         return ClientResult::NotConnected;
     }
 
+    std::scoped_lock send_lock(m_send_mutex);
+
     size_t encoded_size = 0;
     protocol::EncodeResult encode_result = protocol::encode(
         m_send_buffer, sizeof(m_send_buffer),
@@ -433,6 +454,8 @@ ClientResult TcpClient::send_scan(const protocol::ScanFilterFull& filter) {
     if (!m_socket.is_connected()) {
         return ClientResult::NotConnected;
     }
+
+    std::scoped_lock send_lock(m_send_mutex);
 
     size_t encoded_size = 0;
     protocol::EncodeResult encode_result = protocol::encode(
@@ -459,6 +482,8 @@ ClientResult TcpClient::send_proxy_data(const protocol::ProxyDataHeader& header,
         return ClientResult::NotConnected;
     }
 
+    std::scoped_lock send_lock(m_send_mutex);
+
     size_t encoded_size = 0;
     protocol::EncodeResult encode_result = protocol::encode_proxy_data(
         m_send_buffer, sizeof(m_send_buffer),
@@ -480,6 +505,8 @@ ClientResult TcpClient::send_set_accept_policy(const protocol::SetAcceptPolicyRe
         return ClientResult::NotConnected;
     }
 
+    std::scoped_lock send_lock(m_send_mutex);
+
     size_t encoded_size = 0;
     protocol::EncodeResult encode_result = protocol::encode(
         m_send_buffer, sizeof(m_send_buffer),
@@ -500,6 +527,8 @@ ClientResult TcpClient::send_set_advertise_data(const uint8_t* data, size_t size
     if (!m_socket.is_connected()) {
         return ClientResult::NotConnected;
     }
+
+    std::scoped_lock send_lock(m_send_mutex);
 
     // Limit to max advertise data size (384 bytes as per protocol)
     if (size > 384) {
@@ -532,6 +561,8 @@ ClientResult TcpClient::send_reject(const protocol::RejectRequest& request) {
     if (!m_socket.is_connected()) {
         return ClientResult::NotConnected;
     }
+
+    std::scoped_lock send_lock(m_send_mutex);
 
     size_t encoded_size = 0;
     protocol::EncodeResult encode_result = protocol::encode(
@@ -566,6 +597,11 @@ ClientResult TcpClient::receive_packet(protocol::PacketId& type,
     if (!m_socket.is_connected()) {
         return ClientResult::NotConnected;
     }
+
+    // Serialize receivers — m_recv_buffer state (partial-packet reassembly)
+    // is not safe for concurrent access. receive_into_buffer is called only
+    // from here so no nested locking needed.
+    std::scoped_lock recv_lock(m_recv_mutex);
 
     payload_size = 0;
 
@@ -635,6 +671,8 @@ ClientResult TcpClient::set_nodelay(bool enable) {
         return ClientResult::NotConnected;
     }
 
+    // setsockopt is thread-safe at the kernel level and does not touch
+    // m_send_buffer, so no lock needed.
     SocketResult result = m_socket.set_nodelay(enable);
     return socket_to_client_result(result);
 }
@@ -706,22 +744,25 @@ ClientResult TcpClient::receive_into_buffer(int32_t timeout_ms) {
     }
 
     if (recv_result == SocketResult::Closed) {
+        LOG_INFO("recv: SocketResult::Closed (server sent FIN)");
         return ClientResult::ConnectionLost;
     }
 
     if (recv_result != SocketResult::Success) {
+        LOG_INFO("recv: non-success socket result %d", static_cast<int>(recv_result));
         return socket_to_client_result(recv_result);
     }
 
     if (received == 0) {
         // Zero bytes with Success means connection closed gracefully
+        LOG_INFO("recv: 0 bytes with Success (graceful close by peer)");
         return ClientResult::ConnectionLost;
     }
 
     // Append received data to packet buffer
     protocol::BufferResult append_result = m_recv_buffer.append(temp_buffer, received);
     if (append_result != protocol::BufferResult::Success) {
-        // Buffer overflow - shouldn't happen with normal protocol usage
+        LOG_WARN("recv: recv_buffer.append failed (overflow, %zu bytes)", received);
         return ClientResult::InvalidPacket;
     }
 

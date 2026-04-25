@@ -262,64 +262,51 @@ s32 ProxySocket::RecvFrom(void* buffer, size_t len, s32 flags, ryu_ldn::bsd::Soc
     bool peek = (flags & 0x2) != 0; // MSG_PEEK = 0x2
     bool dontwait = (flags & 0x80) != 0 || m_non_blocking; // MSG_DONTWAIT = 0x80 (Nintendo Switch)
 
+    // Helper: copy front-of-ring into caller's buffer, pop unless peeking.
+    // Caller must hold m_queue_mutex.
+    auto consume_front = [&](void* out_buf, size_t out_len) -> s32 {
+        const ReceivedPacket& slot = m_rx_ring[m_rx_head];
+        size_t copy_len = std::min(out_len, static_cast<size_t>(slot.len));
+        if (copy_len > 0) {
+            std::memcpy(out_buf, slot.data, copy_len);
+        }
+        if (from != nullptr) {
+            *from = slot.from;
+        }
+        if (!peek) {
+            m_rx_head = (m_rx_head + 1) % PROXY_SOCKET_MAX_QUEUE_SIZE;
+            m_rx_count--;
+        }
+        if (m_rx_count == 0) {
+            m_receive_event.Clear();
+        }
+        return static_cast<s32>(copy_len);
+    };
+
     // Try to get data from queue
     {
         std::scoped_lock lock(m_queue_mutex);
 
-        if (m_receive_queue.empty()) {
+        if (m_rx_count == 0) {
             if (dontwait) {
-                // Non-blocking and no data
                 return -static_cast<s32>(Errno::Again);
             }
         } else {
-            // Data available - get packet
-            ReceivedPacket packet = PopFrontPacket(peek);
-
-            // Copy data to buffer
-            size_t copy_len = std::min(len, packet.data.size());
-            std::memcpy(buffer, packet.data.data(), copy_len);
-
-            // Set source address if requested
-            if (from != nullptr) {
-                *from = packet.from;
-            }
-
-            // Clear event if queue is now empty
-            if (m_receive_queue.empty()) {
-                m_receive_event.Clear();
-            }
-
-            return static_cast<s32>(copy_len);
+            return consume_front(buffer, len);
         }
     }
 
     // Blocking wait for data
     if (!dontwait) {
-        // Wait for receive event
         m_receive_event.Wait();
 
-        // Try again after waking up
         std::scoped_lock lock(m_queue_mutex);
 
-        if (!m_receive_queue.empty()) {
-            ReceivedPacket packet = PopFrontPacket(peek);
-
-            size_t copy_len = std::min(len, packet.data.size());
-            std::memcpy(buffer, packet.data.data(), copy_len);
-
-            if (from != nullptr) {
-                *from = packet.from;
-            }
-
-            if (m_receive_queue.empty()) {
-                m_receive_event.Clear();
-            }
-
-            return static_cast<s32>(copy_len);
+        if (m_rx_count > 0) {
+            return consume_front(buffer, len);
         }
     }
 
-    // No data and non-blocking
     return -static_cast<s32>(Errno::Again);
 }
 
@@ -365,42 +352,45 @@ void ProxySocket::IncomingData(const void* data, size_t len, const ryu_ldn::bsd:
         }
     }
 
+    // Clamp payload to fixed buffer size. UDP datagrams larger than our MTU
+    // would already have been rejected by SendTo's MsgSize check on the
+    // sender side; clamping here is a defensive guard.
+    size_t copy_len = std::min(len, static_cast<size_t>(PROXY_SOCKET_MAX_PAYLOAD));
+
     std::scoped_lock lock(m_queue_mutex);
 
-    // Drop if queue is full (UDP behavior)
-    if (m_receive_queue.size() >= PROXY_SOCKET_MAX_QUEUE_SIZE) {
-        m_receive_queue.pop_front(); // Drop oldest
+    // Drop oldest if ring is full (UDP behavior)
+    if (m_rx_count >= PROXY_SOCKET_MAX_QUEUE_SIZE) {
+        m_rx_head = (m_rx_head + 1) % PROXY_SOCKET_MAX_QUEUE_SIZE;
+        m_rx_count--;
     }
 
-    // Create packet and add to queue
-    ReceivedPacket packet;
-    packet.data.resize(len);
-    if (len > 0 && data != nullptr) {
-        std::memcpy(packet.data.data(), data, len);
+    // Write into tail slot in-place — no heap allocation per packet.
+    ReceivedPacket& slot = m_rx_ring[m_rx_tail];
+    slot.from = from;
+    slot.len = static_cast<uint16_t>(copy_len);
+    if (copy_len > 0 && data != nullptr) {
+        std::memcpy(slot.data, data, copy_len);
     }
-    packet.from = from;
 
-    m_receive_queue.push_back(std::move(packet));
+    m_rx_tail = (m_rx_tail + 1) % PROXY_SOCKET_MAX_QUEUE_SIZE;
+    m_rx_count++;
 
-    // Signal that data is available
     m_receive_event.Signal();
 }
 
 ReceivedPacket ProxySocket::PopFrontPacket(bool peek) {
     // Caller must hold m_queue_mutex
-    if (m_receive_queue.empty()) {
+    if (m_rx_count == 0) {
         return {};
     }
 
-    if (peek) {
-        // Return copy, don't remove
-        return m_receive_queue.front();
-    } else {
-        // Move out and remove
-        ReceivedPacket packet = std::move(m_receive_queue.front());
-        m_receive_queue.pop_front();
-        return packet;
+    ReceivedPacket packet = m_rx_ring[m_rx_head];
+    if (!peek) {
+        m_rx_head = (m_rx_head + 1) % PROXY_SOCKET_MAX_QUEUE_SIZE;
+        m_rx_count--;
     }
+    return packet;
 }
 
 // =============================================================================
@@ -658,10 +648,12 @@ Result ProxySocket::Close() {
     // Signal any blocked receivers
     m_receive_event.Signal();
 
-    // Clear queues
+    // Clear ring queue (no deallocation — just reset indices)
     {
         std::scoped_lock lock(m_queue_mutex);
-        m_receive_queue.clear();
+        m_rx_head = 0;
+        m_rx_tail = 0;
+        m_rx_count = 0;
     }
 
     // For TCP, send ProxyDisconnect to notify the peer
@@ -685,14 +677,15 @@ Result ProxySocket::Close() {
 
 bool ProxySocket::HasPendingData() const {
     std::scoped_lock lock(m_queue_mutex);
-    return !m_receive_queue.empty();
+    return m_rx_count > 0;
 }
 
 size_t ProxySocket::GetPendingDataSize() const {
     std::scoped_lock lock(m_queue_mutex);
     size_t total = 0;
-    for (const auto& packet : m_receive_queue) {
-        total += packet.data.size();
+    for (size_t i = 0, idx = m_rx_head; i < m_rx_count; i++) {
+        total += m_rx_ring[idx].len;
+        idx = (idx + 1) % PROXY_SOCKET_MAX_QUEUE_SIZE;
     }
     return total;
 }

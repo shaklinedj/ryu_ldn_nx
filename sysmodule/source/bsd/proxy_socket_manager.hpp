@@ -587,17 +587,24 @@ private:
     // =========================================================================
 
     static constexpr size_t MaxPendingPackets = 16;
+    static constexpr size_t PendingPayloadMax = 1400;
 
     struct PendingPacket {
         uint32_t source_ip;
         uint16_t source_port;
         uint32_t dest_ip;
         uint16_t dest_port;
+        uint16_t len;
         ryu_ldn::bsd::ProtocolType protocol;
-        std::vector<uint8_t> data;
+        uint8_t data[PendingPayloadMax];
     };
 
-    std::deque<PendingPacket> m_pending_packets;
+    // Fixed-size ring buffer — same rationale as ProxySocket's rx ring:
+    // no heap allocation per arriving packet.
+    PendingPacket m_pending_ring[MaxPendingPackets];
+    size_t m_pending_head = 0;
+    size_t m_pending_tail = 0;
+    size_t m_pending_count = 0;
 };
 
 } // namespace ams::mitm::bsd

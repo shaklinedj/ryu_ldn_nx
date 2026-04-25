@@ -64,10 +64,12 @@ constexpr size_t PROXY_SOCKET_MAX_QUEUE_SIZE = 32;
 /**
  * @brief Maximum payload size for a single ProxyData packet
  *
- * This matches the typical MTU minus headers. Games usually send
- * smaller packets for LDN communication.
+ * MK8DX and other LDN games routinely send packets up to ~1460 bytes
+ * (Ethernet MTU minus IP/UDP headers). 2000 B leaves headroom without
+ * pushing a single proxy data frame past the 2048 B TCP send buffer
+ * (LdnHeader 12 B + ProxyDataHeader 20 B + payload).
  */
-constexpr size_t PROXY_SOCKET_MAX_PAYLOAD = 1400;
+constexpr size_t PROXY_SOCKET_MAX_PAYLOAD = 2000;
 
 /**
  * @brief State of a proxy socket
@@ -85,11 +87,16 @@ enum class ProxySocketState {
  * @brief Received packet data with source information
  *
  * Stores a received ProxyData packet along with the source address
- * for RecvFrom() calls.
+ * for RecvFrom() calls. Fixed-size payload buffer so the enclosing
+ * ring queue can live inline in ProxySocket with zero heap allocations
+ * per packet — LDN traffic on real Switch cannot afford an alloc+free
+ * cycle per datagram (100+ pkts/s) on top of the internet round-trip.
  */
 struct ReceivedPacket {
-    std::vector<uint8_t> data;     ///< Packet payload
-    ryu_ldn::bsd::SockAddrIn from; ///< Source address
+    ryu_ldn::bsd::SockAddrIn from;                   ///< Source address
+    uint16_t len;                                    ///< Payload length (<= PROXY_SOCKET_MAX_PAYLOAD)
+    uint16_t _pad;                                   ///< Alignment
+    uint8_t data[PROXY_SOCKET_MAX_PAYLOAD];          ///< Payload buffer
 };
 
 /**
@@ -518,9 +525,14 @@ private:
     mutable os::Mutex m_queue_mutex{false};
 
     /**
-     * @brief Receive queue (incoming packets)
+     * @brief Receive queue (incoming packets) — fixed-size ring buffer.
+     * Producer: network thread via IncomingData. Consumer: game thread via
+     * RecvFrom. Full = drop oldest (UDP behavior). Protected by m_queue_mutex.
      */
-    std::deque<ReceivedPacket> m_receive_queue;
+    ReceivedPacket m_rx_ring[PROXY_SOCKET_MAX_QUEUE_SIZE];
+    size_t m_rx_head = 0;                            ///< Read index
+    size_t m_rx_tail = 0;                            ///< Write index
+    size_t m_rx_count = 0;                           ///< Elements in ring
 
     /**
      * @brief Event signaled when data is available

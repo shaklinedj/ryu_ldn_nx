@@ -71,6 +71,13 @@
 #include <cstddef>
 #include <utility>
 
+#ifdef TEST_BUILD
+    #include <mutex>
+    namespace ams::os { using Mutex = std::mutex; }
+#else
+    #include <stratosphere.hpp>
+#endif
+
 #include "socket.hpp"
 #include "protocol/ryu_protocol.hpp"
 #include "protocol/packet_buffer.hpp"
@@ -479,6 +486,14 @@ private:
     Socket m_socket;                                 ///< Underlying TCP socket
     protocol::PacketBuffer<0x2000> m_recv_buffer;    ///< Buffer for TCP stream reassembly (8KB - saves 56KB!)
     uint8_t m_send_buffer[2048];                     ///< Buffer for encoding outgoing packets
+
+    // Internal thread-safety: protects m_send_buffer + socket send calls,
+    // and m_recv_buffer + socket recv calls. They are separate so a long
+    // poll() on recv does not block sends — mirrors NetCoreServer's design
+    // (used by Ryujinx) where async send and async receive do not contend
+    // with each other.
+    mutable ::ams::os::Mutex m_send_mutex{false};
+    mutable ::ams::os::Mutex m_recv_mutex{false};
 
     /**
      * @brief Convert SocketResult to ClientResult

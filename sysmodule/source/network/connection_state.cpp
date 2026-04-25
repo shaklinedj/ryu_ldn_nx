@@ -23,6 +23,7 @@
  */
 
 #include "connection_state.hpp"
+#include "../debug/log.hpp"
 
 namespace ryu_ldn {
 namespace network {
@@ -298,6 +299,15 @@ void ConnectionStateMachine::transition_to(ConnectionState new_state,
                                             ConnectionEvent event) {
     ConnectionState old_state = m_state;
     m_state = new_state;
+
+    // Log every TCP-client state change — critical for diagnosing silent
+    // disconnects. Previously the machine would leave Ready on a quiet
+    // ConnectionLost and SendProxyDataToServer would start returning
+    // NotConnected with no trace of what transitioned.
+    LOG_INFO("TCP state: %s -> %s (event=%s)",
+             state_to_string(old_state),
+             state_to_string(new_state),
+             event_to_string(event));
 
     // Update retry count on retry attempts
     if (new_state == ConnectionState::Retrying ||

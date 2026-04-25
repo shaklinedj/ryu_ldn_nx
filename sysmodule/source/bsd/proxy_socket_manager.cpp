@@ -135,8 +135,10 @@ void ProxySocketManager::Reset() {
     // Release all ports
     m_port_pool.ReleaseAll();
 
-    // Clear pending packets buffer
-    m_pending_packets.clear();
+    // Clear pending packets ring (no dealloc — just reset indices)
+    m_pending_head = 0;
+    m_pending_tail = 0;
+    m_pending_count = 0;
 
     // Reset local IP
     m_local_ip = 0;
@@ -348,19 +350,25 @@ bool ProxySocketManager::RouteIncomingData(uint32_t source_ip, uint16_t source_p
     // Find socket matching destination
     ProxySocket* socket = FindSocketByDestination(dest_ip, dest_port, protocol);
     if (socket == nullptr) {
-        // No matching socket - buffer the packet for later delivery
-        if (m_pending_packets.size() >= MaxPendingPackets) {
-            m_pending_packets.pop_front();  // Drop oldest
+        // No matching socket — buffer into fixed-size ring for post-bind delivery.
+        if (m_pending_count >= MaxPendingPackets) {
+            // Drop oldest
+            m_pending_head = (m_pending_head + 1) % MaxPendingPackets;
+            m_pending_count--;
         }
-        PendingPacket pkt;
-        pkt.source_ip = source_ip;
-        pkt.source_port = source_port;
-        pkt.dest_ip = dest_ip;
-        pkt.dest_port = dest_port;
-        pkt.protocol = protocol;
-        pkt.data.assign(static_cast<const uint8_t*>(data),
-                       static_cast<const uint8_t*>(data) + data_len);
-        m_pending_packets.push_back(std::move(pkt));
+        PendingPacket& slot = m_pending_ring[m_pending_tail];
+        slot.source_ip = source_ip;
+        slot.source_port = source_port;
+        slot.dest_ip = dest_ip;
+        slot.dest_port = dest_port;
+        slot.protocol = protocol;
+        size_t copy_len = std::min(data_len, static_cast<size_t>(PendingPayloadMax));
+        slot.len = static_cast<uint16_t>(copy_len);
+        if (copy_len > 0 && data != nullptr) {
+            std::memcpy(slot.data, data, copy_len);
+        }
+        m_pending_tail = (m_pending_tail + 1) % MaxPendingPackets;
+        m_pending_count++;
         return false;
     }
 
@@ -489,35 +497,42 @@ void ProxySocketManager::DeliverPendingPackets(ProxySocket* socket, uint16_t por
     // Caller must NOT hold m_mutex (we take it here)
     std::scoped_lock lock(m_mutex);
 
-    if (socket == nullptr || m_pending_packets.empty()) {
+    if (socket == nullptr || m_pending_count == 0) {
         return;
     }
 
-    auto it = m_pending_packets.begin();
-    while (it != m_pending_packets.end()) {
-        const auto& pkt = *it;
+    // Walk the ring in arrival order, delivering matches and compacting in place.
+    size_t read_idx = m_pending_head;
+    size_t write_idx = m_pending_head;
+    size_t remaining = m_pending_count;
+    size_t kept = 0;
 
-        // Check if packet matches this socket
+    while (remaining > 0) {
+        const PendingPacket& pkt = m_pending_ring[read_idx];
+
         if (pkt.protocol == protocol && pkt.dest_port == port) {
-            // Build source address
-            // Note: Nintendo Switch uses BSD-style sockaddr with sin_len field
-            // CRITICAL: sin_addr must be in network byte order (standard BSD)
-            // bswap32 converts Ryujinx format to network byte order
             ryu_ldn::bsd::SockAddrIn from_addr{};
             from_addr.sin_len = sizeof(ryu_ldn::bsd::SockAddrIn);
             from_addr.sin_family = static_cast<uint8_t>(ryu_ldn::bsd::AddressFamily::Inet);
             from_addr.sin_port = __builtin_bswap16(pkt.source_port);
-            from_addr.sin_addr = __builtin_bswap32(pkt.source_ip);  // Convert to network byte order
+            from_addr.sin_addr = __builtin_bswap32(pkt.source_ip);  // Ryujinx -> network byte order
 
-            // Deliver to socket
-            socket->IncomingData(pkt.data.data(), pkt.data.size(), from_addr);
-
-            // Remove from pending
-            it = m_pending_packets.erase(it);
+            socket->IncomingData(pkt.data, pkt.len, from_addr);
+            // Drop this slot by not copying it forward
         } else {
-            ++it;
+            if (write_idx != read_idx) {
+                m_pending_ring[write_idx] = pkt;
+            }
+            write_idx = (write_idx + 1) % MaxPendingPackets;
+            kept++;
         }
+
+        read_idx = (read_idx + 1) % MaxPendingPackets;
+        remaining--;
     }
+
+    m_pending_tail = write_idx;
+    m_pending_count = kept;
 }
 
 } // namespace ams::mitm::bsd
