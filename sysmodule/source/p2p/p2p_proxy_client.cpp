@@ -96,6 +96,24 @@ void ClientRecvThreadEntry(void* arg) {
 }
 
 // =============================================================================
+// Receive Thread Stack
+// =============================================================================
+//
+// The stack lives in BSS (page-aligned via os::ThreadStackAlignment) so that
+// `new P2pProxyClient(...)` doesn't have to over-align the class itself.
+// Inlining `alignas(0x1000) uint8_t stack[N]` inside the class made the
+// whole P2pProxyClient over-aligned to 4 KB, which forced the heap-allocated
+// `new` to call the unimplemented aligned operator new and std::abort'd
+// 0xFFE the moment HandleExternalProxyConnect ran. Same root cause we fixed
+// for P2pProxyServer and P2pProxySession.
+//
+// One stack is enough — the sysmodule only ever holds a single P2pProxyClient
+// (via ICommunicationService::m_p2p_client) at a time.
+constexpr size_t P2P_CLIENT_STACK_SIZE = 0x4000;
+alignas(os::ThreadStackAlignment) constinit u8
+    g_p2p_client_recv_thread_stack[P2P_CLIENT_STACK_SIZE];
+
+// =============================================================================
 // Constructor / Destructor
 // =============================================================================
 
@@ -290,7 +308,8 @@ bool P2pProxyClient::Connect(const uint8_t* ip_bytes, size_t ip_len, uint16_t po
     m_recv_thread_running = true;
 
     Result rc = os::CreateThread(&m_recv_thread, ClientRecvThreadEntry, this,
-                                  m_recv_thread_stack, sizeof(m_recv_thread_stack),
+                                  g_p2p_client_recv_thread_stack,
+                                  P2P_CLIENT_STACK_SIZE,
                                   /* priority */ 0x2C);
 
     if (R_FAILED(rc)) {

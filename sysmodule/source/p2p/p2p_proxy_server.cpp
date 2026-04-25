@@ -188,6 +188,44 @@ alignas(os::ThreadStackAlignment) constinit u8 g_p2p_accept_thread_stack[0x4000]
 alignas(os::ThreadStackAlignment) constinit u8 g_p2p_lease_thread_stack[0x2000];
 
 // =============================================================================
+// Session Recv Thread Stack Pool
+// =============================================================================
+//
+// One stack per concurrent peer (capped at MAX_PLAYERS = 8). Stacks live in
+// BSS for the same reason as the accept/lease ones above — `alignas(0x1000)`
+// inside the P2pProxySession class made the class itself over-aligned, so
+// `new P2pProxySession(...)` in AcceptLoop fell through to the unimplemented
+// aligned operator new and DABRT'd 0x101 the moment a peer hit our port.
+//
+// Slots are claimed/released under g_p2p_session_stack_mutex so concurrent
+// accept() callers (the accept thread is single, but Disconnect() can race
+// with the next accept) don't double-allocate or leak slots.
+constexpr int P2P_SESSION_STACK_COUNT = P2pProxyServer::MAX_PLAYERS;
+constexpr size_t P2P_SESSION_STACK_SIZE = 0x4000;
+alignas(os::ThreadStackAlignment) constinit u8
+    g_p2p_session_stacks[P2P_SESSION_STACK_COUNT][P2P_SESSION_STACK_SIZE];
+constinit bool g_p2p_session_stack_used[P2P_SESSION_STACK_COUNT] = {};
+constinit os::SdkMutex g_p2p_session_stack_mutex;
+
+// Returns slot index in [0, P2P_SESSION_STACK_COUNT), or -1 if the pool is full.
+int AllocateSessionStackSlot() {
+    std::scoped_lock lock(g_p2p_session_stack_mutex);
+    for (int i = 0; i < P2P_SESSION_STACK_COUNT; ++i) {
+        if (!g_p2p_session_stack_used[i]) {
+            g_p2p_session_stack_used[i] = true;
+            return i;
+        }
+    }
+    return -1;
+}
+
+void ReleaseSessionStackSlot(int slot) {
+    if (slot < 0 || slot >= P2P_SESSION_STACK_COUNT) return;
+    std::scoped_lock lock(g_p2p_session_stack_mutex);
+    g_p2p_session_stack_used[slot] = false;
+}
+
+// =============================================================================
 // Thread Entry Points
 // =============================================================================
 //
@@ -736,6 +774,10 @@ void P2pProxyServer::StartLeaseRenewal() {
  * This matches Ryujinx's timing exactly for compatibility.
  */
 void P2pProxyServer::LeaseRenewalLoop() {
+    LOG_INFO("P2P LeaseRenewalLoop: entry, m_lease_thread_running=%d, m_disposed=%d",
+             static_cast<int>(m_lease_thread_running), static_cast<int>(m_disposed));
+    ryu_ldn::debug::g_logger.flush();
+
     // Sleep duration: PORT_LEASE_RENEW seconds = 50 seconds
     const auto renew_ns = TimeSpan::FromSeconds(PORT_LEASE_RENEW).GetNanoSeconds();
 
@@ -1012,6 +1054,9 @@ void P2pProxyServer::Configure(const ryu_ldn::protocol::ProxyConfig& config) {
  * and break out of the loop.
  */
 void P2pProxyServer::AcceptLoop() {
+    LOG_INFO("P2P AcceptLoop: entry, listen_fd=%d, m_running=%d",
+             m_listen_fd, static_cast<int>(m_running));
+    ryu_ldn::debug::g_logger.flush();
     while (m_running) {
         // Accept incoming connection
         sockaddr_in client_addr{};
@@ -1325,6 +1370,7 @@ P2pProxySession::P2pProxySession(P2pProxyServer* server, int socket_fd, uint32_t
     , m_connected(true)
     , m_authenticated(false)
     , m_master_closed(false)
+    , m_stack_slot(-1)
 {
 }
 
@@ -1333,6 +1379,12 @@ P2pProxySession::P2pProxySession(P2pProxyServer* server, int socket_fd, uint32_t
  */
 P2pProxySession::~P2pProxySession() {
     Disconnect(true);
+    // Return the receive-thread stack slot to the global pool so the next
+    // peer that connects can reuse it.
+    if (m_stack_slot >= 0) {
+        ReleaseSessionStackSlot(m_stack_slot);
+        m_stack_slot = -1;
+    }
 }
 
 /**
@@ -1342,6 +1394,23 @@ P2pProxySession::~P2pProxySession() {
  * The thread processes received data and dispatches to appropriate handlers.
  */
 void P2pProxySession::Start() {
+    // Claim a stack slot from the BSS pool — the stack lives there because
+    // inlining `alignas(0x1000) uint8_t stack[N]` inside this class made
+    // P2pProxySession itself over-aligned to 4 KB and the heap allocator
+    // (which only guarantees 8-byte alignment) caused new P2pProxySession
+    // to fall through to the unimplemented aligned operator new => DABRT
+    // 0x101 the moment a peer hit our port.
+    m_stack_slot = AllocateSessionStackSlot();
+    if (m_stack_slot < 0) {
+        LOG_ERROR("P2pProxySession::Start: stack pool exhausted (max=%d), session dropped",
+                  P2P_SESSION_STACK_COUNT);
+        // Without a stack we cannot run the recv thread; mark the session
+        // disconnected so the caller cleans it up. We don't close the fd
+        // here — the caller's session-cleanup path handles that.
+        m_connected = false;
+        return;
+    }
+
     // Priority 7 — slightly below the accept thread (5) so accept can preempt
     // a slow recv handler. `HighestThreadPriority - 2` (= -2) was a system
     // priority that the kernel refuses for a normal sysmodule, same DABRT as
@@ -1350,8 +1419,8 @@ void P2pProxySession::Start() {
         &m_recv_thread,
         SessionRecvThreadEntry,
         this,
-        m_recv_thread_stack,
-        sizeof(m_recv_thread_stack),
+        g_p2p_session_stacks[m_stack_slot],
+        P2P_SESSION_STACK_SIZE,
         7                                // High user-mode priority
     ));
 

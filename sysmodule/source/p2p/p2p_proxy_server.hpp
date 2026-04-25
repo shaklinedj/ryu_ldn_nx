@@ -443,9 +443,14 @@ private:
     bool m_authenticated;
     bool m_master_closed;
 
-    // Receive thread
+    // Receive thread (stack lives in a BSS pool — see g_p2p_session_stacks
+    // in p2p_proxy_server.cpp). Inlining `alignas(0x1000) uint8_t stack[N]`
+    // here made the whole class over-aligned to 4 KB and crashed
+    // `new P2pProxySession(...)` with DABRT 0x101 — same root cause we
+    // fixed in P2pProxyServer earlier. Keep it as a slot index so that
+    // ~P2pProxySession can return the slot to the pool.
     os::ThreadType m_recv_thread;
-    alignas(0x1000) uint8_t m_recv_thread_stack[0x4000];
+    int m_stack_slot;            ///< Index in the global session-stack pool, -1 if unallocated
 
     // Receive buffer
     static constexpr size_t RECV_BUFFER_SIZE = 0x10000;

@@ -282,9 +282,14 @@ private:
     // Proxy config from host
     ryu_ldn::protocol::ProxyConfig m_proxy_config;
 
-    // Receive thread
+    // Receive thread (stack lives in BSS — see g_p2p_client_recv_thread_stack
+    // in p2p_proxy_client.cpp). Inlining `alignas(0x1000) uint8_t stack[N]`
+    // here made the whole class over-aligned to 4 KB, so
+    // `new P2pProxyClient(...)` in HandleExternalProxyConnect fell through
+    // to the unimplemented aligned operator new and std::abort'd 0xFFE the
+    // moment the server told us about the external proxy. Same root cause
+    // as the P2pProxyServer/P2pProxySession fix.
     os::ThreadType m_recv_thread;
-    alignas(0x1000) uint8_t m_recv_thread_stack[0x4000];
     bool m_recv_thread_running;
 
     // Receive buffer
