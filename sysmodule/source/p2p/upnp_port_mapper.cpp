@@ -44,6 +44,7 @@
  */
 
 #include "upnp_port_mapper.hpp"
+#include "../debug/log.hpp"
 
 #include <miniupnpc/miniupnpc.h>
 #include <miniupnpc/upnpcommands.h>
@@ -101,18 +102,52 @@ UpnpPortMapper::~UpnpPortMapper() {
 // =============================================================================
 
 bool UpnpPortMapper::Discover() {
+    // Diagnostic: aggressive flushing because the maintenance-thread flush is
+    // every 2s; an SSDP/HTTP call can easily exceed that and a DABRT here
+    // would lose the trailing logs that pinpoint the crash site.
+    LOG_INFO("UpnpPortMapper::Discover: entry");
+    ryu_ldn::debug::g_logger.flush();
+
     std::scoped_lock lock(m_mutex);
+    LOG_INFO("UpnpPortMapper::Discover: mutex locked");
+    ryu_ldn::debug::g_logger.flush();
 
     // Already discovered - return cached result
     if (m_available) {
+        LOG_INFO("UpnpPortMapper::Discover: already discovered, return true");
+        ryu_ldn::debug::g_logger.flush();
         return true;
     }
 
+    LOG_INFO("UpnpPortMapper::Discover: m_urls=%p, m_data=%p",
+             static_cast<void*>(m_urls), static_cast<void*>(m_data));
+    ryu_ldn::debug::g_logger.flush();
+
+    // Defensive: we should never have null structs after the constructor,
+    // but if our heap somehow returned nullptr the crash would manifest as
+    // a DABRT here rather than something diagnosable.
+    if (m_urls == nullptr || m_data == nullptr) {
+        LOG_ERROR("UpnpPortMapper::Discover: m_urls or m_data is null, aborting");
+        ryu_ldn::debug::g_logger.flush();
+        return false;
+    }
+
+    LOG_INFO("UpnpPortMapper::Discover: about to read m_urls->controlURL");
+    ryu_ldn::debug::g_logger.flush();
+
+    char* controlURL_value = m_urls->controlURL;
+    LOG_INFO("UpnpPortMapper::Discover: controlURL=%p", static_cast<void*>(controlURL_value));
+    ryu_ldn::debug::g_logger.flush();
+
     // Clean up any previous failed discovery attempt
-    if (m_urls->controlURL) {
+    if (controlURL_value) {
+        LOG_INFO("UpnpPortMapper::Discover: previous controlURL set, freeing");
+        ryu_ldn::debug::g_logger.flush();
         FreeUPNPUrls(m_urls);
         std::memset(m_urls, 0, sizeof(UPNPUrls));
         std::memset(m_data, 0, sizeof(IGDdatas));
+        LOG_INFO("UpnpPortMapper::Discover: cleanup done");
+        ryu_ldn::debug::g_logger.flush();
     }
 
     int error = 0;
@@ -120,17 +155,17 @@ bool UpnpPortMapper::Discover() {
     // ==========================================================================
     // Step 1: SSDP Discovery
     // ==========================================================================
-    // Send M-SEARCH to 239.255.255.250:1900 to find UPnP devices
+    // Send M-SEARCH to 239.255.255.250:1900 to find UPnP devices.
     //
-    // Parameters:
-    //   delay_ms       - Timeout for discovery (2500ms like Ryujinx)
-    //   multicast_if   - Network interface for multicast (NULL = auto)
-    //   minissdpsock   - Path to MiniSSDPd socket (NULL = not used)
-    //   localport      - Local port for responses (0 = auto)
-    //   ipv6           - Enable IPv6 (0 = disabled, Switch uses IPv4)
-    //   ttl            - Time-to-live for multicast (2 = typical)
-    //   error          - Output error code
-    //
+    // Note: miniupnpc internally calls getaddrinfo(); on this sysmodule the
+    // libnx resolver routes to sfdnsres which DABRT'd from boot2 context.
+    // The Makefile redirects every getaddrinfo/freeaddrinfo/getnameinfo
+    // reference (including the ones in libminiupnpc.a) to inet_pton-based
+    // wrappers in source/network/dns_wrap.cpp, so this call no longer
+    // crashes.
+    LOG_INFO("UpnpPortMapper::Discover: calling upnpDiscover (miniupnpc, %u ms timeout)",
+             UPNP_DISCOVERY_TIMEOUT_MS);
+    ryu_ldn::debug::g_logger.flush();
     UPNPDev* devlist = upnpDiscover(
         UPNP_DISCOVERY_TIMEOUT_MS,  // 2500ms timeout
         nullptr,                     // Auto-select interface
@@ -140,6 +175,9 @@ bool UpnpPortMapper::Discover() {
         2,                           // TTL = 2
         &error
     );
+    LOG_INFO("UpnpPortMapper::Discover: upnpDiscover returned devlist=%p, error=%d",
+             static_cast<void*>(devlist), error);
+    ryu_ldn::debug::g_logger.flush();
 
     if (devlist == nullptr) {
         // No UPnP devices found on the network

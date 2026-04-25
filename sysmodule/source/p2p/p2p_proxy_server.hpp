@@ -299,13 +299,16 @@ private:
     bool m_running;
     bool m_disposed;
 
-    // Accept thread
+    // Accept thread (stack lives in BSS — see g_p2p_accept_thread_stack in
+    // p2p_proxy_server.cpp). Inlining the stack inside the class with
+    // alignas(0x1000) made the whole class over-aligned to 4 KB, which
+    // forced `new P2pProxyServer(...)` to call the unimplemented aligned
+    // operator new and crashed the sysmodule (DABRT 0x101) the moment a
+    // host pressed "create network".
     os::ThreadType m_accept_thread;
-    alignas(0x1000) uint8_t m_accept_thread_stack[0x4000];
 
-    // Lease renewal thread
+    // Lease renewal thread (stack: g_p2p_lease_thread_stack in BSS)
     os::ThreadType m_lease_thread;
-    alignas(0x1000) uint8_t m_lease_thread_stack[0x2000];
     bool m_lease_thread_running;
 
     // Sessions

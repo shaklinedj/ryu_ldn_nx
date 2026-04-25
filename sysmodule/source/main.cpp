@@ -61,7 +61,11 @@ namespace ams {
             .udp_rx_buf_size     = 0x2000,
             .sb_efficiency       = 4,
             .num_bsd_sessions    = 3,
-            .bsd_service_type    = BsdServiceType_User,
+            // bsd:s (System) is required for privileged socket options like
+            // IP_MULTICAST_TTL / IP_MULTICAST_IF / IP_ADD_MEMBERSHIP that
+            // miniupnpc's upnpDiscover() relies on. bsd:u returned EPERM and
+            // miniupnpc crashed instead of handling the error gracefully.
+            .bsd_service_type    = BsdServiceType_System,
         };
 
         /// Socket transfer memory buffer
@@ -98,7 +102,11 @@ namespace ams {
         const size_t NumExtraThreads = TotalThreads - 1;
 
         /// Thread stack size
-        const size_t ThreadStackSize = 0x4000;
+        // 32 KB: needed because miniupnpc's upnpDiscover() and minissdpc helpers
+        // each allocate ~2 KB of stack frames; cumulative with IPC dispatch +
+        // ICommunicationService::CreateNetwork → NatPunch → Discover, 16 KB
+        // overflowed and DABRT'd on the very first call into upnpDiscover.
+        const size_t ThreadStackSize = 0x8000;
 
         /// Thread stack
         alignas(os::MemoryPageSize) u8 g_thread_stack[ThreadStackSize];

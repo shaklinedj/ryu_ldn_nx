@@ -41,6 +41,16 @@ CXXFLAGS	+= $(VERSION_DEFINES)
 LIBS		+= -lminiupnpc
 
 #---------------------------------------------------------------------------------
+# Resolver wrappers — sfdnsres-backed getaddrinfo()/freeaddrinfo()/getnameinfo()
+# from libnx DABRT in our boot2 sysmodule context. We redirect every call
+# (including those baked into libminiupnpc.a) to inet_pton-based stubs in
+# source/network/dns_wrap.cpp; UPnP only needs IPv4-literal resolution.
+#---------------------------------------------------------------------------------
+CXXWRAPS	+= -Wl,--wrap,getaddrinfo \
+		   -Wl,--wrap,freeaddrinfo \
+		   -Wl,--wrap,getnameinfo
+
+#---------------------------------------------------------------------------------
 # no real need to edit anything past this point unless you need to add additional
 # rules for different file extensions
 #---------------------------------------------------------------------------------

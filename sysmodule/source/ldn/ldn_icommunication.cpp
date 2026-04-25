@@ -674,8 +674,17 @@ Result ICommunicationService::Scan(
 // ============================================================================
 
 Result ICommunicationService::OpenAccessPoint() {
+    LOG_INFO("OpenAccessPoint() called (state before=%s)",
+             LdnStateMachine::StateToString(m_state_machine.GetState()));
+
     auto result = m_state_machine.OpenAccessPoint();
+    if (result != StateTransitionResult::Success) {
+        LOG_INFO("OpenAccessPoint: state transition failed: %s",
+                 LdnStateMachine::ResultToString(result));
+    }
     R_UNLESS(result == StateTransitionResult::Success, MAKERESULT(0x10, 1));
+
+    LOG_INFO("OpenAccessPoint: state transitioned to AccessPoint");
 
     // Connect to RyuLdn server
     Result rc = ConnectToServer();
@@ -722,12 +731,20 @@ Result ICommunicationService::CreateNetwork(CreateNetworkConfig data) {
         LOG_INFO("CreateNetwork() replacing local_comm_id with NACP LocalCommunicationId=0x%016lx", local_comm_id);
     }
 
-    LOG_INFO("CreateNetwork called, local_comm_id=0x%016lx", local_comm_id);
+    LOG_INFO("CreateNetwork called, local_comm_id=0x%016lx (state before=%s)",
+             local_comm_id,
+             LdnStateMachine::StateToString(m_state_machine.GetState()));
 
     R_UNLESS(IsServerConnected(), MAKERESULT(0x10, 2)); // Not connected
 
     auto result = m_state_machine.CreateNetwork();
+    if (result != StateTransitionResult::Success) {
+        LOG_INFO("CreateNetwork: state transition refused: %s (state=%s)",
+                 LdnStateMachine::ResultToString(result),
+                 LdnStateMachine::StateToString(m_state_machine.GetState()));
+    }
     R_UNLESS(result == StateTransitionResult::Success, MAKERESULT(0x10, 1));
+    LOG_INFO("CreateNetwork: state transitioned to AccessPointCreated, building request");
 
     // Build CreateAccessPoint request from config
     // Convert from ams::mitm::ldn types to ryu_ldn::protocol types
@@ -757,13 +774,19 @@ Result ICommunicationService::CreateNetwork(CreateNetworkConfig data) {
 
     // Start P2P proxy server for hosting (like Ryujinx CreateNetworkAsync)
     // This allows direct P2P connections from joiners
+    LOG_INFO("CreateNetwork: about to evaluate P2P proxy (m_use_p2p_proxy=%d)",
+             static_cast<int>(m_use_p2p_proxy));
     if (m_use_p2p_proxy && StartP2pProxyServer()) {
+        LOG_INFO("CreateNetwork: P2P proxy started successfully, calling NatPunch()");
         // Attempt UPnP NAT punch to open public port
         uint16_t public_port = m_p2p_server->NatPunch();
+        LOG_INFO("CreateNetwork: NatPunch returned public_port=%u", public_port);
 
         // Fill RyuNetworkConfig with P2P port information
         // Like Ryujinx: request.PrivateIp = GetLocalIPv4(), request.ExternalProxyPort = public_port
+        LOG_INFO("CreateNetwork: calling GetLocalIPv4()");
         uint32_t local_ip = p2p::UpnpPortMapper::GetInstance().GetLocalIPv4();
+        LOG_INFO("CreateNetwork: GetLocalIPv4 returned 0x%08X", local_ip);
 
         // Store local IP as 16-byte buffer (first 4 bytes for IPv4)
         std::memset(request.ryu_network_config.private_ip, 0, sizeof(request.ryu_network_config.private_ip));
@@ -1082,9 +1105,17 @@ Result ICommunicationService::ScanPrivate(
 Result ICommunicationService::CreateNetworkPrivate(
         CreateNetworkPrivateConfig data,
         ams::sf::InPointerBuffer addressList) {
+    LOG_INFO("CreateNetworkPrivate called (state before=%s, addr_list_size=%zu)",
+             LdnStateMachine::StateToString(m_state_machine.GetState()),
+             addressList.GetSize());
+
     R_UNLESS(IsServerConnected(), MAKERESULT(0x10, 2)); // Not connected
 
     auto result = m_state_machine.CreateNetwork();
+    if (result != StateTransitionResult::Success) {
+        LOG_INFO("CreateNetworkPrivate: state transition refused: %s",
+                 LdnStateMachine::ResultToString(result));
+    }
     R_UNLESS(result == StateTransitionResult::Success, MAKERESULT(0x10, 1));
 
     // Build CreateAccessPointPrivate request from config

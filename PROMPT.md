@@ -1,7 +1,9 @@
 # Projet :
+
 Update ryu_ldn pour fonctioner nativement sur switch
 
 ## c'est quoi ?
+
 ryu_ldn est une adaptation du projet ldn_mitm de la switch
 avec une incorporation des protocole natif de cette documentations : https://github.com/kinnay/NintendoClients/wiki
 pour ne plus avoir besoin de pcap en capture de packet
@@ -10,6 +12,7 @@ a l'origine ldn_mitm est un sys module pour atmosphere (CFW nintendo switch)
 qui a pour but de convertire les packet de multi joueur local en packet lan
 
 ### mais pourquoi ?
+
 sur la nintendo switch il est impossible de jouer en ligne avec une console modifier
 donc il a été créer lan play qui grace a une capture de packet créer un réseaux
 virtuel recemblant a un vpn adpté au jeux switch
@@ -17,7 +20,8 @@ pour accédé au mode lan sur serveur en ligne.
 c'est pour aller de pair que ldn_mitm a été créer
 
 ### et ryu_ldn dans tout ça ?
-et bien il vise a rendre natif pour l'émulateur ryujinx un équivalent de 
+
+et bien il vise a rendre natif pour l'émulateur ryujinx un équivalent de
 lan play officiel sur leur propre serveur et ce sans config utilisateur
 ni outils pcap d'intèrcéption de packet
 
@@ -27,15 +31,18 @@ sont propre protocole totalement repensé qui capable de créer équivalent lanp
 sans pcap ver ses propre serveur
 
 ## Pourquoi ?
+
 aujourd'hui il est beaucoup trop compliquer de jouer en lanplay sur switch a cause
 des configuration réseaux et du pc nésésaire en partage de connexion avec pcap d'activé.
 ce problème fait que prèsque personne n'utilise cette solutions.
 
 ## Objectif :
+
 j'aimerais donc intégré ryu_ldn avec la même simplicité que ldn_mitm
 en sys module sur atmosphere pour la nintendo switch
 
 ## défis technique :
+
 contrairemement a ldn_mitm qui est fionctionel sur switch ryu_ldn lui
 a été concu pour un émulateur et donc avec des capacité
 bien superieur en therme d'ouverture système et de puissance brute.
@@ -57,6 +64,7 @@ Je t'ai donner la page des limitation hardware des différent model de switch.
 tu doit obligatoirement de baser sur la limite basse de model le moins puissant
 
 ## Politique de code :
+
 je veut obligatoirement des test unitaire de tout ce que tu ajouté
 et tu doit les écrire avant le code
 je veut également avant de commancer le projet que tu ajouté les test de tout ce qui est
@@ -72,7 +80,9 @@ je veut également que tu intègre un starlight au projet qui récupère automat
 la documentation standard du code avec une github et en github page
 
 ## Sources :
+
 pour toute les source don tu a besoin :
+
 - la documentations complète du système réseaux lan, multi local et internet de la switch https://github.com/kinnay/NintendoClients/wiki
 - ici tu trouvera la documentations intégrale de switchbrew. le framework de développement sur cfw nintendo switch https://switchbrew.org/wiki/Main_Page
 - ici tu a la source de ruyldn également déja cloner dans le dossier courant https://git.ryujinx.app/ryubing/ryujinx
@@ -81,4 +91,15 @@ pour toute les source don tu a besoin :
 - Les limite hardware de la switch https://switchbrew.org/wiki/Hardware
 
 ## Environement de développement
+
 Le projet utilise Docker Compose pour la compilation et les tests.
+
+## Template de prompte debug
+
+quand le sysmodule rejoin la room de ryujinx ça charge puis erreur réseaux. le problème est que le jeux ne fait pas de send ou de send to car il y a quelque chose qui n'est pas communiquer coréctement entre la switch et ryujinx. ce ne sera jamais ryujinx le problème car le sysmodule est un fork et ne remets jamais en question le nombre de bit avec le padding car il est implicite dans ryu. ça a été vérifier et tester a de nombreuse reprise. si tu le remets tout de même en question je ferais un clear de ton contexte sans chercher a comprendre donc tu a interdiction de le faire.
+
+je t'invite a lire ryujinx qui est dans \~/GIT pour comparer les 2 code source dans le but de trouvé les incompatibilité et de lire les logs dans "/run/media/gabriel/SWITCH SD/config/ryu\_ldn\_nx" pour comprendre le problème.
+
+ce n'est pas la pène de me dire que l'ide fait des faut positif je sais que devkitpro est dans le compose de build c'est un chois délibéré donc ne gache pas des token a me dire que les erreur de l'ide n'en sont pas. je le sais
+
+si tu veut build je t'invite a lire le compose qui est déja paramétré pour

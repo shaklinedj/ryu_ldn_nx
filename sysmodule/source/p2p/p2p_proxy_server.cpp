@@ -169,6 +169,25 @@
 namespace ams::mitm::p2p {
 
 // =============================================================================
+// Statically-allocated thread stacks
+// =============================================================================
+//
+// os::CreateThread requires the stack pointer to be aligned to 4 KB
+// (os::ThreadStackAlignment). When P2pProxyServer is constructed via
+// `new` through the sysmodule's expanded heap, the heap returns 8-byte
+// aligned allocations — NOT 4 KB aligned — even though the inline stack
+// arrays declared `alignas(0x1000)` inside the class. The compiler can
+// only honor the alignas relative to the object's base address, which
+// is itself not 4 KB aligned. CreateThread then refuses the misaligned
+// stack and R_ABORT_UNLESS fires DABRT 0x101.
+//
+// Move the stacks out of the class into BSS, where the linker honors
+// the alignment, and have the (singleton) server reference them.
+// Single-host model means we only ever need one set of stacks.
+alignas(os::ThreadStackAlignment) constinit u8 g_p2p_accept_thread_stack[0x4000];
+alignas(os::ThreadStackAlignment) constinit u8 g_p2p_lease_thread_stack[0x2000];
+
+// =============================================================================
 // Thread Entry Points
 // =============================================================================
 //
@@ -424,18 +443,23 @@ bool P2pProxyServer::Start(uint16_t port) {
     // This thread loops calling accept() and creates P2pProxySession
     // objects for each new connection.
     //
-    // Thread priority: HighestThreadPriority - 1
-    // This is high priority because we don't want connection delays.
+    // Thread priority 5 — slightly above the MITM service thread (priority 6
+    // in main.cpp) so connection accepts aren't starved. We previously used
+    // `HighestThreadPriority - 1` (= -1) which falls in the system-priority
+    // range (HighestSystemThreadPriority = -12) and a regular sysmodule has
+    // no kernel capability to request it; svcCreateThread refused and
+    // R_ABORT_UNLESS panicked the process with DABRT 0x101 the first time
+    // a host called CreateNetwork.
 
     m_running = true;
 
     R_ABORT_UNLESS(os::CreateThread(
         &m_accept_thread,
-        AcceptThreadEntry,        // Entry function
-        this,                      // Argument (this pointer)
-        m_accept_thread_stack,     // Stack memory
-        sizeof(m_accept_thread_stack),  // Stack size (16KB)
-        os::HighestThreadPriority - 1   // High priority
+        AcceptThreadEntry,                // Entry function
+        this,                              // Argument (this pointer)
+        g_p2p_accept_thread_stack,         // Static, page-aligned stack (BSS)
+        sizeof(g_p2p_accept_thread_stack), // Stack size (16KB)
+        5                                  // High user-mode priority
     ));
 
     os::SetThreadNamePointer(&m_accept_thread, "p2p_accept");
@@ -565,13 +589,9 @@ bool P2pProxyServer::IsRunning() const {
  * By trying 39990-39999, we increase the chance of finding an available port.
  */
 uint16_t P2pProxyServer::NatPunch() {
-    // =========================================================================
-    // Step 1: Discover UPnP Gateway
-    // =========================================================================
-    // UpnpPortMapper::Discover() sends an SSDP multicast query to find
-    // UPnP-capable routers on the network. Timeout is 2500ms (like Ryujinx).
-
+    LOG_INFO("NatPunch: entering, getting UpnpPortMapper instance");
     auto& mapper = UpnpPortMapper::GetInstance();
+    LOG_INFO("NatPunch: calling mapper.Discover() (SSDP multicast, 2500ms timeout)");
 
     if (!mapper.Discover()) {
         // UPnP not available - this is common:
@@ -691,9 +711,9 @@ void P2pProxyServer::StartLeaseRenewal() {
         &m_lease_thread,
         LeaseThreadEntry,
         this,
-        m_lease_thread_stack,
-        sizeof(m_lease_thread_stack),
-        os::LowestThreadPriority  // Low priority - not time-critical
+        g_p2p_lease_thread_stack,         // Static, page-aligned stack (BSS)
+        sizeof(g_p2p_lease_thread_stack),
+        os::LowestThreadPriority           // Low priority - not time-critical
     ));
 
     os::SetThreadNamePointer(&m_lease_thread, "p2p_lease");
@@ -1322,13 +1342,17 @@ P2pProxySession::~P2pProxySession() {
  * The thread processes received data and dispatches to appropriate handlers.
  */
 void P2pProxySession::Start() {
+    // Priority 7 — slightly below the accept thread (5) so accept can preempt
+    // a slow recv handler. `HighestThreadPriority - 2` (= -2) was a system
+    // priority that the kernel refuses for a normal sysmodule, same DABRT as
+    // the accept thread used to take.
     R_ABORT_UNLESS(os::CreateThread(
         &m_recv_thread,
         SessionRecvThreadEntry,
         this,
         m_recv_thread_stack,
         sizeof(m_recv_thread_stack),
-        os::HighestThreadPriority - 2  // High priority but below accept thread
+        7                                // High user-mode priority
     ));
 
     os::SetThreadNamePointer(&m_recv_thread, "p2p_session");
