@@ -33,6 +33,15 @@ static os::Mutex g_active_service_mutex{false};
 // Background thread stack - allocated statically to avoid bloating class size
 alignas(os::ThreadStackAlignment) static u8 g_background_thread_stack[0x4000];
 
+// Async ExternalProxy connect thread stack — see m_p2p_connect_thread comment
+// in the header. The connect+auth+EnsureProxyReady chain takes 1–4 s and used
+// to run inline inside HandleServerPacket from the WaitForResponse poll loop,
+// freezing further packet dispatch (including the master server's `Connected`
+// reply, which arrives right after `ExternalProxy`). Ryujinx runs the same
+// HandleExternalProxy on the receive thread (NetCoreServer.OnReceived); we
+// approximate that by spawning a dedicated worker once per ExternalProxy.
+alignas(os::ThreadStackAlignment) static u8 g_p2p_connect_thread_stack[0x4000];
+
 /**
  * @brief Static callback for inactivity timeout
  *
@@ -193,6 +202,14 @@ ICommunicationService::~ICommunicationService() {
     m_background_thread_running = false;
     os::WaitThread(&m_background_thread);
     os::DestroyThread(&m_background_thread);
+
+    // Wait for any in-flight async P2P connect worker before tearing down
+    // m_p2p_client / m_external_proxy_config underneath it.
+    if (m_p2p_connect_thread_initialized) {
+        os::WaitThread(&m_p2p_connect_thread);
+        os::DestroyThread(&m_p2p_connect_thread);
+        m_p2p_connect_thread_initialized = false;
+    }
 
     // Stop P2P server if hosting
     StopP2pProxyServer();
@@ -788,9 +805,21 @@ Result ICommunicationService::CreateNetwork(CreateNetworkConfig data) {
         uint32_t local_ip = p2p::UpnpPortMapper::GetInstance().GetLocalIPv4();
         LOG_INFO("CreateNetwork: GetLocalIPv4 returned 0x%08X", local_ip);
 
-        // Store local IP as 16-byte buffer (first 4 bytes for IPv4)
+        // Store local IP as 16-byte buffer (first 4 bytes for IPv4).
+        //
+        // Wire format: network byte order (big-endian), to match what Ryujinx
+        // sends — its LdnMasterProxyClient does
+        //   `unicastAddress.Address.GetAddressBytes().AsSpan().CopyTo(request.PrivateIp.AsSpan());`
+        // and IPAddress.GetAddressBytes() returns big-endian. The receiver
+        // (sysmodule HandleExternalProxyConnect or another Ryujinx joiner)
+        // memcpys the bytes straight into sockaddr_in::sin_addr.s_addr,
+        // which itself expects network byte order — so omitting the htonl
+        // here made the host advertise its own IPv4 with the octets
+        // reversed (192.168.1.25 → 25.1.168.192) and the joiner timed out
+        // trying to connect.
+        const uint32_t local_ip_net = htonl(local_ip);
         std::memset(request.ryu_network_config.private_ip, 0, sizeof(request.ryu_network_config.private_ip));
-        std::memcpy(request.ryu_network_config.private_ip, &local_ip, sizeof(local_ip));
+        std::memcpy(request.ryu_network_config.private_ip, &local_ip_net, sizeof(local_ip_net));
 
         request.ryu_network_config.address_family = 2;  // AF_INET (IPv4)
         request.ryu_network_config.external_proxy_port = public_port;
@@ -814,8 +843,17 @@ Result ICommunicationService::CreateNetwork(CreateNetworkConfig data) {
                 request.network_config.channel,
                 request.network_config.node_count_max);
 
-    // Send to server
-    auto send_result = m_server_client.send_create_access_point(request);
+    // Send to server. Mirror Ryujinx LdnMasterProxyClient.CreateNetwork —
+    // the wire payload is `request | advertiseData[N]`. The game called
+    // SetAdvertiseData() before CreateNetwork(), but at that point
+    // m_network_connected was false so the SetAdvertiseData IPC didn't
+    // forward anything to the server. We carry the buffered data here so
+    // NetworkInfo.advertiseDataSize comes back populated and the host's
+    // lobby finishes loading instead of hanging.
+    auto send_result = m_server_client.send_create_access_point(
+        request,
+        m_advertise_data_size > 0 ? m_advertise_data : nullptr,
+        m_advertise_data_size);
     if (send_result != ryu_ldn::network::ClientOpResult::Success) {
         LOG_ERROR("CreateNetwork: send failed: %s",
                   ryu_ldn::network::client_op_result_to_string(send_result));
@@ -838,6 +876,37 @@ Result ICommunicationService::CreateNetwork(CreateNetworkConfig data) {
     }
 
     LOG_INFO("CreateNetwork: received Connected response, network created successfully");
+
+    // Predict the virtual LDN IP for the host so the game's bind(INADDR_ANY)
+    // can be rewritten immediately, even if the P2P async worker hasn't yet
+    // received its ProxyConfig. The Ryujinx server's VirtualDhcp always
+    // returns `baseAddress + 1` for the first allocated IP (see
+    // VirtualDhcp.cs : `_nextIp = baseAddress + 1` then RequestIpV4 returns
+    // _nextIp on first call), and the host is *always* the first node added
+    // to its own game (HostedGame.Connect right after SetOwner).
+    //
+    // Setting these here, instead of waiting on m_p2p_connect_thread_active,
+    // mirrors the timing of the RELAY mode where the master server pushes
+    // ProxyConfig before Connected and ICommunicationService::CreateNetwork
+    // returns to the game in ~100 ms. Blocking the IPC for 1–4 s on the P2P
+    // worker made the game stop polling GetState/GetNetworkInfo after
+    // CreateNetwork — the loading screen on MK8DX never advanced. The P2P
+    // worker still runs and overwrites these fields with the real config
+    // when its handshake completes; the values match anyway.
+    constexpr uint32_t kPredictedHostIp     = 0x0A720001;  // 10.114.0.1
+    constexpr uint32_t kPredictedSubnetMask = 0xFFFF0000;  // /16
+    if (m_use_p2p_proxy && m_ipv4_address == 0) {
+        m_ipv4_address = kPredictedHostIp;
+        m_subnet_mask  = kPredictedSubnetMask;
+        m_proxy_config.proxy_ip          = kPredictedHostIp;
+        m_proxy_config.proxy_subnet_mask = kPredictedSubnetMask;
+
+        auto& socket_manager = mitm::bsd::ProxySocketManager::GetInstance();
+        socket_manager.SetLocalIp(kPredictedHostIp);
+
+        LOG_INFO("CreateNetwork: pre-set host virtual IP 0x%08X (P2P async will confirm)",
+                 kPredictedHostIp);
+    }
 
     // Mark as connected to network and disable inactivity timeout (like Ryujinx)
     m_network_connected = true;
@@ -1366,6 +1435,19 @@ void ICommunicationService::HandleServerPacket(ryu_ldn::protocol::PacketId id, c
                     m_network_info.networkId.intentId.localCommunicationId = m_local_communication_id;
                 }
 
+                // Force a non-zero Wi-Fi channel — same trick as ldn_mitm's
+                // LANDiscovery::createNetwork (`if (channel == 0) channel = 6`).
+                // The Ryujinx server forwards `request.NetworkConfig.Channel`
+                // verbatim and Switch games (e.g. MK8DX) sometimes pass 0
+                // there. On real hardware the LDN service would never report
+                // channel 0 back to the game, and the game refuses to leave
+                // its "Création de partie privée" loading screen if it sees
+                // channel 0 in the returned NetworkInfo.
+                if (m_network_info.common.channel == 0) {
+                    LOG_INFO("Connected: fixing channel 0 -> 6 (LDN can't be on channel 0)");
+                    m_network_info.common.channel = 6;
+                }
+
                 // Set network connected flag (like Ryujinx _networkConnected = true)
                 m_network_connected = true;
 
@@ -1423,6 +1505,21 @@ void ICommunicationService::HandleServerPacket(ryu_ldn::protocol::PacketId id, c
                     FindLocalNodeId(),
                     is_host
                 );
+
+                // Mirror Ryujinx HandleConnected: invoke NetworkChange event,
+                // which over there hits AccessPoint.NetworkChanged → calls
+                // `_parent.SetState(NetworkState.AccessPointCreated)` and that
+                // signals the state-change event. The game's polling thread
+                // wakes up *while* the CreateNetwork IPC is still in flight
+                // and starts its GetState/GetNetworkInfo loop in time, so by
+                // the time CreateNetwork returns the lobby flow is already
+                // running. Without this, our lone signal at the end of
+                // CreateNetwork landed too late on the P2P path (CreateNetwork
+                // takes ~3 s because of the synchronous UPnP NatPunch) and
+                // the game stopped polling — it stuck on the loading screen
+                // even though state/info were correct. RELAY mode happened to
+                // work only because CreateNetwork there returned in ~500 ms.
+                m_state_machine.SignalStateChange();
             } else {
                 LOG_ERROR("Connected packet too small: %zu < %zu",
                           size, sizeof(ryu_ldn::protocol::NetworkInfo));
@@ -1618,13 +1715,61 @@ void ICommunicationService::HandleServerPacket(ryu_ldn::protocol::PacketId id, c
                 LOG_INFO("Received ExternalProxy: port=%u, family=%u",
                          config->proxy_port, config->address_family);
 
-                // Like Ryujinx: if P2P is disabled, we don't connect to external proxy
-                // The _useP2pProxy flag controls this behavior
-                if (!m_use_p2p_proxy) {
+                // Skip the P2P client loopback when we are the host of the
+                // network we're being told to connect to. The Ryujinx server
+                // sends ExternalProxy to every player that joins via Connect,
+                // including the host itself (CreateAccessPoint -> Connect ->
+                // InitExternalProxy -> session.SendAsync(ExternalProxy)). On
+                // PC Ryujinx it's harmless to dial back to your own local
+                // proxy server, but on the Switch that loopback is a TCP
+                // connection on the same console with a worker thread that
+                // shares CPU/scheduler with the game, and empirically the
+                // game's polling thread (GetState/GetNetworkInfo cycle)
+                // never gets to run after CreateNetwork — the lobby spins
+                // forever. Detecting "this ExternalProxy is for me" is easy:
+                // the proxy port matches our hosted P2P server port, and a
+                // P2P server is currently running. In that case we just
+                // silently skip the client connect; the server stays up to
+                // accept real joiners.
+                const bool is_self_proxy = (m_p2p_server != nullptr &&
+                                            m_p2p_server->IsRunning() &&
+                                            config->proxy_port == m_p2p_server->GetPublicPort());
+                if (is_self_proxy) {
+                    LOG_INFO("ExternalProxy targets our own hosted P2P server (port=%u) — skipping loopback",
+                             config->proxy_port);
+                } else if (!m_use_p2p_proxy) {
                     LOG_INFO("P2P proxy disabled, ignoring ExternalProxy");
                 } else {
-                    // Create P2pProxyClient and connect to host (like Ryujinx HandleExternalProxy)
-                    HandleExternalProxyConnect(*config);
+                    // Spawn a dedicated worker for the connect+auth+ready chain
+                    // (Ryujinx runs HandleExternalProxy on its async receive
+                    // thread; we're called from the WaitForResponse poll loop,
+                    // so doing this inline would block the dispatch of the
+                    // `Connected` reply that arrives right after).
+                    if (!m_p2p_connect_thread_active.exchange(true)) {
+                        if (m_p2p_connect_thread_initialized) {
+                            os::WaitThread(&m_p2p_connect_thread);
+                            os::DestroyThread(&m_p2p_connect_thread);
+                        }
+                        m_pending_p2p_config = *config;
+                        Result rc = os::CreateThread(
+                            &m_p2p_connect_thread,
+                            ICommunicationService::P2pConnectThreadEntry,
+                            this,
+                            g_p2p_connect_thread_stack,
+                            sizeof(g_p2p_connect_thread_stack),
+                            7);
+                        if (R_FAILED(rc)) {
+                            LOG_ERROR("Failed to spawn P2P connect thread: rc=0x%X",
+                                      rc.GetValue());
+                            m_p2p_connect_thread_active = false;
+                        } else {
+                            os::SetThreadNamePointer(&m_p2p_connect_thread, "p2p_connect");
+                            os::StartThread(&m_p2p_connect_thread);
+                            m_p2p_connect_thread_initialized = true;
+                        }
+                    } else {
+                        LOG_WARN("ExternalProxy received while previous P2P connect still in progress, dropping");
+                    }
                 }
             }
             break;
@@ -1935,6 +2080,29 @@ void ICommunicationService::HandleExternalProxyConnect(
     m_proxy_config = m_p2p_client->GetProxyConfig();
     LOG_INFO("P2P connection established: virtual_ip=0x%08X",
              m_proxy_config.proxy_ip);
+
+    // Mirror the master-server PacketId::ProxyConfig handler (ldn_icommunication.cpp,
+    // case ProxyConfig). In RELAY mode the master sends ProxyConfig directly and
+    // we land in that case; in P2P mode (IsP2P=true on the server) the master
+    // does NOT send ProxyConfig — it travels via the P2pProxyClient instead —
+    // so this is the *only* place where these fields get populated for the host.
+    //
+    // Why all four fields matter:
+    // - m_ipv4_address: returned by GetIpv4Address() IPC (the game asks "what is my LDN IP")
+    // - m_subnet_mask:  returned alongside it
+    // - SocketHelpers/ProxySocketManager local IP: rewrites bind(INADDR_ANY)
+    //   so the game's gameplay UDP socket binds on 10.114.0.1:12345 instead
+    //   of 0.0.0.0:12345 and actually receives matching proxy traffic.
+    // Forgetting the first two on the P2P path made the game stay on the
+    // "Création de partie privée" loading screen because GetIpv4Address
+    // returned 0 and the game treated the network as not yet usable.
+    m_ipv4_address = m_proxy_config.proxy_ip;
+    m_subnet_mask  = m_proxy_config.proxy_subnet_mask;
+
+    auto& socket_manager = mitm::bsd::ProxySocketManager::GetInstance();
+    socket_manager.SetLocalIp(m_proxy_config.proxy_ip);
+    LOG_INFO("ProxySocketManager: local IP set to 0x%08X (via P2P), m_ipv4_address=0x%08X",
+             m_proxy_config.proxy_ip, m_ipv4_address);
 }
 
 void ICommunicationService::DisconnectP2pProxy() {
@@ -1998,6 +2166,14 @@ void ICommunicationService::StopP2pProxyServer() {
         delete m_p2p_server;
         m_p2p_server = nullptr;
     }
+}
+
+void ICommunicationService::P2pConnectThreadEntry(void* arg) {
+    auto* self = static_cast<ICommunicationService*>(arg);
+    LOG_INFO("P2pConnectThreadEntry: starting async ExternalProxy connect");
+    self->HandleExternalProxyConnect(self->m_pending_p2p_config);
+    LOG_INFO("P2pConnectThreadEntry: done");
+    self->m_p2p_connect_thread_active = false;
 }
 
 void ICommunicationService::HandleExternalProxyToken(

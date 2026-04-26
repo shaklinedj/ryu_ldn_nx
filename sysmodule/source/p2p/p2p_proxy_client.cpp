@@ -307,10 +307,16 @@ bool P2pProxyClient::Connect(const uint8_t* ip_bytes, size_t ip_len, uint16_t po
     m_connected = true;
     m_recv_thread_running = true;
 
+    // Priority 7 — same as P2pProxySession's recv thread, slightly below
+    // the accept thread (5). The original `0x2C` (= 44) was outside
+    // os::ThreadPriority's [0, 31] valid range and crashed svcCreateThread
+    // the moment we actually managed to get past `connect()` (before the
+    // private_ip htonl fix the connect always timed out, so this code
+    // path was never reached).
     Result rc = os::CreateThread(&m_recv_thread, ClientRecvThreadEntry, this,
                                   g_p2p_client_recv_thread_stack,
                                   P2P_CLIENT_STACK_SIZE,
-                                  /* priority */ 0x2C);
+                                  /* priority */ 7);
 
     if (R_FAILED(rc)) {
         LOG_ERROR("P2P client: failed to create recv thread (rc=0x%X)", rc.GetValue());

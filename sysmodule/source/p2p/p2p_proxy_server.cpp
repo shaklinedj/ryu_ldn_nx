@@ -1485,6 +1485,9 @@ void P2pProxySession::Disconnect(bool from_master) {
  * - m_connected is set to false
  */
 void P2pProxySession::ReceiveLoop() {
+    LOG_INFO("P2pProxySession::ReceiveLoop: entry, fd=%d, slot=%d, this=%p",
+             m_socket_fd, m_stack_slot, static_cast<void*>(this));
+    ryu_ldn::debug::g_logger.flush();
     while (m_connected) {
         ssize_t received = recv(m_socket_fd, m_recv_buffer, RECV_BUFFER_SIZE, 0);
 
@@ -1493,9 +1496,14 @@ void P2pProxySession::ReceiveLoop() {
                 continue;  // Interrupted by signal, retry
             }
             // Connection closed or error
+            LOG_INFO("P2pProxySession::ReceiveLoop: exit (recv=%zd, errno=%d, m_connected=%d)",
+                     received, errno, static_cast<int>(m_connected));
+            ryu_ldn::debug::g_logger.flush();
             break;
         }
 
+        LOG_INFO("P2pProxySession: recv %zd bytes, dispatching", received);
+        ryu_ldn::debug::g_logger.flush();
         // Process received data
         ProcessData(m_recv_buffer, static_cast<size_t>(received));
     }

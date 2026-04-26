@@ -320,26 +320,47 @@ ClientResult TcpClient::send_disconnect(const protocol::DisconnectMessage& msg) 
 /**
  * @brief Send CreateAccessPoint request
  */
-ClientResult TcpClient::send_create_access_point(const protocol::CreateAccessPointRequest& request) {
+ClientResult TcpClient::send_create_access_point(const protocol::CreateAccessPointRequest& request,
+                                                   const uint8_t* advertise_data,
+                                                   size_t advertise_size) {
     if (!m_socket.is_connected()) {
         return ClientResult::NotConnected;
     }
 
     std::scoped_lock send_lock(m_send_mutex);
 
-    size_t encoded_size = 0;
-    protocol::EncodeResult encode_result = protocol::encode(
-        m_send_buffer, sizeof(m_send_buffer),
-        protocol::PacketId::CreateAccessPoint, request, encoded_size);
-
-    if (encode_result != protocol::EncodeResult::Success) {
-        return ClientResult::EncodingError;
+    // Wire layout (same as Ryujinx LdnMasterProxyClient.CreateNetwork):
+    //   LdnHeader | CreateAccessPointRequest | AdvertiseData[N]
+    // The server stores AdvertiseData verbatim in NetworkInfo.ldn so the
+    // game sees it on join. Sending the request without the trailing
+    // advertise blob made the host's lobby spin forever because
+    // NetworkInfo.advertiseDataSize came back as 0.
+    const size_t total_payload_size = sizeof(request) + advertise_size;
+    if (total_payload_size > sizeof(m_send_buffer) - sizeof(protocol::LdnHeader)) {
+        return ClientResult::BufferTooSmall;
     }
 
-    LOG_INFO("send_create_access_point: header=%zu, payload=%zu, total=%zu bytes",
-             sizeof(protocol::LdnHeader), sizeof(request), encoded_size);
+    protocol::LdnHeader header{};
+    header.magic = protocol::PROTOCOL_MAGIC;
+    header.version = protocol::PROTOCOL_VERSION;
+    header.type = static_cast<uint8_t>(protocol::PacketId::CreateAccessPoint);
+    header.data_size = static_cast<uint32_t>(total_payload_size);
 
-    SocketResult send_result = m_socket.send_all(m_send_buffer, encoded_size);
+    std::memcpy(m_send_buffer, &header, sizeof(header));
+    size_t offset = sizeof(header);
+
+    std::memcpy(m_send_buffer + offset, &request, sizeof(request));
+    offset += sizeof(request);
+
+    if (advertise_data && advertise_size > 0) {
+        std::memcpy(m_send_buffer + offset, advertise_data, advertise_size);
+        offset += advertise_size;
+    }
+
+    LOG_INFO("send_create_access_point: header=%zu, payload=%zu, advertise=%zu, total=%zu bytes",
+             sizeof(protocol::LdnHeader), sizeof(request), advertise_size, offset);
+
+    SocketResult send_result = m_socket.send_all(m_send_buffer, offset);
     return send_result == SocketResult::Success ? ClientResult::Success : socket_to_client_result(send_result);
 }
 

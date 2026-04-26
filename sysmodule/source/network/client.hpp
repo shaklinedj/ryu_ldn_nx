@@ -414,7 +414,9 @@ public:
      * @param request Access point parameters
      * @return ClientOpResult indicating success or failure
      */
-    ClientOpResult send_create_access_point(const protocol::CreateAccessPointRequest& request);
+    ClientOpResult send_create_access_point(const protocol::CreateAccessPointRequest& request,
+                                            const uint8_t* advertise_data = nullptr,
+                                            size_t advertise_size = 0);
 
     /**
      * @brief Send request to connect to a network

@@ -637,12 +637,14 @@ ClientOpResult RyuLdnClient::send_scan(const protocol::ScanFilterFull& filter) {
  * @return ClientOpResult indicating success or failure
  */
 ClientOpResult RyuLdnClient::send_create_access_point(
-    const protocol::CreateAccessPointRequest& request) {
+    const protocol::CreateAccessPointRequest& request,
+    const uint8_t* advertise_data,
+    size_t advertise_size) {
     if (!is_ready()) {
         return ClientOpResult::NotReady;
     }
 
-    ClientResult result = m_tcp_client.send_create_access_point(request);
+    ClientResult result = m_tcp_client.send_create_access_point(request, advertise_data, advertise_size);
     if (result != ClientResult::Success) {
         LOG_INFO("send_create_access_point: TCP send returned %d", static_cast<int>(result));
         if (result == ClientResult::ConnectionLost) {

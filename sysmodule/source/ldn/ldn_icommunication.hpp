@@ -411,6 +411,18 @@ private:
     p2p::P2pProxyClient* m_p2p_client;                      ///< Connected P2P proxy client (joiner side)
     p2p::P2pProxyServer* m_p2p_server;                      ///< Hosted P2P proxy server (host side)
 
+    // Async ExternalProxy connect thread — mirrors Ryujinx's architecture
+    // where HandleExternalProxy runs on the receive thread (NetCoreServer
+    // OnReceived) instead of the request thread, so the server's
+    // `Connected` packet can still be parsed while the P2P client is
+    // mid-handshake. Doing the connect synchronously inside our poll loop
+    // froze WaitForResponse, the game's CreateNetwork timed out and the
+    // host hung on the loading screen.
+    os::ThreadType m_p2p_connect_thread;
+    std::atomic<bool> m_p2p_connect_thread_active{false};
+    bool m_p2p_connect_thread_initialized = false;
+    ryu_ldn::protocol::ExternalProxyConfig m_pending_p2p_config{};
+
     // Inactivity timeout (like Ryujinx _timeout)
     NetworkTimeout m_inactivity_timeout;                    ///< Auto-disconnect after idle period
 
@@ -429,6 +441,12 @@ private:
      * @brief Background thread main loop - processes server pings
      */
     void BackgroundThreadFunc();
+
+    /**
+     * @brief Async P2P connect thread entry — see m_p2p_connect_thread
+     * @param arg Pointer to ICommunicationService instance
+     */
+    static void P2pConnectThreadEntry(void* arg);
 
     // Program ID for LocalCommunicationId replacement (like Ryujinx NeedsRealId handling)
     ncm::ProgramId m_program_id;                            ///< Client program ID (title ID)

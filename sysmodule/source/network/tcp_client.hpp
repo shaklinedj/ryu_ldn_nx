@@ -333,7 +333,9 @@ public:
      * @param request Access point configuration
      * @return ClientResult indicating success or error
      */
-    ClientResult send_create_access_point(const protocol::CreateAccessPointRequest& request);
+    ClientResult send_create_access_point(const protocol::CreateAccessPointRequest& request,
+                                          const uint8_t* advertise_data = nullptr,
+                                          size_t advertise_size = 0);
 
     /**
      * @brief Send CreateAccessPointPrivate request
