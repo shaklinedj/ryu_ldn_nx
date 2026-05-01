@@ -60,7 +60,29 @@ namespace ams {
             .udp_tx_buf_size     = 0x2000,
             .udp_rx_buf_size     = 0x2000,
             .sb_efficiency       = 4,
-            .num_bsd_sessions    = 3,
+            // num_bsd_sessions = number of IPC sessions to bsd:s — i.e. the
+            // max concurrency for blocking BSD calls. Each blocked recv()/
+            // accept()/send() holds one session for the entire IPC round-trip.
+            //
+            // Worst-case host-side concurrency in P2P mode (LDN = 8 players
+            // total = host + 7 joiners):
+            //   - master TCP recv          : 1
+            //   - P2pProxyServer accept    : 1
+            //   - P2pProxyClient (loopback) recv : 1
+            //   - 8 P2pProxySession recv   (1 loopback + 7 joiners)
+            //   = 11 blocking calls + marge for setsockopt/bind/send.
+            //
+            // The default of 3 saturated as soon as the loopback session was
+            // alive (master recv + accept + 2 loopback recvs = 4 already > 3),
+            // and bsd:s on Switch returns errno=113 (EHOSTUNREACH-mapped
+            // "no resources") on the 4th concurrent call instead of blocking
+            // — which is what made the AcceptLoop spin endlessly.
+            //
+            // 14 is ConcurrencyLimitMax in libstratosphere
+            // (socket_constants.hpp:35), the highest value the kernel will
+            // accept; transfer-memory size is independent of this count, so
+            // headroom is free.
+            .num_bsd_sessions    = 14,
             // bsd:s (System) is required for privileged socket options like
             // IP_MULTICAST_TTL / IP_MULTICAST_IF / IP_ADD_MEMBERSHIP that
             // miniupnpc's upnpDiscover() relies on. bsd:u returned EPERM and

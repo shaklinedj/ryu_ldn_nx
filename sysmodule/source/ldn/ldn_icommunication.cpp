@@ -117,6 +117,35 @@ static bool SendProxyDataCallback(uint32_t source_ip, uint16_t source_port,
     return result == ryu_ldn::network::ClientOpResult::Success;
 }
 
+// Inbound data plane for the P2P host: P2pProxyServer hands us each ProxyData
+// payload that targets either the broadcast address or the host's vIP, so we
+// can deliver it to the same BSD MITM sink relay-mode ProxyData uses
+// (ProxySocketManager::RouteIncomingData). This is the in-process replacement
+// for Ryujinx's "host dials its own P2pProxyServer over TCP" loopback, which
+// we deliberately skip on Switch (TCP loopback for talking to ourselves costs
+// +1 connection, +2 worker threads, +128 KB recv buffers and +2 bsd:s IPC
+// sessions — too much for the sysmodule budget).
+static void HostP2pInboundDataCallback(uint32_t source_ip, uint16_t source_port,
+                                       uint32_t dest_ip, uint16_t dest_port,
+                                       ryu_ldn::protocol::ProtocolType protocol,
+                                       const uint8_t* data, size_t data_len,
+                                       void* /*user_data*/) {
+    ryu_ldn::bsd::ProtocolType bsd_protocol;
+    switch (protocol) {
+        case ryu_ldn::protocol::ProtocolType::Tcp: bsd_protocol = ryu_ldn::bsd::ProtocolType::Tcp; break;
+        case ryu_ldn::protocol::ProtocolType::Udp: bsd_protocol = ryu_ldn::bsd::ProtocolType::Udp; break;
+        default:
+            LOG_WARN("HostP2pInboundDataCallback: unsupported protocol=%u",
+                     static_cast<unsigned>(protocol));
+            return;
+    }
+    auto& socket_manager = mitm::bsd::ProxySocketManager::GetInstance();
+    socket_manager.RouteIncomingData(source_ip, source_port,
+                                     dest_ip,   dest_port,
+                                     bsd_protocol,
+                                     data, data_len);
+}
+
 // Verify struct sizes match Nintendo's expectations
 static_assert(sizeof(NetworkInfo) == 0x480, "sizeof(NetworkInfo) should be 0x480");
 static_assert(sizeof(ConnectNetworkData) == 0x7C, "sizeof(ConnectNetworkData) should be 0x7C");
@@ -754,6 +783,16 @@ Result ICommunicationService::CreateNetwork(CreateNetworkConfig data) {
 
     R_UNLESS(IsServerConnected(), MAKERESULT(0x10, 2)); // Not connected
 
+    // Mirror Ryujinx LdnMasterProxyClient.CreateNetwork: disable the inactivity
+    // timeout *before* doing any work that may take a few seconds. The whole
+    // CreateAccessPoint round-trip (UPnP NatPunch + send + WaitForResponse) can
+    // straddle the 6 s NetworkTimeout window, and if we wait until after the
+    // Connected response to call DisableTimeout(), OnInactivityTimeout fires
+    // mid-CreateNetwork, sees `m_network_connected == false` (we set it later
+    // in this same function), and disconnects the master TCP — leaving the
+    // sysmodule with an "AccessPointCreated" state but no master link.
+    m_inactivity_timeout.DisableTimeout();
+
     auto result = m_state_machine.CreateNetwork();
     if (result != StateTransitionResult::Success) {
         LOG_INFO("CreateNetwork: state transition refused: %s (state=%s)",
@@ -876,6 +915,22 @@ Result ICommunicationService::CreateNetwork(CreateNetworkConfig data) {
     }
 
     LOG_INFO("CreateNetwork: received Connected response, network created successfully");
+
+    // Mirror upstream CreateNetworkCommon (LdnMasterProxyClient.cs:452-457):
+    //   if (!_useP2pProxy && _hostedProxy != null) {
+    //       Logger.Warning("Locally hosted proxy server was not externally reachable.
+    //                       Proxying through the master server instead.");
+    //       DisposeProxy();
+    //   }
+    // The HandleNetworkError path on the master TCP recv thread only flips
+    // m_use_p2p_proxy (matches upstream HandleNetworkError); the actual
+    // proxy teardown happens here on the IPC thread once we've cleared the
+    // Connected handshake. Doing it on master TCP recv would block the
+    // master's read loop on os::WaitThread for the accept thread to exit.
+    if (!m_use_p2p_proxy && m_p2p_server != nullptr) {
+        LOG_WARN("CreateNetwork: locally hosted proxy was not externally reachable, falling back to relay");
+        StopP2pProxyServer();
+    }
 
     // Predict the virtual LDN IP for the host so the game's bind(INADDR_ANY)
     // can be rewritten immediately, even if the P2P async worker hasn't yet
@@ -1179,6 +1234,11 @@ Result ICommunicationService::CreateNetworkPrivate(
              addressList.GetSize());
 
     R_UNLESS(IsServerConnected(), MAKERESULT(0x10, 2)); // Not connected
+
+    // Same reason as CreateNetwork: disable the inactivity timeout up front
+    // so OnInactivityTimeout doesn't fire mid-handshake and tear down the
+    // master TCP while m_network_connected is still false.
+    m_inactivity_timeout.DisableTimeout();
 
     auto result = m_state_machine.CreateNetwork();
     if (result != StateTransitionResult::Success) {
@@ -1529,12 +1589,20 @@ void ICommunicationService::HandleServerPacket(ryu_ldn::protocol::PacketId id, c
 
         case ryu_ldn::protocol::PacketId::SyncNetwork: {
             // Server sends updated network state - contains NetworkInfo
+            LOG_INFO("HandleServerPacket: SyncNetwork ENTRY (size=%zu)", size);
+            ryu_ldn::debug::g_logger.flush();
             if (size >= sizeof(ryu_ldn::protocol::NetworkInfo)) {
                 const auto* net_info = reinterpret_cast<const ryu_ldn::protocol::NetworkInfo*>(data);
+                LOG_INFO("SyncNetwork step1: about to memcpy NetworkInfo (sizeof=%zu, src=%p, dst=%p)",
+                         sizeof(m_network_info),
+                         static_cast<const void*>(net_info),
+                         static_cast<void*>(&m_network_info));
+                ryu_ldn::debug::g_logger.flush();
                 std::memcpy(&m_network_info, net_info, sizeof(m_network_info));
-
-                // NOTE: Keep node IPs in Ryujinx format (same as Connected handler).
-                // DO NOT bswap - must match GetIpv4Address() format.
+                LOG_INFO("SyncNetwork step2: memcpy done, node_count=%u, max=%u",
+                         m_network_info.ldn.nodeCount,
+                         m_network_info.ldn.nodeCountMax);
+                ryu_ldn::debug::g_logger.flush();
 
                 // Fix sceneId and localCommunicationId (same as Connected handler)
                 if (m_expected_scene_id != 0 && m_network_info.networkId.intentId.sceneId != m_expected_scene_id) {
@@ -1544,21 +1612,34 @@ void ICommunicationService::HandleServerPacket(ryu_ldn::protocol::PacketId id, c
                     m_network_info.networkId.intentId.localCommunicationId != m_local_communication_id) {
                     m_network_info.networkId.intentId.localCommunicationId = m_local_communication_id;
                 }
-
-                LOG_VERBOSE("Received SyncNetwork: node_count=%u",
-                            m_network_info.ldn.nodeCount);
+                LOG_INFO("SyncNetwork step3: scene/comm-id fix done");
+                ryu_ldn::debug::g_logger.flush();
 
                 // Update session info
+                LOG_INFO("SyncNetwork step4: calling FindLocalNodeId()");
+                ryu_ldn::debug::g_logger.flush();
+                int local_id = FindLocalNodeId();
+                LOG_INFO("SyncNetwork step4b: FindLocalNodeId() returned %d", local_id);
+                ryu_ldn::debug::g_logger.flush();
+
+                LOG_INFO("SyncNetwork step5: getting SharedState::GetInstance()");
+                ryu_ldn::debug::g_logger.flush();
                 auto& shared_state = SharedState::GetInstance();
+                LOG_INFO("SyncNetwork step6: calling SetSessionInfo");
+                ryu_ldn::debug::g_logger.flush();
                 shared_state.SetSessionInfo(
                     m_network_info.ldn.nodeCount,
                     m_network_info.ldn.nodeCountMax,
-                    FindLocalNodeId(),
+                    local_id,
                     m_state_machine.GetState() == CommState::AccessPointCreated
                 );
+                LOG_INFO("SyncNetwork step7: SetSessionInfo done");
+                ryu_ldn::debug::g_logger.flush();
 
                 // Signal state change event so game knows network updated
                 m_state_machine.SignalStateChange();
+                LOG_INFO("SyncNetwork step8: SignalStateChange done");
+                ryu_ldn::debug::g_logger.flush();
             }
             break;
         }
@@ -1616,13 +1697,28 @@ void ICommunicationService::HandleServerPacket(ryu_ldn::protocol::PacketId id, c
                 const auto* err = reinterpret_cast<const ryu_ldn::protocol::NetworkErrorMessage*>(data);
                 auto error_code = static_cast<ryu_ldn::protocol::NetworkErrorCode>(err->error_code);
 
-                // Like Ryujinx: special handling for PortUnreachable
-                // if (error.Error == NetworkError.PortUnreachable) { _useP2pProxy = false; }
-                // else { _lastError = error.Error; }
-                if (error_code == ryu_ldn::protocol::NetworkErrorCode::None) {
-                    // PortUnreachable equivalent - disable P2P proxy
-                    // (We don't have P2P proxy yet, so just log)
-                    LOG_WARN("Received NetworkError: PortUnreachable (P2P disabled)");
+                // PortUnreachable from the upstream NetworkError enum
+                // (LdnServer/Network/Types/NetworkError.cs in ryuldn-server):
+                //   None=0, PortUnreachable=1, TooManyPlayers=2, ...
+                // Our local NetworkErrorCode happens to use 1 for an
+                // unrelated `VersionMismatch`, so match against the wire
+                // value directly to stay correct against the upstream
+                // protocol regardless of our local naming.
+                constexpr uint32_t kPortUnreachableWire = 1;
+
+                if (err->error_code == kPortUnreachableWire) {
+                    // Mirror Ryujinx LdnMasterProxyClient.HandleNetworkError
+                    // exactly: just flag P2P off. Don't touch the proxy
+                    // server here — calling Stop() synchronously from the
+                    // master TCP recv thread joins the P2pProxyServer accept
+                    // thread, and on Switch close(listen_fd) does not always
+                    // wake the blocked accept() the way it does on Linux,
+                    // leaving the loop spinning on errno=113 forever. The
+                    // proxy cleanup is handled later in the CreateNetwork
+                    // flow on the game IPC thread (mirrors upstream's
+                    // CreateNetworkCommon `if (!_useP2pProxy && _hostedProxy != null) DisposeProxy();`).
+                    LOG_WARN("Received NetworkError: PortUnreachable — disabling P2P (cleanup deferred)");
+                    m_use_p2p_proxy = false;
                 } else {
                     m_last_network_error = error_code;
                     LOG_ERROR("Received NetworkError: code=%u", err->error_code);
@@ -1715,27 +1811,31 @@ void ICommunicationService::HandleServerPacket(ryu_ldn::protocol::PacketId id, c
                 LOG_INFO("Received ExternalProxy: port=%u, family=%u",
                          config->proxy_port, config->address_family);
 
-                // Skip the P2P client loopback when we are the host of the
-                // network we're being told to connect to. The Ryujinx server
-                // sends ExternalProxy to every player that joins via Connect,
-                // including the host itself (CreateAccessPoint -> Connect ->
-                // InitExternalProxy -> session.SendAsync(ExternalProxy)). On
-                // PC Ryujinx it's harmless to dial back to your own local
-                // proxy server, but on the Switch that loopback is a TCP
-                // connection on the same console with a worker thread that
-                // shares CPU/scheduler with the game, and empirically the
-                // game's polling thread (GetState/GetNetworkInfo cycle)
-                // never gets to run after CreateNetwork — the lobby spins
-                // forever. Detecting "this ExternalProxy is for me" is easy:
-                // the proxy port matches our hosted P2P server port, and a
-                // P2P server is currently running. In that case we just
-                // silently skip the client connect; the server stays up to
-                // accept real joiners.
+                // Skip the self-loopback when this ExternalProxy targets our
+                // own hosted P2pProxyServer. The Ryujinx server sends an
+                // ExternalProxy to every player joining a P2P game including
+                // the host (CreateAccessPoint -> game.Connect(this, myInfo) ->
+                // InitExternalProxy -> session.SendAsync(ExternalProxy)).
+                // Upstream PC Ryujinx then dials its own server over TCP
+                // loopback so the host registers itself in `_players` and
+                // shares the same data-plane code as joiners. On Switch we
+                // have a cheaper shortcut: P2pProxyServer::BroadcastFromHost
+                // outbound + HostP2pInboundDataCallback inbound, both
+                // wired in StartP2pProxyServer. Doing the loopback in
+                // addition would double the routing (and was the original
+                // cause of the "loading screen spins forever" — the loopback
+                // session shared CPU/scheduler with the game's polling
+                // thread). The match is loose: the master sends us
+                // _privateConfig with the LAN port, _externalConfig with
+                // the UPnP-mapped public port, or both depending on whether
+                // it sees us on the same physical IP — accept either as
+                // "this points at us".
                 const bool is_self_proxy = (m_p2p_server != nullptr &&
                                             m_p2p_server->IsRunning() &&
-                                            config->proxy_port == m_p2p_server->GetPublicPort());
+                                            (config->proxy_port == m_p2p_server->GetPublicPort() ||
+                                             config->proxy_port == m_p2p_server->GetPrivatePort()));
                 if (is_self_proxy) {
-                    LOG_INFO("ExternalProxy targets our own hosted P2P server (port=%u) — skipping loopback",
+                    LOG_INFO("ExternalProxy targets our own hosted P2P server (port=%u) — skipping loopback (in-process shortcut active)",
                              config->proxy_port);
                 } else if (!m_use_p2p_proxy) {
                     LOG_INFO("P2P proxy disabled, ignoring ExternalProxy");
@@ -1789,9 +1889,33 @@ void ICommunicationService::HandleServerPacket(ryu_ldn::protocol::PacketId id, c
             break;
         }
 
+        case ryu_ldn::protocol::PacketId::ExternalProxyState: {
+            // Master tells the host that a joiner's connection state changed.
+            // Mirrors Ryujinx P2pProxyServer.HandleStateChange — when
+            // Connected=false we have to drop the matching waiting token
+            // (so the slot doesn't stay reserved for someone who never
+            // showed up) and disconnect any session already authenticated
+            // under that vIP. Without this handler, a joiner that fails
+            // its TCP-side auth on us leaves the master holding a stale
+            // _players entry for them while we keep the token forever,
+            // and the next CreateNetwork retry can't reuse the slot.
+            if (size >= sizeof(ryu_ldn::protocol::ExternalProxyConnectionState)) {
+                const auto* state = reinterpret_cast<const ryu_ldn::protocol::ExternalProxyConnectionState*>(data);
+                LOG_INFO("Received ExternalProxyState: vIP=0x%08X connected=%u",
+                         state->ip_address, static_cast<unsigned>(state->connected));
+                if (m_p2p_server != nullptr) {
+                    m_p2p_server->HandleExternalProxyStateChange(state->ip_address,
+                                                                 state->connected != 0);
+                }
+            }
+            break;
+        }
+
         case ryu_ldn::protocol::PacketId::ProxyData: {
             // Server relays game data from other players (like Ryujinx HandleProxyData)
             // Route to BSD MITM proxy sockets for transparent game socket interception
+            LOG_INFO("HandleServerPacket: ProxyData ENTRY (size=%zu)", size);
+            ryu_ldn::debug::g_logger.flush();
             if (size >= sizeof(ryu_ldn::protocol::ProxyDataHeader)) {
                 const auto* proxy_header = reinterpret_cast<const ryu_ldn::protocol::ProxyDataHeader*>(data);
                 const uint8_t* payload = data + sizeof(ryu_ldn::protocol::ProxyDataHeader);
@@ -1975,7 +2099,31 @@ ryu_ldn::network::ClientOpResult ICommunicationService::SendProxyDataToServer(
                 header.info.dest_ipv4, header.info.dest_port,
                 static_cast<unsigned>(header.info.protocol), data_len);
 
-    // If P2P client is connected, send through P2P instead of master server
+    // If we're the host of a P2P network, the joiners are sitting on our
+    // P2pProxyServer waiting for ProxyData over their dedicated TCP — the
+    // master TCP path is wasted because the joiners' LdnProxy is registered
+    // against the P2P protocol instance, not the master one. Broadcast over
+    // P2P first; that's the only sink the joiner game listens to. This is
+    // the in-process replacement for Ryujinx's TCP loopback design (the
+    // host would otherwise dial its own P2pProxyServer to register itself
+    // in _players and reuse the same SendAsync path as joiners).
+    if (m_p2p_server != nullptr && m_p2p_server->IsRunning()) {
+        if (m_p2p_server->BroadcastFromHost(const_cast<ryu_ldn::protocol::ProxyDataHeader&>(header),
+                                             static_cast<const uint8_t*>(data), data_len)) {
+            return ryu_ldn::network::ClientOpResult::Success;
+        }
+        // Empty room (no authenticated joiners yet) is the common case here;
+        // don't fall back to the master because the master only relays for
+        // RELAY-mode joiners which by construction don't exist when we're
+        // hosting via P2P.
+        return ryu_ldn::network::ClientOpResult::Success;
+    }
+
+    // If P2P client is connected, send through P2P instead of master server.
+    // Mirrors Ryujinx LdnProxy.SendTo → _parent.SendAsync (where _parent is
+    // the P2pProxyClient when in P2P mode) — for the host, _parent is the
+    // P2pProxyClient that loops back to its own P2pProxyServer, so this
+    // single path covers both joiner and host data plane.
     if (m_p2p_client != nullptr && m_p2p_client->IsReady()) {
         LOG_VERBOSE("SendProxyDataToServer: routing via P2P client");
         if (m_p2p_client->SendProxyData(header, static_cast<const uint8_t*>(data), data_len)) {
@@ -2148,6 +2296,17 @@ bool ICommunicationService::StartP2pProxyServer() {
         StopP2pProxyServer();
         return false;
     }
+
+    // Wire the in-process host data plane: the host's vIP is the predicted
+    // value pre-set in CreateNetwork (the Ryujinx server's VirtualDhcp always
+    // gives baseAddress+1 to the first connector, and the host always
+    // self-connects first via game.Connect right after SetOwner). Joiner
+    // ProxyData destined to that vIP — or to the broadcast address — is fed
+    // to ProxySocketManager::RouteIncomingData via the static callback below
+    // (mirrors the relay-mode ProxyData sink in HandleServerPacket).
+    constexpr uint32_t kPredictedHostIp = 0x0A720001;
+    m_p2p_server->SetHostVirtualIp(kPredictedHostIp);
+    m_p2p_server->SetHostDataCallback(HostP2pInboundDataCallback, this);
 
     LOG_INFO("StartP2pProxyServer: server started on port %u",
              m_p2p_server->GetPrivatePort());

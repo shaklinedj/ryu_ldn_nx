@@ -43,6 +43,7 @@
  */
 
 #include "socket.hpp"
+#include "../debug/log.hpp"
 #include <cstring>
 #include <cerrno>
 
@@ -833,12 +834,29 @@ SocketResult Socket::wait_ready(uint32_t timeout_ms, bool for_write) {
         return SocketResult::Timeout;
     }
 
-    // Check for error conditions in revents
+    // Check for error conditions in revents.
+    //
+    // Sans ce traitement, retourner SocketError ici (et garder m_connected=true)
+    // faisait spinner process_packets — receive_packet retournait
+    // ClientResult::InternalError (générique), process_packets log+break sans
+    // toucher au state machine, et le background thread reboucle pour toujours
+    // sur un socket qui ne reverra jamais de Success. Quand POLLHUP/POLLERR/
+    // POLLNVAL est signalé, le peer side est mort (ou le fd invalide) : on
+    // marque la socket comme déconnectée — comme on le fait pour recv() == 0
+    // ou ECONNRESET — et on map à ConnectionReset pour que la stack TcpClient
+    // propage ConnectionLost et déclenche le auto-reconnect.
     if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) {
-        // POLLERR: socket error
-        // POLLHUP: hangup (connection closed)
-        // POLLNVAL: invalid file descriptor
-        return SocketResult::SocketError;
+        // Flush — ce log est l'événement-clé du diagnostic "master TCP meurt
+        // pendant que l'IPC game tourne". Sans flush on le perd si un KP
+        // suit (le idle-flush de 2 s du logger ne s'est pas encore déclenché).
+        LOG_INFO("Socket::wait_ready: peer-side close on fd=%d (revents=0x%X: %s%s%s) — marking disconnected",
+                 m_fd, static_cast<unsigned>(pfd.revents),
+                 (pfd.revents & POLLERR)  ? "POLLERR " : "",
+                 (pfd.revents & POLLHUP)  ? "POLLHUP " : "",
+                 (pfd.revents & POLLNVAL) ? "POLLNVAL" : "");
+        ryu_ldn::debug::g_logger.flush();
+        m_connected = false;
+        return SocketResult::ConnectionReset;
     }
 
     // Socket is ready for the requested operation

@@ -45,6 +45,7 @@
 #pragma once
 
 #include <stratosphere.hpp>
+#include <atomic>
 #include "../protocol/types.hpp"
 #include "../protocol/ryu_protocol.hpp"
 #include "upnp_port_mapper.hpp"
@@ -200,6 +201,33 @@ public:
                          const ryu_ldn::protocol::ExternalProxyConfig& config,
                          uint32_t remote_ip);
 
+    /**
+     * @brief Apply a master-originated ExternalProxyState change.
+     *
+     * Mirrors Ryujinx P2pProxyServer.HandleStateChange. When the master
+     * tells us a player is no longer connected (because their join
+     * didn't complete or they dropped out without notifying us), we have
+     * to remove the matching waiting token AND disconnect the matching
+     * session — otherwise the zombie session keeps the recv thread
+     * alive and the token sits forever blocking the slot for retries.
+     *
+     * @param virtual_ip ExternalProxyConnectionState.IpAddress
+     * @param connected  ExternalProxyConnectionState.Connected
+     */
+    void HandleExternalProxyStateChange(uint32_t virtual_ip, bool connected);
+
+    /**
+     * @brief Free disconnected sessions queued by OnSessionDisconnected
+     *
+     * Walks m_zombie_sessions, joins+destroys the recv thread of any
+     * session whose m_thread_done atomic has flipped to true, then
+     * `delete`s the session and shrinks the array. Called from
+     * AcceptLoop on every iteration and from Stop() so disconnected
+     * peers don't leak their 64 KB recv buffer (RECV_BUFFER_SIZE in
+     * the header).
+     */
+    void ReapZombieSessions();
+
     // =========================================================================
     // Configuration
     // =========================================================================
@@ -209,6 +237,58 @@ public:
      * @param config Configuration with subnet info
      */
     void Configure(const ryu_ldn::protocol::ProxyConfig& config);
+
+    // =========================================================================
+    // Host self-routing — in-process shortcut
+    // =========================================================================
+    //
+    // Ryujinx upstream has the host dial back to its own P2pProxyServer over
+    // TCP loopback so the host appears as a regular session in `_players`
+    // and shares the same data-plane code path as joiners. On Switch that
+    // costs us +1 TCP connection, +2 worker threads, +128 KB recv buffers
+    // and +2 bsd:s IPC sessions for traffic that never leaves the console.
+    // We skip the loopback (see is_self_proxy in ldn_icommunication.cpp's
+    // ExternalProxy handler) and route the host's data plane in-process:
+    //
+    //   - inbound  (joiner -> host game)
+    //       a session receives a ProxyData whose dest is the host's vIP or
+    //       the broadcast address. The server invokes m_host_data_callback
+    //       so ICommunicationService can forward the payload to
+    //       ProxySocketManager::RouteIncomingData — the same sink relay-
+    //       mode ProxyData feeds.
+    //
+    //   - outbound (host game -> joiners)
+    //       BSD MITM calls into ICommunicationService::SendProxyDataToServer.
+    //       In P2P-host mode that path calls BroadcastFromHost() below
+    //       instead of m_server_client.send_proxy_data, sending the payload
+    //       directly to every authenticated joiner session over their P2P
+    //       TCP — which is the only sink the joiner game listens to,
+    //       because the joiner's LdnProxy is registered against the P2P
+    //       protocol instance, not the master one.
+
+    /// Callback invoked when an inbound proxy packet is destined to the
+    /// host (its virtual IP or broadcast). Same shape as the relay-mode
+    /// ProxyData handler in ldn_icommunication.cpp.
+    using HostProxyDataCallback = void (*)(uint32_t source_ip, uint16_t source_port,
+                                           uint32_t dest_ip,   uint16_t dest_port,
+                                           ryu_ldn::protocol::ProtocolType protocol,
+                                           const uint8_t* data, size_t data_len,
+                                           void* user_data);
+
+    /// The host's own virtual IP — packets whose dest matches this value or
+    /// the configured broadcast address are dispatched to m_host_data_callback.
+    void SetHostVirtualIp(uint32_t virtual_ip);
+
+    /// Register the in-process inbound sink. Pass nullptr to detach.
+    void SetHostDataCallback(HostProxyDataCallback callback, void* user_data);
+
+    /// Broadcast a ProxyData packet from the host's local game out to every
+    /// authenticated P2P session. The header's source_ipv4 is filled in with
+    /// the host's virtual IP if the caller left it at 0 (mirrors the
+    /// "bound on 0.0.0.0" handling in RouteMessage).
+    bool BroadcastFromHost(ryu_ldn::protocol::ProxyDataHeader& header,
+                           const uint8_t* data, size_t data_len);
+
 
     // =========================================================================
     // Proxy Message Routing
@@ -296,7 +376,9 @@ private:
     int m_listen_fd;
     uint16_t m_private_port;
     uint16_t m_public_port;
-    bool m_running;
+    // Atomic so the accept thread sees the Stop()-side flip without going
+    // through m_mutex (we don't want to take m_mutex on every poll cycle).
+    std::atomic<bool> m_running;
     bool m_disposed;
 
     // Accept thread (stack lives in BSS — see g_p2p_accept_thread_stack in
@@ -315,6 +397,17 @@ private:
     P2pProxySession* m_sessions[MAX_PLAYERS];
     int m_session_count;
 
+    // Disconnected sessions waiting to be deleted by ReapZombieSessions().
+    // Sized at 2 * MAX_PLAYERS so a burst of joiners cycling in/out can't
+    // overflow before the next reap. We can't `delete this` inside the
+    // session's own recv thread (would free its own stack while it's still
+    // unwinding), so OnSessionDisconnected just queues the pointer here and
+    // AcceptLoop / Stop() free it once m_thread_done is true and the
+    // thread has joined.
+    static constexpr int MAX_ZOMBIE_SESSIONS = MAX_PLAYERS * 2;
+    P2pProxySession* m_zombie_sessions[MAX_ZOMBIE_SESSIONS];
+    int m_zombie_session_count;
+
     // Waiting tokens for auth
     static constexpr int MAX_WAITING_TOKENS = 16;
     ryu_ldn::protocol::ExternalProxyToken m_waiting_tokens[MAX_WAITING_TOKENS];
@@ -327,6 +420,11 @@ private:
     // Master server callback
     MasterSendCallback m_master_callback;
     void* m_callback_user_data;
+
+    // In-process host self-routing — see SetHostDataCallback() above.
+    uint32_t m_host_virtual_ip;
+    HostProxyDataCallback m_host_data_callback;
+    void* m_host_data_user_data;
 };
 
 /**
@@ -452,9 +550,17 @@ private:
     os::ThreadType m_recv_thread;
     int m_stack_slot;            ///< Index in the global session-stack pool, -1 if unallocated
 
+    // Set by SessionRecvThreadEntry just before the thread function returns,
+    // so the server's reaper can spot a zombie session and free it without
+    // doing `delete this` from the dying thread (which would free its own
+    // stack mid-return and is UB).
+    std::atomic<bool> m_thread_done{false};
+
     // Receive buffer
     static constexpr size_t RECV_BUFFER_SIZE = 0x10000;
     uint8_t m_recv_buffer[RECV_BUFFER_SIZE];
+
+    friend class P2pProxyServer;  // for the reaper path
 };
 
 } // namespace ams::mitm::p2p
