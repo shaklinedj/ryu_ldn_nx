@@ -360,6 +360,38 @@ ClientResult TcpClient::send_create_access_point(const protocol::CreateAccessPoi
     LOG_INFO("send_create_access_point: header=%zu, payload=%zu, advertise=%zu, total=%zu bytes",
              sizeof(protocol::LdnHeader), sizeof(request), advertise_size, offset);
 
+    // Hex-dump the payload in 32-byte rows so we can confirm the bytes
+    // the server sees on the wire match what we intend (struct order /
+    // endianness / alignment). MAX_LOG_MESSAGE_LENGTH = 256 chars and one
+    // 32-byte row in "%02X " form is 96 chars, so each row fits cleanly.
+    //
+    // Offset map of CreateAccessPoint in the buffer:
+    //   [0..11]    : LdnHeader                 (magic RLDN, type=02, version=01, padding, data_size LE)
+    //   [12..79]   : SecurityConfig (0x44)     (SecurityMode u16, PassphraseSize u16, Passphrase[64])
+    //   [80..127]  : UserConfig (0x30)         (UserName[33], Unknown[15])
+    //   [128..159] : NetworkConfig (0x20)      (IntentId[16], channel u16, NodeCountMax u8, reserved, LocalCommVersion u16, reserved[10])
+    //   [160..199] : RyuNetworkConfig (0x28)
+    //                  160..175 GameVersion[16]
+    //                  176..191 PrivateIp[16]
+    //                  192..195 AddressFamily       (uint32 LE, expect 02 00 00 00)
+    //                  196..197 ExternalProxyPort   (uint16 LE, 39990 = F6 9C)
+    //                  198..199 InternalProxyPort   (uint16 LE, 39990 = F6 9C)
+    //   [200..]    : advertise_data
+    {
+        const size_t dump_len = std::min<size_t>(offset, 224);
+        constexpr size_t RowBytes = 32;
+        for (size_t row_start = 0; row_start < dump_len; row_start += RowBytes) {
+            const size_t row_len = std::min<size_t>(RowBytes, dump_len - row_start);
+            char hex[3 * RowBytes + 1] = {};
+            for (size_t i = 0; i < row_len; i++) {
+                std::snprintf(hex + i * 3, 4, "%02X ", m_send_buffer[row_start + i]);
+            }
+            LOG_INFO("send_create_access_point wire [%03zu..%03zu]: %s",
+                     row_start, row_start + row_len - 1, hex);
+        }
+        ryu_ldn::debug::g_logger.flush();
+    }
+
     SocketResult send_result = m_socket.send_all(m_send_buffer, offset);
     return send_result == SocketResult::Success ? ClientResult::Success : socket_to_client_result(send_result);
 }

@@ -408,25 +408,22 @@ bool P2pProxyServer::Start(uint16_t port) {
     // =========================================================================
     // Step 2: Configure Socket Options
     // =========================================================================
-
-    // SO_REUSEADDR: Allow binding to a port in TIME_WAIT state
-    // This is crucial for quick server restarts without waiting ~2 minutes
-    // for the kernel to release the port
-    int reuse = 1;
-    if (setsockopt(m_listen_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) < 0) {
-        LOG_WARN("setsockopt SO_REUSEADDR failed: errno=%d", errno);
-        // Not fatal, continue
-    }
-
-    // TCP_NODELAY: Disable Nagle's algorithm
-    // Nagle's algorithm batches small packets to reduce overhead, but adds latency.
-    // For real-time gaming, we want packets sent immediately.
-    // Ryujinx sets this via OptionNoDelay = true in the TcpServer constructor.
-    int nodelay = 1;
-    if (setsockopt(m_listen_fd, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay)) < 0) {
-        LOG_WARN("setsockopt TCP_NODELAY failed: errno=%d", errno);
-        // Not fatal, continue
-    }
+    //
+    // No setsockopt on the listen socket. Aligning strictly with
+    // NetCoreServer.TcpServer.Start (TcpServer.cs:200-230) — there, only
+    // OptionReuseAddress / OptionExclusiveAddressUse / OptionDualMode are
+    // applied to the acceptor socket, *all default false*. OptionNoDelay
+    // is applied to ACCEPTED sockets (TcpSession.Connect), never to the
+    // listen socket. The accepted-socket TCP_NODELAY is still set in
+    // AcceptLoop below to match.
+    //
+    // Why the change: previously we set SO_REUSEADDR=1 and TCP_NODELAY=1
+    // on the listen fd. On a POSIX kernel both are no-ops on a passive
+    // socket, but on the Switch bsd:s service we observed inbound SYN to
+    // the listen socket never landing on accept(); removing these
+    // unexpected options on the listen fd brings the bsd:s state into
+    // exact parity with what NetCoreServer asks for and unblocks
+    // server-side IsProxyReachable from the master.
 
     // =========================================================================
     // Step 3: Bind to Port
