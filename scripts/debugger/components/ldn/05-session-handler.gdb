@@ -33,8 +33,14 @@ dprintf ryu_ldn::ldn::LdnSessionHandler::handle_reject, "[LDN:SESSION] handle_re
 dprintf ryu_ldn::ldn::LdnSessionHandler::handle_reject_reply, "[LDN:SESSION] handle_reject_reply\n"
 dprintf ryu_ldn::ldn::LdnSessionHandler::handle_set_accept_policy, "[LDN:SESSION] handle_set_accept_policy\n"
 
+# State queries
+dprintf ryu_ldn::ldn::LdnSessionHandler::get_state, "[LDN:SESSION] get_state\n"
+dprintf ryu_ldn::ldn::LdnSessionHandler::is_in_session, "[LDN:SESSION] is_in_session\n"
+dprintf ryu_ldn::ldn::LdnSessionHandler::is_host, "[LDN:SESSION] is_host\n"
+dprintf ryu_ldn::ldn::LdnSessionHandler::get_node_count, "[LDN:SESSION] get_node_count\n"
+
 # Actions
 dprintf ryu_ldn::ldn::LdnSessionHandler::leave_session, "[LDN:SESSION] leave_session\n"
 dprintf ryu_ldn::ldn::LdnSessionHandler::reset, "[LDN:SESSION] reset\n"
 
-echo [LDN] Session Handler: 22 dprintf points\n
+echo [LDN] Session Handler: 26 dprintf points\n

@@ -14,9 +14,78 @@
 #
 # ==========================================
 
-set -eo pipefail
+# set -e removed: script handles errors explicitly (grep non-match, GDB exit codes)
+# pipefail removed: GDB batch often exits non-zero even on success
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Fallback function: drop into interactive GDB when automated setup fails
+fallback_interactive() {
+    local reason="$1"
+    echo ""
+    echo -e "${YELLOW}${BOLD}═══════════════════════════════════════════════════════════════${NC}"
+    echo -e "${YELLOW}${BOLD}  FALLBACK: Mode interactif${NC}"
+    echo -e "${YELLOW}${BOLD}═══════════════════════════════════════════════════════════════${NC}"
+    echo -e "${YELLOW}  Raison: ${reason}${NC}"
+    echo ""
+    echo -e "${CYAN}Options:${NC}"
+    echo -e "  ${BOLD}1)${NC} Lancer GDB interactif (connexion manuelle)"
+    echo -e "  ${BOLD}2)${NC} Lancer GDB interactif avec connexion auto"
+    echo -e "  ${BOLD}3)${NC} Quitter"
+    echo ""
+    read -p "Choix [2]: " FALLBACK_CHOICE
+    FALLBACK_CHOICE="${FALLBACK_CHOICE:-2}"
+
+    case "$FALLBACK_CHOICE" in
+        1)
+            echo ""
+            echo -e "${GREEN}Lancement GDB interactif (connexion manuelle)...${NC}"
+            echo -e "${YELLOW}Commandes utiles:${NC}"
+            echo "  target extended-remote $SWITCH_IP:$GDB_PORT"
+            echo "  attach <PID>"
+            echo "  add-symbol-file $ELF_FILE <base_addr>"
+            echo ""
+            "$GDB" -q -x "$TOOLS_DIR/common.gdb"
+            ;;
+        2)
+            echo ""
+            echo -e "${GREEN}Lancement GDB interactif avec connexion auto...${NC}"
+            FALLBACK_INIT=$(mktemp)
+            cat > "$FALLBACK_INIT" << EOFGDB
+set architecture aarch64
+set pagination off
+set confirm off
+set auto-load safe-path /
+set breakpoint pending on
+set logging file $LOG_FILE
+set logging overwrite off
+set logging enabled on
+target extended-remote $SWITCH_IP:$GDB_PORT
+echo \\n[INTERACTIVE] Connecté à $SWITCH_IP:$GDB_PORT\\n
+echo [INTERACTIVE] Utilisez 'attach <PID>' puis 'add-symbol-file $ELF_FILE <base>'\\n
+echo [INTERACTIVE] Tapez 'ryu-help' pour la liste des commandes\\n
+EOFGDB
+            if [ -f "$TOOLS_DIR/common.gdb" ]; then
+                echo "source $GDB_TOOLS_DIR/common.gdb" >> "$FALLBACK_INIT"
+            fi
+            "$GDB" -q -x "$FALLBACK_INIT"
+            rm -f "$FALLBACK_INIT"
+            ;;
+        3)
+            echo -e "${YELLOW}Au revoir.${NC}"
+            exit 0
+            ;;
+        *)
+            echo -e "${YELLOW}Choix invalide. Lancement interactif avec connexion auto...${NC}"
+            "$GDB" -q -ex "set auto-load safe-path /" -ex "target extended-remote $SWITCH_IP:$GDB_PORT"
+            ;;
+    esac
+
+    echo ""
+    echo -e "${CYAN}${BOLD}Session GDB terminée.${NC}"
+    echo -e "Log: ${YELLOW}$LOG_FILE${NC}"
+    exit 0
+}
 
 # Local paths (for file listing)
 COMPONENTS_DIR="$SCRIPT_DIR/components"
@@ -87,6 +156,10 @@ TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 SESSION_DIR="$LOG_DIR/session_$TIMESTAMP"
 mkdir -p "$SESSION_DIR"
 
+# Define log/init files early so fallback_interactive can reference them
+LOG_FILE="$SESSION_DIR/session_$TIMESTAMP.log"
+INIT_FILE="$SESSION_DIR/init_$TIMESTAMP.gdb"
+
 # ==========================================
 # Banner
 # ==========================================
@@ -101,33 +174,68 @@ echo ""
 # Step 1: Connection
 # ==========================================
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${BLUE}[1/5] Connexion à la Switch${NC}"
+echo -e "${BLUE}[1/3] Connexion, détection process & ASLR${NC}"
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
 echo -e "Target: ${YELLOW}$SWITCH_IP:$GDB_PORT${NC}"
 
+# ==========================================
+# Single GDB session for everything:
+# 1. Connect to Switch
+# 2. List processes (info os processes)
+# 3. Attach to process, get ASLR info (monitor get info, monitor get mappings)
+# 4. Detach
+# One TCP connection, one batch script.
+# ==========================================
 DETECT_FILE="$SESSION_DIR/detect_$TIMESTAMP.txt"
 GDB_BATCH=$(mktemp)
 
-cat > "$GDB_BATCH" << 'EOF'
+if [ -n "$EXPLICIT_PID" ]; then
+    # PID known — list processes + attach directly
+    cat > "$GDB_BATCH" << EOF
 set pagination off
 set confirm off
+set auto-load safe-path /
+target extended-remote $SWITCH_IP:$GDB_PORT
+info os processes
+attach $EXPLICIT_PID
 monitor get info
+monitor get mappings $EXPLICIT_PID
+info registers pc
+detach
 quit
 EOF
+else
+    # PID unknown — list processes only, we'll parse PID then do a second session for attach
+    # (can't attach without knowing PID first)
+    cat > "$GDB_BATCH" << EOF
+set pagination off
+set confirm off
+set auto-load safe-path /
+target extended-remote $SWITCH_IP:$GDB_PORT
+info os processes
+quit
+EOF
+fi
 
-"$GDB" -batch -q \
-    -ex "set tcp connect-timeout 60" \
-    -ex "target extended-remote $SWITCH_IP:$GDB_PORT" \
-    -x "$GDB_BATCH" 2>&1 | \
-    grep -Ev "(warning:.*auto-loading|add-auto-load-safe-path|Reading)" \
-    > "$DETECT_FILE" || {
-        echo -e "${RED}ERROR: Cannot connect to $SWITCH_IP:$GDB_PORT${NC}"
-        rm -f "$GDB_BATCH"
-        exit 1
-    }
+echo -e "${DIM}Connexion en cours...${NC}"
+GDB_OUTPUT=$("$GDB" -batch -q -x "$GDB_BATCH" 2>&1 || true)
 
 rm -f "$GDB_BATCH"
+
+# Save raw output for diagnostics
+echo "$GDB_OUTPUT" > "$SESSION_DIR/raw_full_output.txt"
+
+# Filter warnings
+echo "$GDB_OUTPUT" | grep -Ev "(warning:.*auto-loading|add-auto-load-safe-path|Reading)" > "$DETECT_FILE"
+
+if [ ! -s "$DETECT_FILE" ] && ! echo "$GDB_OUTPUT" | grep -qi "remote\|extended-remote\|target\|process\|pid\|Attached"; then
+    echo -e "${RED}ERROR: Cannot connect to $SWITCH_IP:$GDB_PORT${NC}"
+    echo -e "${YELLOW}GDB output:${NC}"
+    echo "$GDB_OUTPUT" | head -10
+    fallback_interactive "Impossible de se connecter à $SWITCH_IP:$GDB_PORT"
+fi
+
 echo -e "${GREEN}✓ Connecté${NC}"
 echo ""
 
@@ -135,7 +243,7 @@ echo ""
 # Step 2: Process Detection
 # ==========================================
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${BLUE}[2/5] Détection du process${NC}"
+echo -e "${BLUE}[2/3] Détection du process${NC}"
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
 
@@ -143,14 +251,32 @@ if [ -n "$EXPLICIT_PID" ]; then
     PROCESS_ID="$EXPLICIT_PID"
     echo -e "PID fourni: ${YELLOW}$PROCESS_ID${NC}"
 else
-    PROCESS_ID=$(grep "$TITLE_ID" "$DETECT_FILE" | awk '{print $1}' | head -1)
+    # Strategy 1: process name
+    PROCESS_ID=$(echo "$GDB_OUTPUT" | grep -i "ryu_ldn_nx" | grep -oE '[0-9]+' | head -1)
+
+    # Strategy 2: title ID
+    if [ -z "$PROCESS_ID" ]; then
+        PROCESS_ID=$(echo "$GDB_OUTPUT" | grep -i "4200000000000010" | grep -oE '[0-9]+' | head -1)
+    fi
+
+    # Strategy 3: XML column
+    if [ -z "$PROCESS_ID" ]; then
+        PROCESS_ID=$(echo "$GDB_OUTPUT" | grep -A1 "ryu_ldn_nx\|4200000000000010" | grep -oE '<column name="pid">[0-9]+' | grep -oE '[0-9]+' | head -1)
+    fi
 
     if [ -z "$PROCESS_ID" ]; then
         echo -e "${RED}ERROR: ryu_ldn_nx non trouvé (TID: 0x$TITLE_ID)${NC}"
         echo ""
-        echo "Processus disponibles:"
-        grep -E "^[0-9]+" "$DETECT_FILE" | head -15
-        exit 1
+        echo "Sortie de 'info os processes':"
+        cat "$DETECT_FILE" 2>/dev/null | head -40 || true
+        echo ""
+        echo "Processus disponibles (PIDs extraits):"
+        echo "$GDB_OUTPUT" | grep -oE '<column name="pid">[0-9]+' | grep -oE '[0-9]+' | sort -un | head -20 || echo "  (aucun process trouvé)"
+        echo ""
+        echo "Astuce: spécifiez le PID manuellement:"
+        echo -e "  ${CYAN}docker compose run --rm debugger $SWITCH_IP <PID>${NC}"
+        echo ""
+        fallback_interactive "Process ryu_ldn_nx non trouvé"
     fi
     echo -e "Process trouvé: ${GREEN}PID $PROCESS_ID${NC} (TID: 0x$TITLE_ID)"
 fi
@@ -160,55 +286,101 @@ echo ""
 # Step 3: ASLR Detection
 # ==========================================
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${BLUE}[3/5] Détection ASLR${NC}"
+echo -e "${BLUE}[3/3] Détection ASLR${NC}"
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
 
 MAPPING_FILE="$SESSION_DIR/mapping_$TIMESTAMP.txt"
-GDB_ATTACH=$(mktemp)
 
-cat > "$GDB_ATTACH" << EOF
+# If PID was provided, ASLR info was already collected in the single session.
+# Otherwise we need one more session to attach and get mappings.
+if [ -n "$EXPLICIT_PID" ]; then
+    # Already have everything from the first session
+    echo "$GDB_OUTPUT" | grep -Ev "(warning:.*auto-loading|add-auto-load-safe-path|Reading)" > "$MAPPING_FILE"
+else
+    # Second (and final) GDB session: attach + get ASLR info
+    GDB_ATTACH=$(mktemp)
+    cat > "$GDB_ATTACH" << EOF
 set pagination off
 set confirm off
+set auto-load safe-path /
+target extended-remote $SWITCH_IP:$GDB_PORT
 attach $PROCESS_ID
+monitor get info
 monitor get mappings $PROCESS_ID
 info registers pc
 detach
 quit
 EOF
 
-"$GDB" -batch -q \
-    -ex "set tcp connect-timeout 60" \
-    -ex "target extended-remote $SWITCH_IP:$GDB_PORT" \
-    -x "$GDB_ATTACH" 2>&1 | \
-    grep -Ev "(warning:.*auto-loading|add-auto-load-safe-path|Reading)" \
-    > "$MAPPING_FILE"
+    echo -e "${DIM}Attach au process $PROCESS_ID...${NC}"
+    GDB_OUTPUT=$("$GDB" -batch -q -x "$GDB_ATTACH" 2>&1 || true)
 
-rm -f "$GDB_ATTACH"
+    rm -f "$GDB_ATTACH"
 
-# Try to find base from r-x mapping
-BASE_ADDR=$(grep -oE '^0x[0-9a-fA-F]+.*r-x' "$MAPPING_FILE" 2>/dev/null | head -1 | awk '{print $1}' || true)
-
-# Fallback: align PC to 2MB boundary
-if [ -z "$BASE_ADDR" ]; then
-    PC_RAW=$(grep -E "^pc\s+" "$MAPPING_FILE" 2>/dev/null | awk '{print $2}' || true)
-    if [ -n "$PC_RAW" ]; then
-        # Use printf to convert hex, more portable
-        BASE_ADDR=$(printf "0x%x" $(( (${PC_RAW}) & ~0x1FFFFF )) 2>/dev/null || true)
-    fi
+    echo "$GDB_OUTPUT" > "$SESSION_DIR/raw_aslr_output.txt"
+    echo "$GDB_OUTPUT" | grep -Ev "(warning:.*auto-loading|add-auto-load-safe-path|Reading)" > "$MAPPING_FILE"
 fi
 
-# Still no base? Try another pattern
+# Extract base address from Atmosphère gdbstub output.
+# "monitor get info" outputs lines like:
+#   Aslr: 0x7100000000 - 0x7100800000
+#   Heap: 0x7100000000 - 0x7100800000
+# "monitor get mappings" outputs lines like:
+#   0x7100000000 - 0x7100800000 r-x Code            ----
+#   Mappings (starting from 0x7100000000):
+
+# Helper: convert hex string (0x...) to decimal for arithmetic
+hex_to_dec() {
+    printf "%d" "$1" 2>/dev/null || echo "0"
+}
+
+# Strategy 1: parse "Aslr:" line from monitor get info
+BASE_ADDR=""
+ASLR_LINE=$(grep -iE '^\s*Aslr:' "$MAPPING_FILE" 2>/dev/null | head -1 || true)
+if [ -n "$ASLR_LINE" ]; then
+    BASE_ADDR=$(echo "$ASLR_LINE" | grep -oE '0x[0-9a-fA-F]+' | head -1 || true)
+fi
+
+# Strategy 2: first r-x mapping line (executable code = sysmodule base)
 if [ -z "$BASE_ADDR" ]; then
-    # Look for any hex address at start of line
-    BASE_ADDR=$(grep -oE '^0x[0-9a-fA-F]+' "$MAPPING_FILE" 2>/dev/null | head -1 || true)
+    BASE_ADDR=$(grep 'r-x' "$MAPPING_FILE" 2>/dev/null | head -1 | grep -oE '0x[0-9a-fA-F]+' | head -1 || true)
+fi
+
+# Strategy 3: "Mappings (starting from 0x...):" header
+if [ -z "$BASE_ADDR" ]; then
+    BASE_ADDR=$(grep -iE 'Mappings.*starting from' "$MAPPING_FILE" 2>/dev/null | grep -oE '0x[0-9a-fA-F]+' | head -1 || true)
+fi
+
+# Strategy 4: first indented hex address in mapping lines
+if [ -z "$BASE_ADDR" ]; then
+    BASE_ADDR=$(grep -E '^\s+0x[0-9a-fA-F]+\s+-\s+0x' "$MAPPING_FILE" 2>/dev/null | head -1 | grep -oE '0x[0-9a-fA-F]+' | head -1 || true)
+fi
+
+# Strategy 5: "Modules:" section — first .elf line
+if [ -z "$BASE_ADDR" ]; then
+    BASE_ADDR=$(grep -E '\.elf|\.nss' "$MAPPING_FILE" 2>/dev/null | head -1 | grep -oE '0x[0-9a-fA-F]+' | head -1 || true)
+fi
+
+# Strategy 6: align PC to 2MB boundary
+if [ -z "$BASE_ADDR" ]; then
+    PC_RAW=$(grep -E "^pc\s+=" "$MAPPING_FILE" 2>/dev/null | head -1 | awk '{print $NF}' || true)
+    if [ -z "$PC_RAW" ]; then
+        PC_RAW=$(echo "$GDB_MAP_OUTPUT" | grep -E "^pc\s+" 2>/dev/null | head -1 | awk '{print $NF}' || true)
+    fi
+    if [ -n "$PC_RAW" ]; then
+        PC_DEC=$(hex_to_dec "$PC_RAW")
+        if [ "$PC_DEC" != "0" ]; then
+            BASE_ADDR=$(printf "0x%x" $(( PC_DEC & ~0x1FFFFF )) 2>/dev/null || true)
+        fi
+    fi
 fi
 
 if [ -z "$BASE_ADDR" ]; then
     echo -e "${RED}ERROR: Cannot detect base address${NC}"
     echo -e "${YELLOW}Mapping file content:${NC}"
     cat "$MAPPING_FILE" 2>/dev/null | head -20 || true
-    exit 1
+    fallback_interactive "Impossible de détecter l'adresse de base ASLR"
 fi
 
 echo -e "Base address: ${GREEN}$BASE_ADDR${NC}"
@@ -290,9 +462,6 @@ echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━�
 echo -e "${BLUE}[5/5] Génération et lancement${NC}"
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
-
-INIT_FILE="$SESSION_DIR/init_$TIMESTAMP.gdb"
-LOG_FILE="$SESSION_DIR/session_$TIMESTAMP.log"
 
 # Generate init file
 cat > "$INIT_FILE" << EOF
@@ -407,6 +576,14 @@ commands
     info registers
     echo 
     echo ┌──────────────────────────────────────────────────────────────────────────────┐
+    echo │ ARM64 ALIGNMENT CHECK                                                        │
+    echo └──────────────────────────────────────────────────────────────────────────────┘
+    printf "  x0 = 0x%016lx  (mod4=%d, mod8=%d, mod16=%d)\n", $x0, ($x0 & 3), ($x0 & 7), ($x0 & 0xf)
+    printf "  x1 = 0x%016lx  (mod4=%d, mod8=%d, mod16=%d)\n", $x1, ($x1 & 3), ($x1 & 7), ($x1 & 0xf)
+    printf "  x2 = 0x%016lx  (mod4=%d, mod8=%d, mod16=%d)\n", $x2, ($x2 & 3), ($x2 & 7), ($x2 & 0xf)
+    printf "  SP = 0x%016lx  (mod16=%d)\n", $sp, ($sp & 0xf)
+    echo 
+    echo ┌──────────────────────────────────────────────────────────────────────────────┐
     echo │ THREADS                                                                      │
     echo └──────────────────────────────────────────────────────────────────────────────┘
     info threads
@@ -418,12 +595,12 @@ commands
     echo 
     echo ┌──────────────────────────────────────────────────────────────────────────────┐
     echo │ DISASSEMBLY @ LR                                                             │
-    echo └──────────────────────────────────────────────────────────────────────────────┘
+    echo └──────────────────────────────────────────────────────────────────────────────────────┘
     x/8i $x30-16
     echo 
     echo ┌──────────────────────────────────────────────────────────────────────────────┐
     echo │ STACK MEMORY                                                                 │
-    echo └──────────────────────────────────────────────────────────────────────────────┘
+    echo └──────────────────────────────────────────────────────────────────────────────────────┘
     x/32xg $sp
     echo 
     echo ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -437,16 +614,42 @@ commands
     silent
     echo 
     echo ╔══════════════════════════════════════════════════════════════════════════════╗
-    echo ║                            BUS ERROR (SIGBUS)                                ║
+    echo ║             BUS ERROR / DATA ABORT (SIGBUS) — ARM64 ALIGNMENT FAULT           ║
     echo ╚══════════════════════════════════════════════════════════════════════════════╝
+    echo NOTE: On Switch ARM64, DABRT 0x101 (data abort from lower EL) arrives as
+    echo SIGBUS. Common cause: bswap32/ldr/str on misaligned IPC buffer pointer.
+    echo Check SockAddrIn::IsLdnAddress() calls in SendTo/Bind/Connect.
     shell date "+Timestamp: %Y-%m-%d %H:%M:%S"
     echo 
     echo ┌──────────────────────────────────────────────────────────────────────────────┐
     echo │ CRASH LOCATION                                                               │
     echo └──────────────────────────────────────────────────────────────────────────────┘
-    printf "  PC  = 0x%lx", $pc
-    printf "  LR  = 0x%lx", $x30
-    printf "  SP  = 0x%lx", $sp
+    printf "  PC  = 0x%016lx\n", $pc
+    printf "  LR  = 0x%016lx\n", $x30
+    printf "  SP  = 0x%016lx\n", $sp
+    printf "  FP  = 0x%016lx\n", $x29
+    echo 
+    echo ┌──────────────────────────────────────────────────────────────────────────────┐
+    echo │ FAULTING INSTRUCTION                                                         │
+    echo └──────────────────────────────────────────────────────────────────────────────┘
+    x/4i $pc
+    echo 
+    echo Instructions leading to fault (24 bytes before PC):
+    x/8i $pc-24
+    echo 
+    echo ┌──────────────────────────────────────────────────────────────────────────────┐
+    echo │ ARM64 ALIGNMENT ANALYSIS                                                     │
+    echo └──────────────────────────────────────────────────────────────────────────────┘
+    echo Checking argument registers for misalignment:
+    printf "  x0 = 0x%016lx  (mod4=%d, mod8=%d, mod16=%d)\n", $x0, ($x0 & 3), ($x0 & 7), ($x0 & 0xf)
+    printf "  x1 = 0x%016lx  (mod4=%d, mod8=%d, mod16=%d)\n", $x1, ($x1 & 3), ($x1 & 7), ($x1 & 0xf)
+    printf "  x2 = 0x%016lx  (mod4=%d, mod8=%d, mod16=%d)\n", $x2, ($x2 & 3), ($x2 & 7), ($x2 & 0xf)
+    printf "  x3 = 0x%016lx  (mod4=%d, mod8=%d, mod16=%d)\n", $x3, ($x3 & 3), ($x3 & 7), ($x3 & 0xf)
+    printf "  SP = 0x%016lx  (mod16=%d, AAPCS64 requires 0)\n", $sp, ($sp & 0xf)
+    echo 
+    echo If any register holds a misaligned pointer (mod4!=0), this is the
+    echo faulting address. Common pattern: reinterpret_cast<SockAddrIn*>
+    echo on IPC buffer → IsLdnAddress → __builtin_bswap32
     echo 
     echo ┌──────────────────────────────────────────────────────────────────────────────┐
     echo │ CALL STACK                                                                   │
@@ -457,6 +660,16 @@ commands
     echo │ REGISTERS                                                                    │
     echo └──────────────────────────────────────────────────────────────────────────────┘
     info registers
+    echo 
+    echo ┌──────────────────────────────────────────────────────────────────────────────┐
+    echo │ THREADS                                                                      │
+    echo └──────────────────────────────────────────────────────────────────────────────┘
+    info threads
+    echo 
+    echo ┌──────────────────────────────────────────────────────────────────────────────┐
+    echo │ STACK MEMORY                                                                 │
+    echo └──────────────────────────────────────────────────────────────────────────────┘
+    x/32xg $sp
     echo 
     echo ╔══════════════════════════════════════════════════════════════════════════════╗
     echo ║                           SESSION TERMINATED                                 ║
@@ -690,6 +903,20 @@ echo ""
 
 "$GDB" -q -x "$INIT_FILE" 2>&1 | \
     grep -Ev "(warning:.*auto-loading|add-auto-load-safe-path|set auto-load safe-path|Reading symbols)"
+GDB_EXIT=$?
+
+if [ $GDB_EXIT -ne 0 ]; then
+    echo ""
+    echo -e "${YELLOW}GDB exited with code $GDB_EXIT${NC}"
+    echo -e "${YELLOW}L'init file est disponible pour un retry manuel:${NC}"
+    echo -e "  ${CYAN}$GDB -q -x $INIT_FILE${NC}"
+    echo ""
+    read -p "Ouvrir une session GDB interactive? [Y/n]: " OPEN_INTERACTIVE
+    OPEN_INTERACTIVE="${OPEN_INTERACTIVE:-Y}"
+    if [ "$OPEN_INTERACTIVE" = "Y" ] || [ "$OPEN_INTERACTIVE" = "y" ]; then
+        fallback_interactive "GDB crashed (exit $GDB_EXIT)"
+    fi
+fi
 
 # ==========================================
 # Session Complete

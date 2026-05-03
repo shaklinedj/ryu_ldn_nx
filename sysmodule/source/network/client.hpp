@@ -113,7 +113,7 @@ enum class ClientOpResult : uint8_t {
  * @param old_state Previous state
  * @param new_state New state
  */
-using ClientStateCallback = void (*)(ConnectionState old_state, ConnectionState new_state);
+using ClientStateCallback = void (*)(ConnectionState old_state, ConnectionState new_state, void* user_data);
 
 /**
  * @brief Callback type for received packets
@@ -278,7 +278,7 @@ public:
      *
      * @param callback Function to call on state change (nullptr to disable)
      */
-    void set_state_callback(ClientStateCallback callback);
+    void set_state_callback(ClientStateCallback callback, void* user_data = nullptr);
 
     /**
      * @brief Set callback for received packets
@@ -536,6 +536,7 @@ private:
     ReconnectManager m_reconnect_manager;   ///< Reconnection backoff logic
 
     ClientStateCallback m_state_callback;   ///< User callback for state changes
+    void* m_state_callback_user_data;       ///< User data for state callback
     ClientPacketCallback m_packet_callback; ///< User callback for packets
     void* m_packet_callback_user_data;      ///< User data for packet callback
 

@@ -13,4 +13,4 @@ dprintf ryu_ldn::debug::Logger::init, "[DEBUG:LOGGER] Logger initialized\n"
 dprintf ryu_ldn::debug::Logger::open_file, "[DEBUG:LOGGER] Log file opened\n"
 dprintf ryu_ldn::debug::Logger::close_file, "[DEBUG:LOGGER] Log file closed\n"
 
-echo [DEBUG] Logger lifecycle: 4 dprintf points\n
+echo [DEBUG] Logger lifecycle: 3 dprintf points\n

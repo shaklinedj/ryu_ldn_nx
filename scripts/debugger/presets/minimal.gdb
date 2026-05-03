@@ -1,7 +1,7 @@
 # ==========================================
 # Minimal Preset - Lifecycle Only
 # ==========================================
-# Charge uniquement les fichiers 01-lifecycle.gdb de chaque composant
+# Lifecycle files from core components.
 # Use: load-preset minimal
 
 echo [PRESET] Loading minimal preset (lifecycle only)...\n
@@ -18,4 +18,4 @@ source /workspace/scripts/debugger/components/network/01-lifecycle.gdb
 # P2P lifecycle
 source /workspace/scripts/debugger/components/p2p/01-server-lifecycle.gdb
 
-echo [PRESET] Minimal preset loaded\n
+echo [PRESET] Minimal preset loaded (4 files)\n

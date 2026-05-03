@@ -80,4 +80,16 @@ services:
     stdin_open: true
     tty: true
     entrypoint: ["/workspace/scripts/debugger/debug.sh"]
+
+  shell:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - .:/workspace
+    working_dir: /workspace
+    network_mode: host
+    stdin_open: true
+    tty: true
+    entrypoint: ["/bin/bash"]
     

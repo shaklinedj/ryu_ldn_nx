@@ -2,11 +2,13 @@
 # LDN Component - Operations
 # ==========================================
 # ICommunicationService - Network operations
+# Note: async architecture operations (ReceiveThreadFunc, HandleServerPacket,
+# WaitForResponse, ConnectToServer, MultiWait) are in 08-async-architecture.gdb
 # Using dprintf for automatic continue
 
 echo [LDN] Loading operations breakpoints...\n
 
-# Connection management
+# Connection management (ConfigService side)
 dprintf ams::mitm::ldn::LdnConfigService::ForceReconnect, "[LDN:OPS] ForceReconnect\n"
 dprintf ams::mitm::ldn::LdnConfigService::GetLastRtt, "[LDN:OPS] GetLastRtt\n"
 
@@ -40,7 +42,18 @@ dprintf ams::mitm::ldn::ICommunicationService::Connect, "[LDN:OPS] Connect\n"
 dprintf ams::mitm::ldn::ICommunicationService::ConnectPrivate, "[LDN:OPS] ConnectPrivate\n"
 dprintf ams::mitm::ldn::ICommunicationService::Disconnect, "[LDN:OPS] Disconnect\n"
 
+# Lifecycle operations
+dprintf ams::mitm::ldn::ICommunicationService::Initialize, "[LDN:OPS] Initialize\n"
+dprintf ams::mitm::ldn::ICommunicationService::Finalize, "[LDN:OPS] Finalize\n"
+dprintf ams::mitm::ldn::ICommunicationService::InitializeSystem2, "[LDN:OPS] InitializeSystem2\n"
+
+# Proxy data
+dprintf ams::mitm::ldn::ICommunicationService::SendProxyDataToServer, "[LDN:OPS] SendProxyDataToServer\n"
+
 # Other operations
 dprintf ams::mitm::ldn::ICommunicationService::Reject, "[LDN:OPS] Reject: nodeId=%u\n", $x1
+dprintf ams::mitm::ldn::ICommunicationService::SetWirelessControllerRestriction, "[LDN:OPS] SetWirelessControllerRestriction\n"
+dprintf ams::mitm::ldn::ICommunicationService::AddAcceptFilterEntry, "[LDN:OPS] AddAcceptFilterEntry\n"
+dprintf ams::mitm::ldn::ICommunicationService::ClearAcceptFilter, "[LDN:OPS] ClearAcceptFilter\n"
 
-echo [LDN] Operations: 26 dprintf points\n
+echo [LDN] Operations: 32 dprintf points\n

@@ -14,6 +14,7 @@ ENV PATH=${DEVKITPRO}/tools/bin:${DEVKITA64}/bin:${PATH}
 
 # Install additional system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    iputils-ping \
     git \
     curl \
     wget \
@@ -35,6 +36,10 @@ RUN dkp-pacman -Syyu --noconfirm && \
     switch-mbedtls \
     switch-miniupnpc \
     devkitA64-gdb
+
+# Configure GDB to allow auto-loading scripts from any path
+RUN mkdir -p /root/.config/gdb && \
+    echo "set auto-load safe-path /" > /root/.config/gdb/gdbinit
 
 # Create non-root user (UID/GID will be updated by VSCode's updateRemoteUserUID)
 RUN useradd -m -s /bin/bash devuser

@@ -163,10 +163,11 @@ ICommunicationService::ICommunicationService(ncm::ProgramId program_id)
     , m_server_connected(false)
     , m_node_mapper()
     , m_proxy_buffer()
-    , m_response_event(os::EventClearMode_ManualClear)
-    , m_scan_event(os::EventClearMode_ManualClear)
+    , m_response_event(os::EventClearMode_AutoClear)
+    , m_scan_event(os::EventClearMode_AutoClear)
     , m_error_event(os::EventClearMode_ManualClear)
-    , m_reject_event(os::EventClearMode_ManualClear)
+    , m_reject_event(os::EventClearMode_AutoClear)
+    , m_handshake_event(os::EventClearMode_AutoClear)
     , m_last_response_id(ryu_ldn::protocol::PacketId::Initialize)
     , m_scan_results{}
     , m_scan_result_count(0)
@@ -182,9 +183,9 @@ ICommunicationService::ICommunicationService(ncm::ProgramId program_id)
     , m_p2p_client(nullptr)
     , m_p2p_server(nullptr)
     , m_inactivity_timeout(NetworkTimeout::DEFAULT_IDLE_TIMEOUT_MS, &ICommunicationService::OnInactivityTimeout)
-    , m_background_thread{}
-    , m_background_thread_running(false)
-    , m_client_mutex(false)
+    , m_recv_thread{}
+    , m_recv_thread_running(false)
+    , m_shared_mutex{}
     , m_program_id(program_id)
     , m_local_communication_id(0)
     , m_expected_scene_id(0)
@@ -208,29 +209,49 @@ ICommunicationService::ICommunicationService(ncm::ProgramId program_id)
         this
     );
 
-    // Start background thread for processing server pings
-    // Uses static stack (g_background_thread_stack) to avoid class bloat
-    m_background_thread_running = true;
+    // Configure state callback so the receive thread can signal
+    // m_handshake_event when RyuLdnClient reaches Ready state.
+    // This replaces the old polling loop in ConnectToServer().
+    m_server_client.set_state_callback(
+        [](ryu_ldn::network::ConnectionState /*old_state*/,
+           ryu_ldn::network::ConnectionState new_state,
+           void* user_data) {
+            auto* self = static_cast<ICommunicationService*>(user_data);
+            if (new_state == ryu_ldn::network::ConnectionState::Ready) {
+                self->m_handshake_event.Signal();
+            }
+        },
+        this
+    );
+
+    // Start dedicated receive thread for asynchronous packet dispatch.
+    // This mirrors Ryujinx's NetCoreServer pattern: packets are received and
+    // dispatched immediately on a background thread, while IPC handlers wait
+    // on os::Event objects (via TimedWaitAny) for specific responses.
+    m_recv_thread_running = true;
     R_ABORT_UNLESS(os::CreateThread(
-        &m_background_thread,
-        BackgroundThreadEntry,
+        &m_recv_thread,
+        ReceiveThreadEntry,
         this,
         g_background_thread_stack,
         sizeof(g_background_thread_stack),
-        20  // Low priority (higher number = lower priority)
+        16  // Higher priority than before (lower number = higher priority)
+            // so receive thread preempts IPC handlers for lower latency
     ));
-    os::SetThreadNamePointer(&m_background_thread, "ldn_bg");
-    os::StartThread(&m_background_thread);
+    os::SetThreadNamePointer(&m_recv_thread, "ldn_recv");
+    os::StartThread(&m_recv_thread);
 }
 
 ICommunicationService::~ICommunicationService() {
     LOG_INFO("ICommunicationService destructor called (state=%s)",
              LdnStateMachine::StateToString(m_state_machine.GetState()));
 
-    // Stop background thread first
-    m_background_thread_running = false;
-    os::WaitThread(&m_background_thread);
-    os::DestroyThread(&m_background_thread);
+    // Stop receive thread first
+    m_recv_thread_running = false;
+    // Signal error event to unblock receive thread if it's waiting
+    m_error_event.Signal();
+    os::WaitThread(&m_recv_thread);
+    os::DestroyThread(&m_recv_thread);
 
     // Wait for any in-flight async P2P connect worker before tearing down
     // m_p2p_client / m_external_proxy_config underneath it.
@@ -285,35 +306,59 @@ Result ICommunicationService::ConnectToServer() {
         }
     }
 
-    // Wait for handshake to complete (with timeout)
+    // Wait for handshake to complete using event-driven wait.
+    // The receive thread processes the Initialize response internally in
+    // RyuLdnClient::update() and invokes the state callback when the state
+    // machine transitions to Ready, which signals m_handshake_event.
+    // This is analogous to Ryujinx's _connected.WaitOne(FailureTimeout).
     {
         constexpr uint64_t handshake_timeout_ms = 5000;
-        constexpr uint64_t poll_interval_ms = 50;
 
         LOG_VERBOSE("Waiting for handshake...");
 
-        uint64_t start_time_ms = armTicksToNs(armGetSystemTick()) / 1000000ULL;
-        uint64_t current_time_ms = start_time_ms;
+        // Clear events before waiting
+        m_handshake_event.Clear();
+        m_error_event.Clear();
 
-        while (!m_server_client.is_ready() && (current_time_ms - start_time_ms) < handshake_timeout_ms) {
-            // Process client state machine (sends handshake, receives response)
-            m_server_client.update(current_time_ms);
+        os::MultiWaitType multi_wait;
+        os::InitializeMultiWait(std::addressof(multi_wait));
 
-            // Check if connection failed during handshake
-            if (!m_server_client.is_connected()) {
-                LOG_ERROR("Connection lost during handshake");
-                R_RETURN(MAKERESULT(0x10, 3)); // Handshake failed
+        os::MultiWaitHolderType handshake_holder;
+        os::InitializeMultiWaitHolder(std::addressof(handshake_holder), m_handshake_event.GetBase());
+        os::LinkMultiWaitHolder(std::addressof(multi_wait), std::addressof(handshake_holder));
+
+        os::MultiWaitHolderType error_holder;
+        os::InitializeMultiWaitHolder(std::addressof(error_holder), m_error_event.GetBase());
+        os::LinkMultiWaitHolder(std::addressof(multi_wait), std::addressof(error_holder));
+
+        os::MultiWaitHolderType* signaled = os::TimedWaitAny(
+            std::addressof(multi_wait), TimeSpan::FromMilliSeconds(static_cast<s64>(handshake_timeout_ms)));
+
+        bool handshake_ok = false;
+        if (signaled == std::addressof(handshake_holder)) {
+            // State callback signaled Ready state
+            handshake_ok = m_server_client.is_ready();
+            if (!handshake_ok) {
+                LOG_ERROR("Handshake event signaled but client not in Ready state");
             }
-
-            // Small delay to avoid busy-waiting
-            svcSleepThread(poll_interval_ms * 1000000ULL); // Convert ms to ns
-            current_time_ms = armTicksToNs(armGetSystemTick()) / 1000000ULL;
+        } else if (signaled == std::addressof(error_holder)) {
+            LOG_ERROR("Error event signaled during handshake");
         }
 
-        if (!m_server_client.is_ready()) {
-            LOG_ERROR("Handshake timeout");
-            m_server_client.disconnect();
-            R_RETURN(MAKERESULT(0x10, 4)); // Handshake timeout
+        os::UnlinkAllMultiWaitHolder(std::addressof(multi_wait));
+        os::FinalizeMultiWaitHolder(std::addressof(handshake_holder));
+        os::FinalizeMultiWaitHolder(std::addressof(error_holder));
+        os::FinalizeMultiWait(std::addressof(multi_wait));
+
+        if (!handshake_ok) {
+            // Check if already ready (race: handshake completed just before we waited)
+            if (m_server_client.is_ready()) {
+                LOG_VERBOSE("Handshake completed (checked after wait)");
+            } else {
+                LOG_ERROR("Handshake timeout or failed");
+                m_server_client.disconnect();
+                R_RETURN(MAKERESULT(0x10, 4)); // Handshake timeout
+            }
         }
     }
 
@@ -430,13 +475,8 @@ Result ICommunicationService::Finalize() {
 // ============================================================================
 
 Result ICommunicationService::GetState(ams::sf::Out<u32> state) {
-    // Process incoming packets (like pings) to keep connection alive.
-    // TcpClient is internally thread-safe (separate send/recv mutexes),
-    // so we no longer need external serialization with the BG thread.
-    if (m_server_connected && m_server_client.is_connected()) {
-        uint64_t current_time_ms = armTicksToNs(armGetSystemTick()) / 1000000ULL;
-        m_server_client.update(current_time_ms);
-    }
+    // No update() call needed — the receive thread processes packets
+    // asynchronously and updates state via HandleServerPacket + events.
 
     auto current_state = m_state_machine.GetState();
     LOG_INFO("GetState() called, returning state=%u (%s)",
@@ -454,15 +494,15 @@ Result ICommunicationService::GetState(ams::sf::Out<u32> state) {
 }
 
 Result ICommunicationService::GetNetworkInfo(ams::sf::Out<NetworkInfo> buffer) {
-    // TcpClient is internally thread-safe — no external lock needed.
-    if (m_server_connected && m_server_client.is_connected()) {
-        uint64_t current_time_ms = armTicksToNs(armGetSystemTick()) / 1000000ULL;
-        m_server_client.update(current_time_ms);
-    }
+    // No update() call needed — the receive thread processes packets
+    // asynchronously and updates m_network_info via HandleServerPacket.
 
-    LOG_VERBOSE("GetNetworkInfo() called, node_count=%u, max=%u",
-                m_network_info.ldn.nodeCount, m_network_info.ldn.nodeCountMax);
-    buffer.SetValue(m_network_info);
+    // Take a snapshot under the shared mutex — the receive thread may
+    // be writing m_network_info right now from a SyncNetwork packet.
+    {
+        std::scoped_lock lock(m_shared_mutex);
+        buffer.SetValue(m_network_info);
+    }
     R_SUCCEED();
 }
 
@@ -499,6 +539,7 @@ Result ICommunicationService::GetDisconnectReason(ams::sf::Out<u32> reason) {
 
 Result ICommunicationService::GetSecurityParameter(ams::sf::Out<SecurityParameter> out) {
     SecurityParameter param;
+    std::scoped_lock lock(m_shared_mutex);
     NetworkInfo2SecurityParameter(&m_network_info, &param);
     out.SetValue(param);
     R_SUCCEED();
@@ -506,6 +547,7 @@ Result ICommunicationService::GetSecurityParameter(ams::sf::Out<SecurityParamete
 
 Result ICommunicationService::GetNetworkConfig(ams::sf::Out<NetworkConfig> out) {
     NetworkConfig config;
+    std::scoped_lock lock(m_shared_mutex);
     NetworkInfo2NetworkConfig(&m_network_info, &config);
     out.SetValue(config);
     R_SUCCEED();
@@ -523,7 +565,11 @@ Result ICommunicationService::GetNetworkInfoLatestUpdate(
     LOG_INFO("GetNetworkInfoLatestUpdate() called, node_count=%u, update_buf_size=%zu",
              m_network_info.ldn.nodeCount, pUpdates.GetSize());
 
-    buffer.SetValue(m_network_info);
+    // Snapshot m_network_info under the shared mutex
+    {
+        std::scoped_lock lock(m_shared_mutex);
+        buffer.SetValue(m_network_info);
+    }
 
     // Report node state changes since last call
     if (pUpdates.GetSize() > 0) {
@@ -651,39 +697,37 @@ Result ICommunicationService::Scan(
 
     LOG_INFO("Scan: sent request, waiting for ScanReplyEnd...");
 
-    // Wait for scan results with polling for network updates
-    // Unlike Ryujinx which has async receive, we need to call update() to process incoming data
-    constexpr uint64_t scan_timeout_ms = 1000;
-    uint64_t start_time_ms = armTicksToNs(armGetSystemTick()) / 1000000ULL;
-    uint64_t current_time_ms = start_time_ms;
+    // Wait for scan completion using event-driven wait (like Ryujinx's
+    // WaitHandle.WaitAny([_scan, _error], ScanTimeout)). The receive thread
+    // calls HandleServerPacket which signals m_scan_event on ScanReplyEnd
+    // and m_error_event on NetworkError.
+    os::MultiWaitType multi_wait;
+    os::InitializeMultiWait(std::addressof(multi_wait));
+
+    os::MultiWaitHolderType scan_holder;
+    os::InitializeMultiWaitHolder(std::addressof(scan_holder), m_scan_event.GetBase());
+    os::LinkMultiWaitHolder(std::addressof(multi_wait), std::addressof(scan_holder));
+
+    os::MultiWaitHolderType error_holder;
+    os::InitializeMultiWaitHolder(std::addressof(error_holder), m_error_event.GetBase());
+    os::LinkMultiWaitHolder(std::addressof(multi_wait), std::addressof(error_holder));
+
+    os::MultiWaitHolderType* signaled = os::TimedWaitAny(
+        std::addressof(multi_wait), TimeSpan::FromMilliSeconds(1000));
+
     bool scan_complete = false;
     bool error_received = false;
 
-    while ((current_time_ms - start_time_ms) < scan_timeout_ms) {
-        // Process incoming packets. TcpClient serializes recv internally.
-        m_server_client.update(current_time_ms);
-
-        // Check if scan completed or error received
-        if (m_scan_event.TryWait()) {
-            scan_complete = true;
-            break;
-        }
-        if (m_error_event.TryWait()) {
-            error_received = true;
-            break;
-        }
-
-        // Check if connection was lost
-        if (!m_server_client.is_connected()) {
-            LOG_ERROR("Scan: connection lost");
-            count.SetValue(0);
-            R_RETURN(MAKERESULT(0x10, 4));
-        }
-
-        // Short sleep to avoid busy-waiting (but still responsive)
-        svcSleepThread(5 * 1000000ULL); // 5ms
-        current_time_ms = armTicksToNs(armGetSystemTick()) / 1000000ULL;
+    if (signaled == std::addressof(scan_holder)) {
+        scan_complete = true;
+    } else if (signaled == std::addressof(error_holder)) {
+        error_received = true;
     }
+
+    os::UnlinkAllMultiWaitHolder(std::addressof(multi_wait));
+    os::FinalizeMultiWaitHolder(std::addressof(scan_holder));
+    os::FinalizeMultiWaitHolder(std::addressof(error_holder));
+    os::FinalizeMultiWait(std::addressof(multi_wait));
 
     if (error_received) {
         LOG_ERROR("Scan: error received from server");
@@ -1409,36 +1453,49 @@ Result ICommunicationService::Reject(u32 nodeId) {
         R_RETURN(MAKERESULT(0x10, 3)); // Send failed
     }
 
-    // Wait for RejectReply from server
-    // Like Ryujinx: int index = WaitHandle.WaitAny([_reject, _error], InactiveTimeout);
-    constexpr uint64_t reject_timeout_ms = 6000; // InactiveTimeout (was 4000 FailureTimeout)
-    uint64_t start_time_ms = armTicksToNs(armGetSystemTick()) / 1000000ULL;
-    uint64_t current_time_ms = start_time_ms;
+    // Wait for RejectReply from server using event-driven wait
+    // (like Ryujinx: WaitHandle.WaitAny([_reject, _error], InactiveTimeout))
+    {
+        constexpr uint64_t reject_timeout_ms = 6000;  // InactiveTimeout (was 4000 FailureTimeout)
 
-    while ((current_time_ms - start_time_ms) < reject_timeout_ms) {
-        m_server_client.update(current_time_ms);
+        os::MultiWaitType multi_wait;
+        os::InitializeMultiWait(std::addressof(multi_wait));
 
-        if (m_reject_event.TryWait()) {
+        os::MultiWaitHolderType reject_holder;
+        os::InitializeMultiWaitHolder(std::addressof(reject_holder), m_reject_event.GetBase());
+        os::LinkMultiWaitHolder(std::addressof(multi_wait), std::addressof(reject_holder));
+
+        os::MultiWaitHolderType error_holder;
+        os::InitializeMultiWaitHolder(std::addressof(error_holder), m_error_event.GetBase());
+        os::LinkMultiWaitHolder(std::addressof(multi_wait), std::addressof(error_holder));
+
+        os::MultiWaitHolderType* signaled = os::TimedWaitAny(
+            std::addressof(multi_wait), TimeSpan::FromMilliSeconds(static_cast<s64>(reject_timeout_ms)));
+
+        if (signaled == std::addressof(reject_holder)) {
             LOG_INFO("Reject: received RejectReply");
-            // Like Ryujinx: return (ConsumeNetworkError() != NetworkError.None) ? InvalidState : Success
             if (ConsumeNetworkError() != ryu_ldn::protocol::NetworkErrorCode::None) {
+                os::UnlinkAllMultiWaitHolder(std::addressof(multi_wait));
+                os::FinalizeMultiWaitHolder(std::addressof(reject_holder));
+                os::FinalizeMultiWaitHolder(std::addressof(error_holder));
+                os::FinalizeMultiWait(std::addressof(multi_wait));
                 R_RETURN(MAKERESULT(0x10, 4)); // InvalidState due to error
             }
+            os::UnlinkAllMultiWaitHolder(std::addressof(multi_wait));
+            os::FinalizeMultiWaitHolder(std::addressof(reject_holder));
+            os::FinalizeMultiWaitHolder(std::addressof(error_holder));
+            os::FinalizeMultiWait(std::addressof(multi_wait));
             R_SUCCEED();
         }
 
-        if (m_error_event.TryWait()) {
+        if (signaled == std::addressof(error_holder)) {
             LOG_ERROR("Reject: error received");
-            R_RETURN(MAKERESULT(0x10, 4)); // Error
         }
 
-        if (!m_server_client.is_connected()) {
-            LOG_ERROR("Reject: connection lost");
-            R_RETURN(MAKERESULT(0x10, 5)); // Connection lost
-        }
-
-        svcSleepThread(5 * 1000000ULL); // 5ms
-        current_time_ms = armTicksToNs(armGetSystemTick()) / 1000000ULL;
+        os::UnlinkAllMultiWaitHolder(std::addressof(multi_wait));
+        os::FinalizeMultiWaitHolder(std::addressof(reject_holder));
+        os::FinalizeMultiWaitHolder(std::addressof(error_holder));
+        os::FinalizeMultiWait(std::addressof(multi_wait));
     }
 
     // Like Ryujinx: timeout returns InvalidState
@@ -1463,6 +1520,13 @@ Result ICommunicationService::ClearAcceptFilter() {
 void ICommunicationService::HandleServerPacket(ryu_ldn::protocol::PacketId id, const uint8_t* data, size_t size) {
     LOG_VERBOSE("Received packet from server: type=%u, size=%zu",
                 static_cast<unsigned>(id), size);
+
+    // Lock shared state for the entire handler — we write m_network_info,
+    // m_network_connected, m_scan_results, m_last_response_id, etc.
+    // Event Signal() calls are safe outside this lock (kernel handles
+    // synchronization internally). We hold the lock briefly to avoid
+    // contention with IPC readers like GetNetworkInfo.
+    std::scoped_lock lock(m_shared_mutex);
 
     switch (id) {
         case ryu_ldn::protocol::PacketId::Connected: {
@@ -1995,74 +2059,122 @@ bool ICommunicationService::WaitForResponse(ryu_ldn::protocol::PacketId expected
                 static_cast<unsigned>(expected_id), timeout_ms);
 
     // Special case: if waiting for Connected and m_network_connected is already true,
-    // the Connected packet was processed during send_connect (before this call)
-    if (expected_id == ryu_ldn::protocol::PacketId::Connected && m_network_connected) {
-        LOG_VERBOSE("Already received Connected response (m_network_connected=true)");
-        return true;
+    // the Connected packet was processed by the receive thread before this call
+    {
+        std::scoped_lock lock(m_shared_mutex);
+        if (expected_id == ryu_ldn::protocol::PacketId::Connected && m_network_connected) {
+            LOG_VERBOSE("Already received Connected response (m_network_connected=true)");
+            return true;
+        }
+        if (m_last_response_id == expected_id) {
+            LOG_VERBOSE("Already have expected response: type=%u", static_cast<unsigned>(expected_id));
+            return true;
+        }
     }
 
-    // Check if we already have the expected response (before clearing)
-    if (m_last_response_id == expected_id) {
-        LOG_VERBOSE("Already have expected response: type=%u", static_cast<unsigned>(expected_id));
-        return true;
-    }
-
-    // Clear events before waiting
+    // Clear events before waiting. m_response_event and m_reject_event are
+    // AutoClear, so they reset to unsignaled. m_error_event stays ManualClear
+    // because it signals a persistent error condition (like Ryujinx's _error).
     m_response_event.Clear();
     m_error_event.Clear();
 
-    // Wait with polling for network updates (required because we don't have async receive)
-    uint64_t start_time_ms = armTicksToNs(armGetSystemTick()) / 1000000ULL;
-    uint64_t current_time_ms = start_time_ms;
+    // Use os::MultiWait for event-driven wait — the kernel wakes this thread
+    // immediately when the receive thread signals the event, instead of the
+    // old polling loop that slept 5 ms between update() calls.
+    os::MultiWaitType multi_wait;
+    os::InitializeMultiWait(std::addressof(multi_wait));
 
-    while ((current_time_ms - start_time_ms) < timeout_ms) {
-        // Process incoming packets (TcpClient serializes recv internally).
-        m_server_client.update(current_time_ms);
+    os::MultiWaitHolderType response_holder;
+    os::InitializeMultiWaitHolder(std::addressof(response_holder), m_response_event.GetBase());
+    os::LinkMultiWaitHolder(std::addressof(multi_wait), std::addressof(response_holder));
 
-        // Special case: Connected may have been processed by HandlePacket during update()
-        if (expected_id == ryu_ldn::protocol::PacketId::Connected && m_network_connected) {
-            LOG_VERBOSE("Received Connected response (m_network_connected=true)");
-            return true;
+    os::MultiWaitHolderType error_holder;
+    os::InitializeMultiWaitHolder(std::addressof(error_holder), m_error_event.GetBase());
+    os::LinkMultiWaitHolder(std::addressof(multi_wait), std::addressof(error_holder));
+
+    const uint64_t start_time_ns = armTicksToNs(armGetSystemTick());
+    const int64_t timeout_ns = static_cast<int64_t>(timeout_ms) * 1000000LL;
+    bool result = false;
+
+    while (true) {
+        // Calculate remaining timeout
+        const int64_t elapsed_ns = static_cast<int64_t>(armTicksToNs(armGetSystemTick())) - static_cast<int64_t>(start_time_ns);
+        const int64_t remaining_ns = timeout_ns - elapsed_ns;
+        if (remaining_ns <= 0) {
+            LOG_ERROR("Timeout waiting for response: type=%u", static_cast<unsigned>(expected_id));
+            break;
         }
 
-        // Check if we received a response
-        if (m_response_event.TryWait()) {
-            // Check if we got the expected response
-            if (m_last_response_id == expected_id) {
+        // Wait for either a response or an error, with remaining timeout
+        os::MultiWaitHolderType* signaled = os::TimedWaitAny(
+            std::addressof(multi_wait), TimeSpan::FromNanoSeconds(remaining_ns));
+
+        if (signaled == std::addressof(response_holder)) {
+            // A response packet was received — check if it's the one we want.
+            // m_last_response_id is set by HandleServerPacket on the receive thread,
+            // protected by m_shared_mutex.
+            ryu_ldn::protocol::PacketId last_id;
+            {
+                std::scoped_lock lock(m_shared_mutex);
+                last_id = m_last_response_id;
+            }
+
+            if (last_id == expected_id) {
                 LOG_VERBOSE("Received expected response: type=%u", static_cast<unsigned>(expected_id));
-                return true;
+                result = true;
+                break;
             }
 
-            // Check for error response
-            if (m_last_response_id == ryu_ldn::protocol::PacketId::NetworkError) {
+            if (last_id == ryu_ldn::protocol::PacketId::NetworkError) {
                 LOG_ERROR("Received NetworkError while waiting for response");
-                return false;
+                break;
             }
 
-            // ProxyData and other packets are expected during connection - don't warn
-            if (m_last_response_id != ryu_ldn::protocol::PacketId::ProxyData &&
-                m_last_response_id != ryu_ldn::protocol::PacketId::SyncNetwork &&
-                m_last_response_id != ryu_ldn::protocol::PacketId::Ping) {
+            // ProxyData, SyncNetwork, Ping — expected during connection, keep waiting
+            if (last_id != ryu_ldn::protocol::PacketId::ProxyData &&
+                last_id != ryu_ldn::protocol::PacketId::SyncNetwork &&
+                last_id != ryu_ldn::protocol::PacketId::Ping) {
                 LOG_WARN("Received unexpected response: expected=%u, got=%u",
-                         static_cast<unsigned>(expected_id), static_cast<unsigned>(m_last_response_id));
+                         static_cast<unsigned>(expected_id), static_cast<unsigned>(last_id));
             }
-            // Continue waiting for the expected response
-            m_response_event.Clear();
+
+            // Recalculate remaining timeout and continue waiting
+            continue;
         }
 
-        // Check if connection was lost
-        if (!m_server_client.is_connected()) {
-            LOG_ERROR("Connection lost while waiting for response");
-            return false;
+        if (signaled == std::addressof(error_holder)) {
+            LOG_ERROR("Received error event while waiting for response");
+            break;
         }
 
-        // Short sleep to avoid busy-waiting
-        svcSleepThread(5 * 1000000ULL); // 5ms
-        current_time_ms = armTicksToNs(armGetSystemTick()) / 1000000ULL;
+        // Timeout (signaled == nullptr)
+        LOG_ERROR("Timeout waiting for response: type=%u", static_cast<unsigned>(expected_id));
+        break;
     }
 
-    LOG_ERROR("Timeout waiting for response: type=%u", static_cast<unsigned>(expected_id));
-    return false;
+    // Special check: Connected may have arrived but was processed as a
+    // different m_last_response_id (e.g., the Connected handler directly
+    // sets m_network_connected=true and then signals m_response_event
+    // separately — check one last time under the mutex).
+    if (!result && expected_id == ryu_ldn::protocol::PacketId::Connected) {
+        std::scoped_lock lock(m_shared_mutex);
+        if (m_network_connected) {
+            LOG_VERBOSE("Connected was processed during wait");
+            result = true;
+        }
+    }
+
+    // Check connection loss
+    if (!result && !m_server_client.is_connected()) {
+        LOG_ERROR("Connection lost while waiting for response");
+    }
+
+    os::UnlinkAllMultiWaitHolder(std::addressof(multi_wait));
+    os::FinalizeMultiWaitHolder(std::addressof(response_holder));
+    os::FinalizeMultiWaitHolder(std::addressof(error_holder));
+    os::FinalizeMultiWait(std::addressof(multi_wait));
+
+    return result;
 }
 
 // ============================================================================
@@ -2349,35 +2461,49 @@ void ICommunicationService::HandleExternalProxyToken(
 }
 
 // ============================================================================
-// Background Thread (for server ping processing)
+// Receive Thread (event-driven packet dispatch, like NetCoreServer OnReceived)
 // ============================================================================
 
-void ICommunicationService::BackgroundThreadEntry(void* arg) {
+void ICommunicationService::ReceiveThreadEntry(void* arg) {
     auto* self = static_cast<ICommunicationService*>(arg);
-    self->BackgroundThreadFunc();
+    self->ReceiveThreadFunc();
 }
 
-void ICommunicationService::BackgroundThreadFunc() {
-    LOG_VERBOSE("Background thread started");
+void ICommunicationService::ReceiveThreadFunc() {
+    LOG_INFO("Receive thread started");
 
-    while (m_background_thread_running.load()) {
-        // Process incoming packets if connected. TcpClient now serializes
-        // recv/send internally via its own mutexes — no need for an external
-        // client-level mutex between this thread and MITM IPC handlers.
-        if (m_server_connected) {
-            uint64_t current_time_ms = armTicksToNs(armGetSystemTick()) / 1000000ULL;
-            m_server_client.update(current_time_ms);
-            m_inactivity_timeout.CheckTimeout(current_time_ms);
+    while (m_recv_thread_running.load()) {
+        // Drive the client's state machine whenever the TCP connection is
+        // alive — this covers the handshake phase (Connected/Handshaking)
+        // as well as the Ready phase.  m_server_connected is only set
+        // *after* ConnectToServer() completes, so checking it here would
+        // skip the handshake entirely and deadlock the IPC thread waiting
+        // on m_handshake_event.
+        if (!m_server_client.is_connected() && !m_server_client.is_transitioning()) {
+            // Not connected and not connecting — sleep and retry
+            svcSleepThread(10 * 1000000ULL);  // 10 ms
+            continue;
         }
 
-        // Sleep 20 ms — with internal TcpClient synchronization, shorter
-        // intervals no longer cause races. 20 ms keeps packet delivery
-        // latency low under normal load; the recv_timeout in update() is
-        // the real bound on how long the BG thread sits in poll().
-        svcSleepThread(20 * 1000000ULL);  // 20 ms
+        // Read packets from TCP and dispatch immediately via HandleServerPacket.
+        // TcpClient::update() calls process_packets() which calls handle_packet()
+        // which calls our callback, which calls HandleServerPacket. The callback
+        // holds m_shared_mutex during HandleServerPacket processing.
+        uint64_t current_time_ms = armTicksToNs(armGetSystemTick()) / 1000000ULL;
+        m_server_client.update(current_time_ms);
+
+        // Check inactivity timeout (like Ryujinx _timeout.RefreshTimeout()
+        // called from HandleConnected, and _timeout.CheckTimeout() in update loop)
+        m_inactivity_timeout.CheckTimeout(current_time_ms);
+
+        // Brief sleep to yield CPU when no data is available.
+        // The TCP recv_timeout inside update() already blocks for ~20ms
+        // when no packets arrive, so this just prevents a tight loop
+        // when update() returns immediately (e.g., during burst processing).
+        svcSleepThread(1 * 1000000ULL);  // 1 ms
     }
 
-    LOG_VERBOSE("Background thread stopped");
+    LOG_INFO("Receive thread stopped");
 }
 
 u8 ICommunicationService::FindLocalNodeId() const {

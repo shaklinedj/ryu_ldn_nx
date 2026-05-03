@@ -2,6 +2,9 @@
 # Config Component - Parsing
 # ==========================================
 # Configuration file parsing
+# Note: trim_end, safe_strcpy, parse_bool, process_*_key are
+# in an anonymous namespace in config.cpp — no debug symbols.
+# Only parse_config_content is in the ryu_ldn::config namespace.
 # Using dprintf for automatic continue
 
 echo [CONFIG] Loading parsing breakpoints...\n
@@ -9,15 +12,4 @@ echo [CONFIG] Loading parsing breakpoints...\n
 # Main parsing
 dprintf ryu_ldn::config::parse_config_content, "[CONFIG:PARSE] Parsing config content\n"
 
-# Section parsers
-dprintf ryu_ldn::config::process_server_key, "[CONFIG:PARSE] Processing server key\n"
-dprintf ryu_ldn::config::process_network_key, "[CONFIG:PARSE] Processing network key\n"
-dprintf ryu_ldn::config::process_ldn_key, "[CONFIG:PARSE] Processing LDN key\n"
-dprintf ryu_ldn::config::process_debug_key, "[CONFIG:PARSE] Processing debug key\n"
-
-# Utility functions
-dprintf ryu_ldn::config::parse_bool, "[CONFIG:PARSE] Parsing bool\n"
-dprintf ryu_ldn::config::trim_end, "[CONFIG:PARSE] Trimming string\n"
-dprintf ryu_ldn::config::safe_strcpy, "[CONFIG:PARSE] Safe string copy\n"
-
-echo [CONFIG] Parsing: 8 dprintf points\n
+echo [CONFIG] Parsing: 1 dprintf point\n

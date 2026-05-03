@@ -1057,32 +1057,35 @@ Result BsdMitmService::Bind(
     LOG_INFO("[BSD#%u] Bind ENTRY: cmd_count=%u, fd=%d, addr_size=%zu", m_session_id, m_command_count, fd, addr.GetSize());
 
     // Check if this is an LDN address (10.114.x.x)
-    if (addr.GetSize() >= sizeof(ryu_ldn::bsd::SockAddrIn)) {
-        const auto* sock_addr = reinterpret_cast<const ryu_ldn::bsd::SockAddrIn*>(addr.GetPointer());
+    // Copy to aligned stack buffer — IPC pointer may be misaligned,
+    // and SockAddrIn::IsLdnAddress() does __builtin_bswap32 which faults on ARM64.
+    if (addr.GetSize() >= sizeof(ryu_ldn::bsd::SockAddrIn) && addr.GetPointer() != nullptr) {
+        ryu_ldn::bsd::SockAddrIn sock_addr_copy;
+        __builtin_memcpy(&sock_addr_copy, addr.GetPointer(), sizeof(sock_addr_copy));
 
         // Log the bind address for debugging
         LOG_INFO("[BSD#%u] Bind fd=%d address: family=%u, addr=0x%08x (%u.%u.%u.%u), port=%u",
                  m_session_id, fd,
-                 sock_addr->sin_family,
-                 sock_addr->sin_addr,
-                 (sock_addr->sin_addr >> 0) & 0xFF,
-                 (sock_addr->sin_addr >> 8) & 0xFF,
-                 (sock_addr->sin_addr >> 16) & 0xFF,
-                 (sock_addr->sin_addr >> 24) & 0xFF,
-                 sock_addr->GetPort());
+                 sock_addr_copy.sin_family,
+                 sock_addr_copy.sin_addr,
+                 (sock_addr_copy.sin_addr >> 0) & 0xFF,
+                 (sock_addr_copy.sin_addr >> 8) & 0xFF,
+                 (sock_addr_copy.sin_addr >> 16) & 0xFF,
+                 (sock_addr_copy.sin_addr >> 24) & 0xFF,
+                 sock_addr_copy.GetPort());
 
         // Check address family is IPv4
-        if (sock_addr->sin_family == static_cast<uint8_t>(ryu_ldn::bsd::AddressFamily::Inet)) {
+        if (sock_addr_copy.sin_family == static_cast<uint8_t>(ryu_ldn::bsd::AddressFamily::Inet)) {
             // Check if this is an LDN address OR INADDR_ANY (0.0.0.0)
             // Games often bind to 0.0.0.0 to accept from any interface - we need to proxy these too
-            bool is_ldn = sock_addr->IsLdnAddress();
-            bool is_inaddr_any = (sock_addr->sin_addr == 0);
+            bool is_ldn = sock_addr_copy.IsLdnAddress();
+            bool is_inaddr_any = (sock_addr_copy.sin_addr == 0);
 
             if (is_ldn || is_inaddr_any) {
                 LOG_INFO("BSD Bind fd=%d detected %s address, port=%u",
                          fd,
                          is_ldn ? "LDN" : "INADDR_ANY",
-                         sock_addr->GetPort());
+                         sock_addr_copy.GetPort());
 
                 // Get socket info (type and protocol) under lock
                 SocketInfo socket_info;
@@ -1111,7 +1114,7 @@ Result BsdMitmService::Bind(
                             LOG_INFO("BSD Bind fd=%d: applied saved SO_BROADCAST=1", fd);
                         }
                         // Build bind address - use local LDN IP for INADDR_ANY
-                        ryu_ldn::bsd::SockAddrIn bind_addr = *sock_addr;
+                        ryu_ldn::bsd::SockAddrIn bind_addr = sock_addr_copy;
                         if (is_inaddr_any) {
                             // Replace 0.0.0.0 with our local LDN IP
                             // CRITICAL: Do NOT bswap32 - must match Ryujinx/NetworkInfo format
@@ -1252,20 +1255,23 @@ Result BsdMitmService::Connect(
     LOG_INFO("[BSD#%u] Connect ENTRY: cmd_count=%u, fd=%d, addr_size=%zu", m_session_id, m_command_count, fd, addr.GetSize());
 
     // Check if this is an LDN address (10.114.x.x)
-    if (addr.GetSize() >= sizeof(ryu_ldn::bsd::SockAddrIn)) {
-        const auto* sock_addr = reinterpret_cast<const ryu_ldn::bsd::SockAddrIn*>(addr.GetPointer());
+    // Copy to aligned stack buffer — IPC pointer may be misaligned,
+    // and SockAddrIn::IsLdnAddress() does __builtin_bswap32 which faults on ARM64.
+    if (addr.GetSize() >= sizeof(ryu_ldn::bsd::SockAddrIn) && addr.GetPointer() != nullptr) {
+        ryu_ldn::bsd::SockAddrIn sock_addr_copy;
+        __builtin_memcpy(&sock_addr_copy, addr.GetPointer(), sizeof(sock_addr_copy));
 
         // Check address family is IPv4 and address is LDN
-        if (sock_addr->sin_family == static_cast<uint8_t>(ryu_ldn::bsd::AddressFamily::Inet) &&
-            sock_addr->IsLdnAddress())
+        if (sock_addr_copy.sin_family == static_cast<uint8_t>(ryu_ldn::bsd::AddressFamily::Inet) &&
+            sock_addr_copy.IsLdnAddress())
         {
             LOG_INFO("BSD Connect fd=%d detected LDN address %u.%u.%u.%u:%u",
                      fd,
-                     (sock_addr->sin_addr >> 0) & 0xFF,
-                     (sock_addr->sin_addr >> 8) & 0xFF,
-                     (sock_addr->sin_addr >> 16) & 0xFF,
-                     (sock_addr->sin_addr >> 24) & 0xFF,
-                     sock_addr->GetPort());
+                     (sock_addr_copy.sin_addr >> 0) & 0xFF,
+                     (sock_addr_copy.sin_addr >> 8) & 0xFF,
+                     (sock_addr_copy.sin_addr >> 16) & 0xFF,
+                     (sock_addr_copy.sin_addr >> 24) & 0xFF,
+                     sock_addr_copy.GetPort());
 
             // Get socket info (type and protocol) under lock
             SocketInfo socket_info;
@@ -1325,7 +1331,7 @@ Result BsdMitmService::Connect(
                 }
 
                 // Connect the proxy socket to the remote address
-                Result connect_result = proxy->Connect(*sock_addr);
+                Result connect_result = proxy->Connect(sock_addr_copy);
                 if (R_FAILED(connect_result)) {
                     LOG_ERROR("BSD Connect fd=%d proxy connect failed: 0x%x", fd, connect_result.GetValue());
                     out_errno.SetValue(connect_result.GetValue());
@@ -1706,12 +1712,16 @@ Result BsdMitmService::SendTo(
         }
     }
 
-    // Also check destination address for LDN
-    if (addr.GetSize() >= sizeof(ryu_ldn::bsd::SockAddrIn)) {
-        const auto* dest_addr = reinterpret_cast<const ryu_ldn::bsd::SockAddrIn*>(addr.GetPointer());
+    // Also check destination address for LDN.
+    // Copy to stack-aligned buffer before accessing — the IPC buffer pointer
+    // may be misaligned, and SockAddrIn::IsLdnAddress() does
+    // __builtin_bswap32 on sin_addr which faults on ARM64 if unaligned.
+    if (addr.GetSize() >= sizeof(ryu_ldn::bsd::SockAddrIn) && addr.GetPointer() != nullptr) {
+        ryu_ldn::bsd::SockAddrIn dest_addr_copy;
+        __builtin_memcpy(&dest_addr_copy, addr.GetPointer(), sizeof(dest_addr_copy));
 
-        if (dest_addr->sin_family == static_cast<uint8_t>(ryu_ldn::bsd::AddressFamily::Inet) &&
-            dest_addr->IsLdnAddress())
+        if (dest_addr_copy.sin_family == static_cast<uint8_t>(ryu_ldn::bsd::AddressFamily::Inet) &&
+            dest_addr_copy.IsLdnAddress())
         {
             // LDN destination - use proxy
             is_proxy = true;
@@ -1755,11 +1765,15 @@ Result BsdMitmService::SendTo(
         auto& manager = ProxySocketManager::GetInstance();
         ProxySocket* proxy = manager.GetProxySocket(fd);
 
-        if (proxy != nullptr && addr.GetSize() >= sizeof(ryu_ldn::bsd::SockAddrIn)) {
-            const auto* dest_addr = reinterpret_cast<const ryu_ldn::bsd::SockAddrIn*>(addr.GetPointer());
+        if (proxy != nullptr && addr.GetSize() >= sizeof(ryu_ldn::bsd::SockAddrIn) && addr.GetPointer() != nullptr) {
+            // Copy to aligned stack buffer — IPC buffer pointer may be misaligned,
+            // and dereferencing a packed struct via reinterpret_cast faults on ARM64
+            // when IsLdnAddress() uses __builtin_bswap32 on sin_addr.
+            ryu_ldn::bsd::SockAddrIn dest_addr_copy;
+            __builtin_memcpy(&dest_addr_copy, addr.GetPointer(), sizeof(dest_addr_copy));
 
             // Send via proxy socket
-            s32 result = proxy->SendTo(buffer.GetPointer(), buffer.GetSize(), flags, *dest_addr);
+            s32 result = proxy->SendTo(buffer.GetPointer(), buffer.GetSize(), flags, dest_addr_copy);
 
             if (result < 0) {
                 out_errno.SetValue(-result);
@@ -1772,6 +1786,12 @@ Result BsdMitmService::SendTo(
             LOG_VERBOSE("BSD SendTo fd=%d proxy sent %d bytes", fd, result);
             R_SUCCEED();
         }
+
+        // Socket is marked proxy but proxy unavailable — return NETUNREACH
+        // instead of falling through to real BSD (which wouldn't know LDN addresses)
+        out_errno.SetValue(static_cast<s32>(ryu_ldn::bsd::BsdErrno::NetUnreach));
+        out_size.SetValue(0);
+        R_SUCCEED();
     }
 
     // Not a proxy socket - forward to real service

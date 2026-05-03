@@ -376,11 +376,14 @@ private:
     LdnNodeMapper m_node_mapper;            ///< Node ID to IP mapping
     LdnProxyBuffer m_proxy_buffer;          ///< Incoming proxy data buffer
 
-    // Response handling with events (like Ryujinx ManualResetEvent pattern)
-    os::Event m_response_event;             ///< Signaled when any response received
-    os::Event m_scan_event;                 ///< Signaled when scan completes
-    os::Event m_error_event;                ///< Signaled on network error
+    // Response handling with events (like Ryujinx ManualResetEvent/AutoResetEvent)
+    // Using AutoClear for response/scan/reject so TimedWaitAny consumes the signal
+    // automatically — mirrors C# WaitHandle.WaitAny semantics exactly.
+    os::Event m_response_event;             ///< Signaled when expected response received
+    os::Event m_scan_event;                 ///< Signaled when scan completes (ScanReplyEnd)
+    os::Event m_error_event;                 ///< Signaled on network error
     os::Event m_reject_event;               ///< Signaled when reject reply received
+    os::Event m_handshake_event;             ///< Signaled when RyuLdnClient reaches Ready state
     ryu_ldn::protocol::PacketId m_last_response_id; ///< Last received packet ID
 
     // Scan results buffer (reduced to save ~18KB of memory)
@@ -415,9 +418,8 @@ private:
     // where HandleExternalProxy runs on the receive thread (NetCoreServer
     // OnReceived) instead of the request thread, so the server's
     // `Connected` packet can still be parsed while the P2P client is
-    // mid-handshake. Doing the connect synchronously inside our poll loop
-    // froze WaitForResponse, the game's CreateNetwork timed out and the
-    // host hung on the loading screen.
+    // mid-handshake. Now that the receive thread is dedicated and never
+    // blocks on P2P connect, this stays for compatibility.
     os::ThreadType m_p2p_connect_thread;
     std::atomic<bool> m_p2p_connect_thread_active{false};
     bool m_p2p_connect_thread_initialized = false;
@@ -426,21 +428,31 @@ private:
     // Inactivity timeout (like Ryujinx _timeout)
     NetworkTimeout m_inactivity_timeout;                    ///< Auto-disconnect after idle period
 
-    // Background thread for processing server pings between game operations
-    os::ThreadType m_background_thread;                     ///< Background packet processing thread
-    std::atomic<bool> m_background_thread_running;          ///< Thread running flag
-    os::Mutex m_client_mutex;                               ///< Mutex for m_server_client access
+    // Dedicated receive thread — reads packets from master TCP and dispatches
+    // them via HandleServerPacket immediately, like NetCoreServer's OnReceived
+    // callback in Ryujinx. IPC handlers no longer call update(); they wait on
+    // os::Event (via TimedWaitAny) which the receive thread signals.
+    os::ThreadType m_recv_thread;                           ///< Receive thread (replaces old bg thread)
+    std::atomic<bool> m_recv_thread_running;                 ///< Receive thread running flag
+
+    // Mutex protecting shared state written by the receive thread and read
+    // by IPC handlers: m_network_info, m_network_connected, m_scan_results,
+    // m_scan_result_count, m_ipv4_address, m_subnet_mask, m_disconnect_reason,
+    // m_prev_node_connected, m_last_network_error, m_last_response_id.
+    // Send operations on m_server_client are already serialized by TcpClient's
+    // internal m_send_mutex.
+    mutable os::SdkMutex m_shared_mutex;                     ///< Protects shared state
 
     /**
-     * @brief Background thread entry point
+     * @brief Receive thread entry point
      * @param arg Pointer to ICommunicationService instance
      */
-    static void BackgroundThreadEntry(void* arg);
+    static void ReceiveThreadEntry(void* arg);
 
     /**
-     * @brief Background thread main loop - processes server pings
+     * @brief Receive thread main loop — reads packets, dispatches immediately
      */
-    void BackgroundThreadFunc();
+    void ReceiveThreadFunc();
 
     /**
      * @brief Async P2P connect thread entry — see m_p2p_connect_thread
