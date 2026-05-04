@@ -74,7 +74,9 @@ using ProxyDataHandler = void (*)(const protocol::LdnHeader& header,
  */
 class PacketDispatcher {
 public:
+    /// @gdb{tag="LDN:DISPATCHER", msg="Dispatcher created"}
     PacketDispatcher();
+    /// @gdb{tag="LDN:DISPATCHER", msg="Dispatcher destroyed"}
     ~PacketDispatcher() = default;
 
     // Non-copyable
@@ -88,81 +90,97 @@ public:
     /**
      * @brief Set handler for Initialize packets
      */
+    /// @gdb{tag="LDN:DISPATCHER", msg="Set initialize handler"}
     void set_initialize_handler(PacketHandler<protocol::InitializeMessage> handler);
 
     /**
      * @brief Set handler for Connected packets (join success)
      */
+    /// @gdb{tag="LDN:DISPATCHER", msg="Set connected handler"}
     void set_connected_handler(PacketHandler<protocol::NetworkInfo> handler);
 
     /**
      * @brief Set handler for SyncNetwork packets
      */
+    /// @gdb{tag="LDN:DISPATCHER", msg="Set sync_network handler"}
     void set_sync_network_handler(PacketHandler<protocol::NetworkInfo> handler);
 
     /**
      * @brief Set handler for ScanReply packets
      */
+    /// @gdb{tag="LDN:DISPATCHER", msg="Set scan_reply handler"}
     void set_scan_reply_handler(PacketHandler<protocol::NetworkInfo> handler);
 
     /**
      * @brief Set handler for ScanReplyEnd packets
      */
+    /// @gdb{tag="LDN:DISPATCHER", msg="Set scan_reply_end handler"}
     void set_scan_reply_end_handler(EmptyPacketHandler handler);
 
     /**
      * @brief Set handler for Disconnect packets
      */
+    /// @gdb{tag="LDN:DISPATCHER", msg="Set disconnect handler"}
     void set_disconnect_handler(PacketHandler<protocol::DisconnectMessage> handler);
 
     /**
      * @brief Set handler for Ping packets
      */
+    /// @gdb{tag="LDN:DISPATCHER", msg="Set ping handler"}
     void set_ping_handler(PacketHandler<protocol::PingMessage> handler);
 
     /**
      * @brief Set handler for NetworkError packets
      */
+    /// @gdb{tag="LDN:DISPATCHER", msg="Set network_error handler"}
     void set_network_error_handler(PacketHandler<protocol::NetworkErrorMessage> handler);
 
     /**
      * @brief Set handler for ProxyConfig packets
      */
+    /// @gdb{tag="LDN:DISPATCHER", msg="Set proxy_config handler"}
     void set_proxy_config_handler(PacketHandler<protocol::ProxyConfig> handler);
 
     /**
      * @brief Set handler for ProxyConnect packets
      */
+    /// @gdb{tag="LDN:DISPATCHER", msg="Set proxy_connect handler"}
     void set_proxy_connect_handler(PacketHandler<protocol::ProxyConnectRequest> handler);
 
     /**
      * @brief Set handler for ProxyConnectReply packets
      */
+    /// @gdb{tag="LDN:DISPATCHER", msg="Set proxy_connect_reply handler"}
     void set_proxy_connect_reply_handler(PacketHandler<protocol::ProxyConnectResponse> handler);
 
     /**
      * @brief Set handler for ProxyData packets
      */
+    /// @gdb{tag="LDN:DISPATCHER", msg="Set proxy_data handler"}
     void set_proxy_data_handler(ProxyDataHandler handler);
 
     /**
      * @brief Set handler for ProxyDisconnect packets
      */
+    /// @gdb{tag="LDN:DISPATCHER", msg="Set proxy_disconnect handler"}
     void set_proxy_disconnect_handler(PacketHandler<protocol::ProxyDisconnectMessage> handler);
 
     /**
      * @brief Set handler for Reject packets
      */
+    /// @gdb{tag="LDN:DISPATCHER", msg="Set reject handler"}
     void set_reject_handler(PacketHandler<protocol::RejectRequest> handler);
 
     /**
      * @brief Set handler for RejectReply packets
      */
+    /// @gdb{tag="LDN:DISPATCHER", msg="Set reject_reply handler"}
     void set_reject_reply_handler(EmptyPacketHandler handler);
 
     /**
      * @brief Set handler for SetAcceptPolicy packets
      */
+    /// @gdb{tag="LDN:DISPATCHER", msg="Set accept_policy handler"}
     void set_accept_policy_handler(PacketHandler<protocol::SetAcceptPolicyRequest> handler);
 
     // ========================================================================
@@ -183,6 +201,7 @@ public:
      * @note If data_size is smaller than required for the packet type,
      *       the packet is silently ignored (invalid packet).
      */
+    /// @gdb{tag="LDN:DISPATCHER", msg="Dispatching packet"}
     void dispatch(const protocol::LdnHeader& header, const uint8_t* data, size_t data_size);
 
 private:

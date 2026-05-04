@@ -62,6 +62,7 @@ public:
      *
      * @return Reference to the global SharedState instance
      */
+    /// @gdb{tag="LDN:STATE", msg="SharedState: constructor"}
     static SharedState& GetInstance();
 
     /**
@@ -69,6 +70,7 @@ public:
      *
      * Used for testing and cleanup.
      */
+    /// @gdb{tag="LDN:STATE", msg="SharedState: Reset"}
     void Reset();
 
     // =========================================================================
@@ -84,6 +86,7 @@ public:
      * @param active True if a game is using LDN
      * @param process_id Process ID of the game (0 when inactive)
      */
+    /// @gdb{tag="LDN:STATE", msg="SetGameActive: active=%d pid=%lu", args="$x1, $x2"}
     void SetGameActive(bool active, u64 process_id);
 
     /**
@@ -91,6 +94,7 @@ public:
      *
      * @return True if a game is using LDN
      */
+    /// @gdb{tag="LDN:STATE", msg="IsGameActive"}
     bool IsGameActive() const;
 
     /**
@@ -98,6 +102,7 @@ public:
      *
      * @return Process ID, or 0 if no game is active
      */
+    /// @gdb{tag="LDN:STATE", msg="GetActiveProcessId"}
     u64 GetActiveProcessId() const;
 
     /**
@@ -109,6 +114,7 @@ public:
      *
      * @param pid Process ID that opened ldn:u, or 0 to clear
      */
+    /// @gdb{tag="LDN:STATE", msg="SetLdnPid: pid=%lu", args="$x1"}
     void SetLdnPid(u64 pid);
 
     /**
@@ -116,6 +122,7 @@ public:
      *
      * @return Process ID, or 0 if no process has opened ldn:u
      */
+    /// @gdb{tag="LDN:STATE", msg="GetLdnPid"}
     u64 GetLdnPid() const;
 
     /**
@@ -124,6 +131,7 @@ public:
      * @param pid Process ID to check
      * @return true if this PID has opened ldn:u
      */
+    /// @gdb{tag="LDN:STATE", msg="IsLdnPid: pid=%lu", args="$x1"}
     bool IsLdnPid(u64 pid) const;
 
     // =========================================================================
@@ -138,6 +146,7 @@ public:
      *
      * @param game_ids Vector of program IDs that support LDN
      */
+    /// @gdb{tag="LDN:STATE", msg="LoadLdnWhitelist"}
     void LoadLdnWhitelist(const std::vector<u64>& game_ids);
 
     /**
@@ -148,6 +157,7 @@ public:
      * @param program_id The program ID to check
      * @return true if this program is in the whitelist
      */
+    /// @gdb{tag="LDN:STATE", msg="IsLdnGame: program_id=0x%lx", args="$x1"}
     bool IsLdnGame(u64 program_id) const;
 
     /**
@@ -155,6 +165,7 @@ public:
      *
      * @return Number of games loaded
      */
+    /// @gdb{tag="LDN:STATE", msg="GetWhitelistSize"}
     size_t GetWhitelistSize() const;
 
     // =========================================================================
@@ -168,6 +179,7 @@ public:
      *
      * @param state New LDN state
      */
+    /// @gdb{tag="LDN:STATE", msg="SetLdnState: state=%d", args="$x1"}
     void SetLdnState(CommState state);
 
     /**
@@ -175,6 +187,7 @@ public:
      *
      * @return Current LDN state
      */
+    /// @gdb{tag="LDN:STATE", msg="GetLdnState"}
     CommState GetLdnState() const;
 
     // =========================================================================
@@ -191,6 +204,7 @@ public:
      * @param local_node_id This node's ID
      * @param is_host True if this node is the host
      */
+    /// @gdb{tag="LDN:STATE", msg="SetSessionInfo: node_count=%d max=%d local=%d is_host=%d", args="$x1, $x2, $x3, $x4"}
     void SetSessionInfo(u8 node_count, u8 max_nodes, u8 local_node_id, bool is_host);
 
     /**
@@ -201,6 +215,7 @@ public:
      * @param[out] local_node_id This node's ID
      * @param[out] is_host True if this node is the host
      */
+    /// @gdb{tag="LDN:STATE", msg="GetSessionInfo"}
     void GetSessionInfo(u8& node_count, u8& max_nodes, u8& local_node_id, bool& is_host) const;
 
     /**
@@ -208,6 +223,7 @@ public:
      *
      * @return SessionInfo structure for IPC
      */
+    /// @gdb{tag="LDN:STATE", msg="GetSessionInfoStruct"}
     SessionInfo GetSessionInfoStruct() const;
 
     // =========================================================================
@@ -221,6 +237,7 @@ public:
      *
      * @param rtt_ms Round-trip time in milliseconds
      */
+    /// @gdb{tag="LDN:STATE", msg="SetLastRtt: rtt=%u", args="$x1"}
     void SetLastRtt(u32 rtt_ms);
 
     /**
@@ -228,6 +245,7 @@ public:
      *
      * @return Round-trip time in milliseconds, or 0 if not measured
      */
+    /// @gdb{tag="LDN:STATE", msg="GetLastRtt"}
     u32 GetLastRtt() const;
 
     // =========================================================================
@@ -240,6 +258,7 @@ public:
      * Called by config service when user requests reconnect from overlay.
      * The MITM service should periodically check and consume this flag.
      */
+    /// @gdb{tag="LDN:STATE", msg="RequestReconnect"}
     void RequestReconnect();
 
     /**
@@ -249,6 +268,7 @@ public:
      *
      * @return True if reconnect was requested (flag is cleared)
      */
+    /// @gdb{tag="LDN:STATE", msg="ConsumeReconnectRequest"}
     bool ConsumeReconnectRequest();
 
 private:

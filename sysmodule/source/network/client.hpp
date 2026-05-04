@@ -227,6 +227,7 @@ public:
      * Creates a client with default settings. Call set_config() before
      * connecting to customize behavior.
      */
+    /// @gdb{tag="NETWORK:LIFECYCLE", msg="Client constructor"}
     RyuLdnClient();
 
     /**
@@ -239,6 +240,7 @@ public:
     /**
      * @brief Destructor - ensures clean disconnect
      */
+    /// @gdb{tag="NETWORK:LIFECYCLE", msg="Client destructor"}
     ~RyuLdnClient();
 
     // Non-copyable
@@ -260,6 +262,7 @@ public:
      *
      * @param config New configuration
      */
+    /// @gdb{tag="NETWORK:LIFECYCLE", msg="Configuration set"}
     void set_config(const RyuLdnClientConfig& config);
 
     /**
@@ -278,6 +281,7 @@ public:
      *
      * @param callback Function to call on state change (nullptr to disable)
      */
+    /// @gdb{tag="NETWORK:CB", msg="set_state_callback: cb=%p user_data=%p", args="$x1, $x2"}
     void set_state_callback(ClientStateCallback callback, void* user_data = nullptr);
 
     /**
@@ -286,6 +290,7 @@ public:
      * @param callback Function to call on packet receive (nullptr to disable)
      * @param user_data User-provided context pointer passed to callback
      */
+    /// @gdb{tag="NETWORK:CB", msg="set_packet_callback: cb=%p user_data=%p", args="$x1, $x2"}
     void set_packet_callback(ClientPacketCallback callback, void* user_data = nullptr);
 
     // ========================================================================
@@ -302,6 +307,7 @@ public:
      * @return ClientOpResult::Success if connection started
      * @return ClientOpResult::AlreadyConnected if already connected
      */
+    /// @gdb{tag="NETWORK:CB", msg="connect: entering"}
     ClientOpResult connect();
 
     /**
@@ -313,6 +319,7 @@ public:
      * @param port Server port
      * @return ClientOpResult indicating success or failure
      */
+    /// @gdb{tag="NETWORK:CONNECT", msg="Connect initiated"}
     ClientOpResult connect(const char* host, uint16_t port);
 
     /**
@@ -320,6 +327,7 @@ public:
      *
      * Sends disconnect message and closes connection.
      */
+    /// @gdb{tag="NETWORK:CB", msg="disconnect: entering"}
     void disconnect();
 
     /**
@@ -335,6 +343,7 @@ public:
      *
      * @param current_time_ms Current time in milliseconds (for timing)
      */
+    /// @gdb{tag="NETWORK:CB", msg="update: state=%d tick", args="$x1"}
     void update(uint64_t current_time_ms);
 
     // ========================================================================
@@ -346,6 +355,7 @@ public:
      *
      * @return Current state
      */
+    /// @gdb{tag="NETWORK:CONNECT", msg="get_state"}
     ConnectionState get_state() const;
 
     /**
@@ -353,6 +363,7 @@ public:
      *
      * @return true if TCP is connected (may not be ready for packets)
      */
+    /// @gdb{tag="NETWORK:CONNECT", msg="is_connected queried"}
     bool is_connected() const;
 
     /**
@@ -360,6 +371,7 @@ public:
      *
      * @return true if ready to send/receive packets
      */
+    /// @gdb{tag="NETWORK:CONNECT", msg="is_ready queried"}
     bool is_ready() const;
 
     /**
@@ -367,6 +379,7 @@ public:
      *
      * @return true if connecting, disconnecting, or in backoff
      */
+    /// @gdb{tag="NETWORK:CONNECT", msg="is_transitioning queried"}
     bool is_transitioning() const;
 
     /**
@@ -374,6 +387,7 @@ public:
      *
      * @return Number of connection attempts
      */
+    /// @gdb{tag="NETWORK:CONNECT", msg="get_retry_count"}
     uint32_t get_retry_count() const;
 
     /**
@@ -384,6 +398,7 @@ public:
      *
      * @return Last error code (NetworkErrorCode::None if no error)
      */
+    /// @gdb{tag="NETWORK:CONNECT", msg="get_last_error_code"}
     protocol::NetworkErrorCode get_last_error_code() const;
 
     /**
@@ -394,6 +409,7 @@ public:
      *
      * @return RTT in milliseconds (0 if no ping completed yet)
      */
+    /// @gdb{tag="NETWORK:CONNECT", msg="get_last_rtt_ms"}
     uint64_t get_last_rtt_ms() const;
 
     // ========================================================================
@@ -406,6 +422,7 @@ public:
      * @param filter Scan filter parameters
      * @return ClientOpResult indicating success or failure
      */
+    /// @gdb{tag="NETWORK:CB", msg="send_scan"}
     ClientOpResult send_scan(const protocol::ScanFilterFull& filter);
 
     /**
@@ -414,6 +431,7 @@ public:
      * @param request Access point parameters
      * @return ClientOpResult indicating success or failure
      */
+    /// @gdb{tag="NETWORK:CB", msg="send_create_access_point"}
     ClientOpResult send_create_access_point(const protocol::CreateAccessPointRequest& request,
                                             const uint8_t* advertise_data = nullptr,
                                             size_t advertise_size = 0);
@@ -424,6 +442,7 @@ public:
      * @param request Connection parameters
      * @return ClientOpResult indicating success or failure
      */
+    /// @gdb{tag="NETWORK:CB", msg="send_connect"}
     ClientOpResult send_connect(const protocol::ConnectRequest& request);
 
     /**
@@ -450,6 +469,7 @@ public:
      * @param size Size of data
      * @return ClientOpResult indicating success or failure
      */
+    /// @gdb{tag="NETWORK:CB", msg="send_proxy_data"}
     ClientOpResult send_proxy_data(const protocol::ProxyDataHeader& header,
                                     const uint8_t* data,
                                     size_t size);
@@ -462,6 +482,7 @@ public:
      *
      * @return ClientOpResult indicating success or failure
      */
+    /// @gdb{tag="NETWORK:CB", msg="send_ping"}
     ClientOpResult send_ping();
 
     /**
@@ -470,6 +491,7 @@ public:
      * @param ping_id The ping ID from the server's ping request
      * @return ClientOpResult indicating success or failure
      */
+    /// @gdb{tag="NETWORK:CB", msg="send_ping_response: ping_id=%u", args="$x1"}
     ClientOpResult send_ping_response(uint8_t ping_id);
 
     /**
@@ -479,6 +501,7 @@ public:
      *
      * @return ClientOpResult indicating success or failure
      */
+    /// @gdb{tag="NETWORK:CB", msg="send_disconnect_network"}
     ClientOpResult send_disconnect_network();
 
     /**
@@ -574,16 +597,19 @@ private:
     /**
      * @brief Attempt TCP connection
      */
+    /// @gdb{tag="NETWORK:CB", msg="try_connect: attempting TCP"}
     void try_connect();
 
     /**
      * @brief Process received packets
      */
+    /// @gdb{tag="NETWORK:CB", msg="process_packets: draining receive buffer"}
     void process_packets();
 
     /**
      * @brief Handle a single received packet
      */
+    /// @gdb{tag="NETWORK:CB", msg="handle_packet: id=%u size=%zu", args="$x1, $x2"}
     void handle_packet(protocol::PacketId id, const uint8_t* data, size_t size);
 
     /**
@@ -616,11 +642,13 @@ private:
     /**
      * @brief Generate a unique MAC address
      */
+    /// @gdb{tag="NETWORK:PACKET", msg="Generating MAC address"}
     void generate_mac_address();
 
     /**
      * @brief Start backoff timer
      */
+    /// @gdb{tag="NETWORK:CB", msg="start_backoff: delay=%u retry=%u", args="$x0, $x1"}
     void start_backoff();
 
     /**
@@ -635,6 +663,7 @@ private:
  * @param result Result to convert
  * @return Human-readable string representation
  */
+/// @gdb{tag="NETWORK:PACKET", msg="client_op_result_to_string"}
 const char* client_op_result_to_string(ClientOpResult result);
 
 } // namespace network

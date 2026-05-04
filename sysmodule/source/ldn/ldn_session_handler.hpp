@@ -189,6 +189,7 @@ public:
      *
      * Creates handler in None state.
      */
+    /// @gdb{tag="LDN:SESSION", msg="Handler created"}
     LdnSessionHandler();
 
     /**
@@ -209,6 +210,7 @@ public:
      *
      * @param callback Function to call on state change (nullptr to disable)
      */
+    /// @gdb{tag="LDN:SESSION", msg="State callback registered"}
     void set_state_callback(SessionStateCallback callback);
 
     /**
@@ -216,6 +218,7 @@ public:
      *
      * @param callback Function to call when network info changes
      */
+    /// @gdb{tag="LDN:SESSION", msg="Network updated callback registered"}
     void set_network_updated_callback(NetworkUpdatedCallback callback);
 
     /**
@@ -223,6 +226,7 @@ public:
      *
      * @param callback Function to call for each scan result
      */
+    /// @gdb{tag="LDN:SESSION", msg="Scan result callback registered"}
     void set_scan_result_callback(ScanResultCallback callback);
 
     /**
@@ -230,6 +234,7 @@ public:
      *
      * @param callback Function to call when scan ends
      */
+    /// @gdb{tag="LDN:SESSION", msg="Scan completed callback registered"}
     void set_scan_completed_callback(ScanCompletedCallback callback);
 
     /**
@@ -237,6 +242,7 @@ public:
      *
      * @param callback Function to call on disconnect
      */
+    /// @gdb{tag="LDN:SESSION", msg="Disconnected callback registered"}
     void set_disconnected_callback(DisconnectedCallback callback);
 
     /**
@@ -244,6 +250,7 @@ public:
      *
      * @param callback Function to call on error
      */
+    /// @gdb{tag="LDN:SESSION", msg="Error callback registered"}
     void set_error_callback(ErrorCallback callback);
 
     /**
@@ -251,6 +258,7 @@ public:
      *
      * @param callback Function to call when a player is rejected
      */
+    /// @gdb{tag="LDN:SESSION", msg="Rejected callback registered"}
     void set_rejected_callback(RejectedCallback callback);
 
     /**
@@ -258,6 +266,7 @@ public:
      *
      * @param callback Function to call when accept policy changes
      */
+    /// @gdb{tag="LDN:SESSION", msg="Accept policy callback registered"}
     void set_accept_policy_changed_callback(AcceptPolicyChangedCallback callback);
 
     // ========================================================================
@@ -273,6 +282,7 @@ public:
      * @param header Packet header
      * @param msg Initialize message with assigned values
      */
+    /// @gdb{tag="LDN:SESSION", msg="handle_initialize"}
     void handle_initialize(const protocol::LdnHeader& header,
                            const protocol::InitializeMessage& msg);
 
@@ -285,6 +295,7 @@ public:
      * @param header Packet header
      * @param info Network info of joined network
      */
+    /// @gdb{tag="LDN:SESSION", msg="handle_connected"}
     void handle_connected(const protocol::LdnHeader& header,
                           const protocol::NetworkInfo& info);
 
@@ -297,6 +308,7 @@ public:
      * @param header Packet header
      * @param info Updated network info
      */
+    /// @gdb{tag="LDN:SESSION", msg="handle_sync_network"}
     void handle_sync_network(const protocol::LdnHeader& header,
                              const protocol::NetworkInfo& info);
 
@@ -308,6 +320,7 @@ public:
      * @param header Packet header
      * @param info Network found
      */
+    /// @gdb{tag="LDN:SESSION", msg="handle_scan_reply"}
     void handle_scan_reply(const protocol::LdnHeader& header,
                            const protocol::NetworkInfo& info);
 
@@ -318,6 +331,7 @@ public:
      *
      * @param header Packet header
      */
+    /// @gdb{tag="LDN:SESSION", msg="handle_scan_reply_end"}
     void handle_scan_reply_end(const protocol::LdnHeader& header);
 
     /**
@@ -329,6 +343,7 @@ public:
      * @param msg Ping message
      * @return true if echo should be sent (server requested), false otherwise
      */
+    /// @gdb{tag="LDN:SESSION", msg="handle_ping"}
     bool handle_ping(const protocol::LdnHeader& header,
                      const protocol::PingMessage& msg);
 
@@ -340,6 +355,7 @@ public:
      * @param header Packet header
      * @param msg Disconnect message
      */
+    /// @gdb{tag="LDN:SESSION", msg="handle_disconnect"}
     void handle_disconnect(const protocol::LdnHeader& header,
                            const protocol::DisconnectMessage& msg);
 
@@ -351,6 +367,7 @@ public:
      * @param header Packet header
      * @param msg Error message
      */
+    /// @gdb{tag="LDN:SESSION", msg="handle_network_error"}
     void handle_network_error(const protocol::LdnHeader& header,
                               const protocol::NetworkErrorMessage& msg);
 
@@ -363,6 +380,7 @@ public:
      * @param header Packet header
      * @param req Reject request with node_id and reason
      */
+    /// @gdb{tag="LDN:SESSION", msg="handle_reject"}
     void handle_reject(const protocol::LdnHeader& header,
                        const protocol::RejectRequest& req);
 
@@ -374,6 +392,7 @@ public:
      *
      * @param header Packet header
      */
+    /// @gdb{tag="LDN:SESSION", msg="handle_reject_reply"}
     void handle_reject_reply(const protocol::LdnHeader& header);
 
     /**
@@ -384,6 +403,7 @@ public:
      * @param header Packet header
      * @param req Accept policy request
      */
+    /// @gdb{tag="LDN:SESSION", msg="handle_set_accept_policy"}
     void handle_set_accept_policy(const protocol::LdnHeader& header,
                                    const protocol::SetAcceptPolicyRequest& req);
 
@@ -396,6 +416,7 @@ public:
      *
      * @return Current state
      */
+    /// @gdb{tag="LDN:SESSION", msg="get_state"}
     LdnSessionState get_state() const { return m_state; }
 
     /**
@@ -403,6 +424,7 @@ public:
      *
      * @return true if in Station or AccessPoint state
      */
+    /// @gdb{tag="LDN:SESSION", msg="is_in_session"}
     bool is_in_session() const;
 
     /**
@@ -410,6 +432,7 @@ public:
      *
      * @return true if we created the access point
      */
+    /// @gdb{tag="LDN:SESSION", msg="is_host"}
     bool is_host() const { return m_is_host; }
 
     /**
@@ -417,6 +440,7 @@ public:
      *
      * @return Number of connected players
      */
+    /// @gdb{tag="LDN:SESSION", msg="get_node_count"}
     uint8_t get_node_count() const;
 
     /**
@@ -486,6 +510,7 @@ public:
      *
      * Transitions back to Initialized state.
      */
+    /// @gdb{tag="LDN:SESSION", msg="leave_session"}
     void leave_session();
 
     /**
@@ -493,6 +518,7 @@ public:
      *
      * Clears all state and returns to None.
      */
+    /// @gdb{tag="LDN:SESSION", msg="reset"}
     void reset();
 
 private:

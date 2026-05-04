@@ -207,6 +207,7 @@ public:
      * @note After connection, you should send InitializeMessage
      * @note Recommended timeout: 5000ms (5 seconds)
      */
+    /// @gdb{tag="NETWORK:TCP", msg="TcpClient::connect"}
     ClientResult connect(const char* host, uint16_t port, uint32_t timeout_ms = 5000);
 
     /**
@@ -218,6 +219,7 @@ public:
      * @note Does NOT send Disconnect message to server - call send_disconnect()
      *       first if you want to notify the server gracefully.
      */
+    /// @gdb{tag="NETWORK:TCP", msg="TcpClient::disconnect"}
     void disconnect();
 
     /**
@@ -229,6 +231,7 @@ public:
      * @note This only checks local state. The server may have closed the
      *       connection; this will be detected on next send/receive.
      */
+    /// @gdb{tag="NETWORK:TCP", msg="TcpClient::is_connected"}
     bool is_connected() const;
 
     // =========================================================================
@@ -250,6 +253,7 @@ public:
      * @return ClientResult::EncodingError if packet encoding failed
      * @return ClientResult::ConnectionLost if send failed
      */
+    /// @gdb{tag="NETWORK:TCP", msg="TcpClient::send_packet"}
     ClientResult send_packet(protocol::PacketId type, const void* payload, size_t payload_size);
 
     /**
@@ -265,6 +269,7 @@ public:
      * @return ClientResult::NotConnected if not connected
      * @return ClientResult::ConnectionLost if send failed
      */
+    /// @gdb{tag="NETWORK:TCP", msg="TcpClient::send_raw"}
     ClientResult send_raw(const void* data, size_t size);
 
     /**
@@ -278,6 +283,7 @@ public:
      *
      * @note Send with zeros for id/mac to request new session from server
      */
+    /// @gdb{tag="NETWORK:TCP", msg="send_initialize"}
     ClientResult send_initialize(const protocol::InitializeMessage& msg);
 
     /**
@@ -288,6 +294,7 @@ public:
      * @param msg Passphrase message with room password
      * @return ClientResult indicating success or error
      */
+    /// @gdb{tag="NETWORK:TCP", msg="send_passphrase"}
     ClientResult send_passphrase(const protocol::PassphraseMessage& msg);
 
     /**
@@ -311,6 +318,7 @@ public:
      *
      * @note Server will echo back the ping when requester=0
      */
+    /// @gdb{tag="NETWORK:TCP", msg="send_ping"}
     ClientResult send_ping(const protocol::PingMessage& msg);
 
     /**
@@ -323,6 +331,7 @@ public:
      *
      * @note Call this before disconnect() for graceful shutdown
      */
+    /// @gdb{tag="NETWORK:TCP", msg="send_disconnect"}
     ClientResult send_disconnect(const protocol::DisconnectMessage& msg);
 
     /**
@@ -333,6 +342,7 @@ public:
      * @param request Access point configuration
      * @return ClientResult indicating success or error
      */
+    /// @gdb{tag="NETWORK:TCP", msg="send_create_access_point"}
     ClientResult send_create_access_point(const protocol::CreateAccessPointRequest& request,
                                           const uint8_t* advertise_data = nullptr,
                                           size_t advertise_size = 0);
@@ -347,6 +357,7 @@ public:
      * @param advertise_size Size of advertise data
      * @return ClientResult indicating success or error
      */
+    /// @gdb{tag="NETWORK:TCP", msg="send_create_access_point_private"}
     ClientResult send_create_access_point_private(const protocol::CreateAccessPointPrivateRequest& request,
                                                    const uint8_t* advertise_data = nullptr,
                                                    size_t advertise_size = 0);
@@ -359,6 +370,7 @@ public:
      * @param request Connection request with target network info
      * @return ClientResult indicating success or error
      */
+    /// @gdb{tag="NETWORK:TCP", msg="send_connect"}
     ClientResult send_connect(const protocol::ConnectRequest& request);
 
     /**
@@ -369,6 +381,7 @@ public:
      * @param request Private connection request
      * @return ClientResult indicating success or error
      */
+    /// @gdb{tag="NETWORK:TCP", msg="send_connect_private"}
     ClientResult send_connect_private(const protocol::ConnectPrivateRequest& request);
 
     /**
@@ -379,6 +392,7 @@ public:
      * @param filter Scan filter criteria
      * @return ClientResult indicating success or error
      */
+    /// @gdb{tag="NETWORK:TCP", msg="send_scan"}
     ClientResult send_scan(const protocol::ScanFilterFull& filter);
 
     /**
@@ -391,6 +405,7 @@ public:
      * @param data_size Size of game data
      * @return ClientResult indicating success or error
      */
+    /// @gdb{tag="NETWORK:TCP", msg="send_proxy_data"}
     ClientResult send_proxy_data(const protocol::ProxyDataHeader& header,
                                   const uint8_t* data, size_t data_size);
 
@@ -402,6 +417,7 @@ public:
      * @param request Accept policy request
      * @return ClientResult indicating success or error
      */
+    /// @gdb{tag="NETWORK:TCP", msg="send_set_accept_policy"}
     ClientResult send_set_accept_policy(const protocol::SetAcceptPolicyRequest& request);
 
     /**
@@ -413,6 +429,7 @@ public:
      * @param size Size of advertise data (max 384 bytes)
      * @return ClientResult indicating success or error
      */
+    /// @gdb{tag="NETWORK:TCP", msg="send_set_advertise_data"}
     ClientResult send_set_advertise_data(const uint8_t* data, size_t size);
 
     /**
@@ -423,6 +440,7 @@ public:
      * @param request Reject request with node ID and reason
      * @return ClientResult indicating success or error
      */
+    /// @gdb{tag="NETWORK:TCP", msg="send_reject"}
     ClientResult send_reject(const protocol::RejectRequest& request);
 
     // =========================================================================
@@ -450,6 +468,7 @@ public:
      *
      * @note payload_size is set even on BufferTooSmall (indicates required size)
      */
+    /// @gdb{tag="NETWORK:TCP", msg="receive_packet: timeout=%d", args="$x5"}
     ClientResult receive_packet(protocol::PacketId& type,
                                  void* payload, size_t payload_buffer_size,
                                  size_t& payload_size,

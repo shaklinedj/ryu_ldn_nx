@@ -67,11 +67,13 @@ public:
     /**
      * @brief Default constructor - creates invalid socket
      */
+    /// @gdb{tag="NETWORK:STATE", msg="Socket created"}
     Socket();
 
     /**
      * @brief Destructor - closes socket if open
      */
+    /// @gdb{tag="NETWORK:STATE", msg="Socket destroyed"}
     ~Socket();
 
     // Non-copyable
@@ -89,6 +91,7 @@ public:
      * @param timeout_ms Connection timeout in milliseconds (0 = blocking)
      * @return SocketResult::Success or error
      */
+    /// @gdb{tag="NETWORK:STATE", msg="Socket connect"}
     SocketResult connect(const char* host, uint16_t port, uint32_t timeout_ms = 0);
 
     /**
@@ -121,12 +124,14 @@ public:
     /**
      * @brief Close the socket
      */
+    /// @gdb{tag="NETWORK:STATE", msg="Socket closed"}
     void close();
 
     /**
      * @brief Check if socket is connected
      * @return true if connected
      */
+    /// @gdb{tag="NETWORK:STATE", msg="Socket is_connected"}
     bool is_connected() const;
 
     /**

@@ -50,11 +50,13 @@ public:
      *
      * @param program_id Program ID of the client process (used to replace LocalCommunicationId=-1)
      */
+    /// @gdb{tag="LDN:LIFECYCLE", msg="Communication service created"}
     explicit ICommunicationService(ncm::ProgramId program_id);
 
     /**
      * @brief Destructor
      */
+    /// @gdb{tag="LDN:LIFECYCLE", msg="Communication service destroyed"}
     ~ICommunicationService();
 
     // ========================================================================
@@ -67,6 +69,7 @@ public:
      * @param state Output state value
      * @return Result code
      */
+    /// @gdb{tag="LDN:OPS", msg="GetState"}
     Result GetState(ams::sf::Out<u32> state);
 
     /**
@@ -75,6 +78,7 @@ public:
      * @param buffer Output network info
      * @return Result code
      */
+    /// @gdb{tag="LDN:OPS", msg="GetNetworkInfo"}
     Result GetNetworkInfo(ams::sf::Out<NetworkInfo> buffer);
 
     /**
@@ -84,6 +88,7 @@ public:
      * @param mask Output subnet mask (host byte order)
      * @return Result code
      */
+    /// @gdb{tag="LDN:OPS", msg="GetIpv4Address"}
     Result GetIpv4Address(ams::sf::Out<u32> address, ams::sf::Out<u32> mask);
 
     /**
@@ -92,6 +97,7 @@ public:
      * @param reason Output disconnect reason
      * @return Result code
      */
+    /// @gdb{tag="LDN:OPS", msg="GetDisconnectReason"}
     Result GetDisconnectReason(ams::sf::Out<u32> reason);
 
     /**
@@ -100,6 +106,7 @@ public:
      * @param out Output security parameter
      * @return Result code
      */
+    /// @gdb{tag="LDN:OPS", msg="GetSecurityParameter"}
     Result GetSecurityParameter(ams::sf::Out<SecurityParameter> out);
 
     /**
@@ -108,6 +115,7 @@ public:
      * @param out Output network config
      * @return Result code
      */
+    /// @gdb{tag="LDN:OPS", msg="GetNetworkConfig"}
     Result GetNetworkConfig(ams::sf::Out<NetworkConfig> out);
 
     /**
@@ -116,6 +124,7 @@ public:
      * @param handle Output event handle
      * @return Result code
      */
+    /// @gdb{tag="LDN:OPS", msg="AttachStateChangeEvent"}
     Result AttachStateChangeEvent(ams::sf::Out<ams::sf::CopyHandle> handle);
 
     /**
@@ -125,6 +134,7 @@ public:
      * @param pUpdates Output node update array
      * @return Result code
      */
+    /// @gdb{tag="LDN:OPS", msg="GetNetworkInfoLatestUpdate"}
     Result GetNetworkInfoLatestUpdate(
         ams::sf::Out<NetworkInfo> buffer,
         ams::sf::OutArray<NodeLatestUpdate> pUpdates);
@@ -138,6 +148,7 @@ public:
      * @param filter Scan filter
      * @return Result code
      */
+    /// @gdb{tag="LDN:OPS", msg="Scan"}
     Result Scan(
         ams::sf::Out<u32> count,
         ams::sf::OutAutoSelectArray<NetworkInfo> buffer,
@@ -153,6 +164,7 @@ public:
      *
      * @return Result code
      */
+    /// @gdb{tag="LDN:OPS", msg="OpenAccessPoint"}
     Result OpenAccessPoint();
 
     /**
@@ -160,6 +172,7 @@ public:
      *
      * @return Result code
      */
+    /// @gdb{tag="LDN:OPS", msg="CloseAccessPoint"}
     Result CloseAccessPoint();
 
     /**
@@ -168,6 +181,7 @@ public:
      * @param data Network creation configuration
      * @return Result code
      */
+    /// @gdb{tag="LDN:OPS", msg="CreateNetwork"}
     Result CreateNetwork(CreateNetworkConfig data);
 
     /**
@@ -175,6 +189,7 @@ public:
      *
      * @return Result code
      */
+    /// @gdb{tag="LDN:OPS", msg="DestroyNetwork"}
     Result DestroyNetwork();
 
     /**
@@ -183,6 +198,7 @@ public:
      * @param data Advertise data buffer
      * @return Result code
      */
+    /// @gdb{tag="LDN:OPS", msg="SetAdvertiseData"}
     Result SetAdvertiseData(ams::sf::InAutoSelectBuffer data);
 
     /**
@@ -191,6 +207,7 @@ public:
      * @param policy Accept policy
      * @return Result code
      */
+    /// @gdb{tag="LDN:OPS", msg="SetStationAcceptPolicy"}
     Result SetStationAcceptPolicy(u8 policy);
 
     // ========================================================================
@@ -202,6 +219,7 @@ public:
      *
      * @return Result code
      */
+    /// @gdb{tag="LDN:OPS", msg="OpenStation"}
     Result OpenStation();
 
     /**
@@ -209,6 +227,7 @@ public:
      *
      * @return Result code
      */
+    /// @gdb{tag="LDN:OPS", msg="CloseStation"}
     Result CloseStation();
 
     /**
@@ -218,6 +237,7 @@ public:
      * @param data Network to connect to
      * @return Result code
      */
+    /// @gdb{tag="LDN:OPS", msg="Connect"}
     Result Connect(ConnectNetworkData dat, const NetworkInfo& data);
 
     /**
@@ -225,6 +245,7 @@ public:
      *
      * @return Result code
      */
+    /// @gdb{tag="LDN:OPS", msg="Disconnect"}
     Result Disconnect();
 
     // ========================================================================
@@ -237,6 +258,7 @@ public:
      * @param client_process_id Client process ID
      * @return Result code
      */
+    /// @gdb{tag="LDN:OPS", msg="Initialize"}
     Result Initialize(const ams::sf::ClientProcessId& client_process_id);
 
     /**
@@ -244,6 +266,7 @@ public:
      *
      * @return Result code
      */
+    /// @gdb{tag="LDN:OPS", msg="Finalize"}
     Result Finalize();
 
     /**
@@ -253,6 +276,7 @@ public:
      * @param client_process_id Client process ID
      * @return Result code
      */
+    /// @gdb{tag="LDN:OPS", msg="InitializeSystem2"}
     Result InitializeSystem2(u64 unk, const ams::sf::ClientProcessId& client_process_id);
 
     // ========================================================================
@@ -270,6 +294,7 @@ public:
      * @param filter Scan filter
      * @return Result code
      */
+    /// @gdb{tag="LDN:OPS", msg="ScanPrivate"}
     Result ScanPrivate(
         ams::sf::Out<u32> count,
         ams::sf::OutAutoSelectArray<NetworkInfo> buffer,
@@ -283,6 +308,7 @@ public:
      * @param addressList Address list buffer
      * @return Result code
      */
+    /// @gdb{tag="LDN:OPS", msg="CreateNetworkPrivate"}
     Result CreateNetworkPrivate(
         CreateNetworkPrivateConfig data,
         ams::sf::InPointerBuffer addressList);
@@ -293,6 +319,7 @@ public:
      * @param data Connection data including security parameter
      * @return Result code
      */
+    /// @gdb{tag="LDN:OPS", msg="ConnectPrivate"}
     Result ConnectPrivate(ConnectPrivateData data);
 
     // ========================================================================
@@ -303,6 +330,7 @@ public:
      * @brief Set wireless controller restriction
      * @return Result code (stub)
      */
+    /// @gdb{tag="LDN:OPS", msg="SetWirelessControllerRestriction"}
     Result SetWirelessControllerRestriction();
 
     /**
@@ -311,18 +339,21 @@ public:
      * @param nodeId Node ID to reject
      * @return Result code
      */
+    /// @gdb{tag="LDN:OPS", msg="Reject: nodeId=%u", args="$x1"}
     Result Reject(u32 nodeId);
 
     /**
      * @brief Add entry to accept filter
      * @return Result code (stub)
      */
+    /// @gdb{tag="LDN:OPS", msg="AddAcceptFilterEntry"}
     Result AddAcceptFilterEntry();
 
     /**
      * @brief Clear accept filter
      * @return Result code (stub)
      */
+    /// @gdb{tag="LDN:OPS", msg="ClearAcceptFilter"}
     Result ClearAcceptFilter();
 
 private:
@@ -330,17 +361,20 @@ private:
      * @brief Connect to RyuLdn server
      * @return Result code
      */
+    /// @gdb{tag="LDN:ASYNC", msg="ConnectToServer: entering"}
     Result ConnectToServer();
 
     /**
      * @brief Disconnect from RyuLdn server
      */
+    /// @gdb{tag="LDN:ASYNC", msg="DisconnectFromServer: entering"}
     void DisconnectFromServer();
 
     /**
      * @brief Check if connected to server
      * @return true if connected and ready
      */
+    /// @gdb{tag="LDN:ASYNC", msg="IsServerConnected: queried"}
     bool IsServerConnected() const;
 
 private:
@@ -350,6 +384,7 @@ private:
      * @param data Packet payload
      * @param size Payload size
      */
+    /// @gdb{tag="LDN:ASYNC", msg="HandleServerPacket: id=%u size=%zu", args="$x2, $x3"}
     void HandleServerPacket(ryu_ldn::protocol::PacketId id, const uint8_t* data, size_t size);
 
     /**
@@ -358,6 +393,7 @@ private:
      * @param timeout_ms Timeout in milliseconds
      * @return true if packet received, false on timeout
      */
+    /// @gdb{tag="LDN:ASYNC", msg="WaitForResponse: expected_id=%u timeout_ms=%lu", args="$x1, $x2"}
     bool WaitForResponse(ryu_ldn::protocol::PacketId expected_id, uint64_t timeout_ms);
 
 private:
@@ -447,17 +483,20 @@ private:
      * @brief Receive thread entry point
      * @param arg Pointer to ICommunicationService instance
      */
+    /// @gdb{tag="LDN:ASYNC", msg="ReceiveThreadEntry: thread started arg=%p", args="$x0"}
     static void ReceiveThreadEntry(void* arg);
 
     /**
      * @brief Receive thread main loop — reads packets, dispatches immediately
      */
+    /// @gdb{tag="LDN:ASYNC", msg="ReceiveThreadFunc: loop iteration"}
     void ReceiveThreadFunc();
 
     /**
      * @brief Async P2P connect thread entry — see m_p2p_connect_thread
      * @param arg Pointer to ICommunicationService instance
      */
+    /// @gdb{tag="LDN:ASYNC", msg="P2pConnectThreadEntry: thread started arg=%p", args="$x0"}
     static void P2pConnectThreadEntry(void* arg);
 
     // Program ID for LocalCommunicationId replacement (like Ryujinx NeedsRealId handling)
@@ -552,6 +591,7 @@ public:
      * @param data_len Payload length
      * @return ClientOpResult indicating success or failure
      */
+    /// @gdb{tag="LDN:OPS", msg="SendProxyDataToServer"}
     ryu_ldn::network::ClientOpResult SendProxyDataToServer(
         const ryu_ldn::protocol::ProxyDataHeader& header,
         const void* data,

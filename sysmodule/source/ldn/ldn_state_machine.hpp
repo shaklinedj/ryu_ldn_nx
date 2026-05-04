@@ -68,11 +68,13 @@ public:
     /**
      * @brief Constructor
      */
+    /// @gdb{tag="LDN:STATE", msg="LdnStateMachine: constructor"}
     LdnStateMachine();
 
     /**
      * @brief Destructor
      */
+    /// @gdb{tag="LDN:STATE", msg="LdnStateMachine: destructor"}
     ~LdnStateMachine();
 
     // Non-copyable
@@ -87,6 +89,7 @@ public:
      * @brief Get current state
      * @return Current CommState
      */
+    /// @gdb{tag="LDN:STATE", msg="GetState"}
     CommState GetState() const;
 
     /**
@@ -94,18 +97,21 @@ public:
      * @param state State to check
      * @return true if in the specified state
      */
+    /// @gdb{tag="LDN:STATE", msg="IsInState"}
     bool IsInState(CommState state) const;
 
     /**
      * @brief Check if initialized (not None or Error)
      * @return true if service is initialized
      */
+    /// @gdb{tag="LDN:STATE", msg="IsInitialized"}
     bool IsInitialized() const;
 
     /**
      * @brief Check if in a connected state (AccessPointCreated or StationConnected)
      * @return true if connected to a network
      */
+    /// @gdb{tag="LDN:STATE", msg="IsNetworkActive"}
     bool IsNetworkActive() const;
 
     // ========================================================================
@@ -116,66 +122,77 @@ public:
      * @brief Initialize the service (None -> Initialized)
      * @return Transition result
      */
+    /// @gdb{tag="LDN:STATE", msg="Initialize → Initialized"}
     StateTransitionResult Initialize();
 
     /**
      * @brief Finalize the service (Any -> None)
      * @return Transition result
      */
+    /// @gdb{tag="LDN:STATE", msg="Finalize → None"}
     StateTransitionResult Finalize();
 
     /**
      * @brief Open access point mode (Initialized -> AccessPoint)
      * @return Transition result
      */
+    /// @gdb{tag="LDN:STATE", msg="OpenAccessPoint → AccessPoint"}
     StateTransitionResult OpenAccessPoint();
 
     /**
      * @brief Close access point mode (AccessPoint/AccessPointCreated -> Initialized)
      * @return Transition result
      */
+    /// @gdb{tag="LDN:STATE", msg="CloseAccessPoint → Initialized"}
     StateTransitionResult CloseAccessPoint();
 
     /**
      * @brief Create network (AccessPoint -> AccessPointCreated)
      * @return Transition result
      */
+    /// @gdb{tag="LDN:STATE", msg="CreateNetwork → AccessPointCreated"}
     StateTransitionResult CreateNetwork();
 
     /**
      * @brief Destroy network (AccessPointCreated -> AccessPoint)
      * @return Transition result
      */
+    /// @gdb{tag="LDN:STATE", msg="DestroyNetwork → AccessPoint"}
     StateTransitionResult DestroyNetwork();
 
     /**
      * @brief Open station mode (Initialized -> Station)
      * @return Transition result
      */
+    /// @gdb{tag="LDN:STATE", msg="OpenStation → Station"}
     StateTransitionResult OpenStation();
 
     /**
      * @brief Close station mode (Station/StationConnected -> Initialized)
      * @return Transition result
      */
+    /// @gdb{tag="LDN:STATE", msg="CloseStation → Initialized"}
     StateTransitionResult CloseStation();
 
     /**
      * @brief Connect to network (Station -> StationConnected)
      * @return Transition result
      */
+    /// @gdb{tag="LDN:STATE", msg="Connect → StationConnected"}
     StateTransitionResult Connect();
 
     /**
      * @brief Disconnect from network (StationConnected -> Station)
      * @return Transition result
      */
+    /// @gdb{tag="LDN:STATE", msg="Disconnect → Station"}
     StateTransitionResult Disconnect();
 
     /**
      * @brief Set error state (Any -> Error)
      * @return Transition result
      */
+    /// @gdb{tag="LDN:STATE", msg="SetError → error state"}
     StateTransitionResult SetError();
 
     // ========================================================================
@@ -186,6 +203,7 @@ public:
      * @brief Get the state change event handle
      * @return Event handle for state changes
      */
+    /// @gdb{tag="LDN:STATE", msg="GetStateChangeEventHandle"}
     os::NativeHandle GetStateChangeEventHandle() const;
 
     /**
@@ -193,6 +211,7 @@ public:
      * @param callback Callback function (can be nullptr)
      * @param user_data User data passed to callback
      */
+    /// @gdb{tag="LDN:STATE", msg="SetStateCallback: callback=%p", args="$x0"}
     void SetStateCallback(StateCallback callback, void* user_data);
 
     // ========================================================================
@@ -204,6 +223,7 @@ public:
      * @param state State to convert
      * @return Human-readable state name
      */
+    /// @gdb{tag="LDN:STATE", msg="StateToString"}
     static const char* StateToString(CommState state);
 
     /**
@@ -211,6 +231,7 @@ public:
      * @param result Result to convert
      * @return Human-readable result name
      */
+    /// @gdb{tag="LDN:STATE", msg="ResultToString"}
     static const char* ResultToString(StateTransitionResult result);
 
     /**
@@ -219,6 +240,7 @@ public:
      * Call this when external events (like server packets) indicate
      * a state-relevant change that games should be notified about.
      */
+    /// @gdb{tag="LDN:STATE", msg="SignalStateChange: signaling event"}
     void SignalStateChange();
 
 private:
@@ -227,6 +249,7 @@ private:
      * @param new_state Target state
      * @return Transition result
      */
+    /// @gdb{tag="LDN:STATE", msg="TransitionTo: new_state=%d", args="$x1"}
     StateTransitionResult TransitionTo(CommState new_state);
 
     /**

@@ -195,6 +195,29 @@ The host IDE will show errors for `<stratosphere.hpp>`, libnx APIs, and Switch-s
 - GDB component scripts in `scripts/debugger/components/` target specific subsystems: `ldn/`, `network/`, `config/`, `p2p/`, `bsd/`, `debug/`.
 - Presets in `scripts/debugger/presets/`: `minimal.gdb`, `crash-analysis.gdb`, `ldn-focus.gdb`, `network-focus.gdb`.
 
+### GDB Tracepoint Annotations
+
+GDB dprintf tracepoints are defined as `@gdb{}` annotations inline in C++ headers, co-located with the functions they trace. A Python generator (`scripts/gdb_codegen.py`) extracts these and produces the `.gdb` files that `debug.sh` loads.
+
+```cpp
+/// @gdb{tag="LDN:LIFECYCLE", msg="Communication service created"}
+explicit ICommunicationService(ncm::ProgramId program_id);
+
+/// @gdb{tag="LDN:OPS", msg="Reject: nodeId=%u", args="$x1"}
+Result Reject(u32 nodeId);
+```
+
+- **tag**: Hierarchical tag mapping to component + sub-file (e.g., `LDN:STATE` → `ldn/07-state.gdb`)
+- **msg**: Printf format string without `[TAG]` prefix or `\n` (generator adds both)
+- **args**: Optional GDB register arguments (ARM64 calling convention)
+
+Commands:
+- `python3 scripts/gdb_codegen.py generate` — regenerate `.gdb` files from annotations
+- `python3 scripts/gdb_codegen.py verify` — compare annotations vs existing `.gdb` files
+- `python3 scripts/gdb_codegen.py inject` — back-port `.gdb` entries into source headers
+
+Documentation: `scripts/gdb_codegen/README.md`
+
 ## Docs Site
 
 `docs/` is an Astro + Starlight site. Build with `npm run generate-api` (runs Doxygen, transforms XML → MDX) then `astro build`. Deploys to GitHub Pages.

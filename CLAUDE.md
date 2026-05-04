@@ -30,6 +30,10 @@ docker-compose run --rm clean
 
 # Interactive GDB against a running Switch — see scripts/debugger/debug.sh
 docker-compose run --rm debugger <SWITCH_IP> [PID]
+
+# Regenerate .gdb tracepoint files from @gdb{} annotations in source
+python3 scripts/gdb_codegen.py generate       # produce .gdb files
+python3 scripts/gdb_codegen.py verify          # compare annotations vs .gdb files
 ```
 
 Unit tests live in [tests/](tests/) and build as native host binaries with `g++ -std=c++17 -DTEST_BUILD`. Each test suite has both an `all`/`test` aggregate target and a per-suite target. To run one suite:

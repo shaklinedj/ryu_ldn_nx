@@ -126,6 +126,7 @@ inline const char* log_level_to_string(LogLevel level) {
  * @param format printf-style format string
  * @param ... Format arguments
  */
+/// @gdb{tag="DEBUG:LOG", msg="format_log_message"}
 void format_log_message(char* buffer, size_t buffer_size, LogLevel level,
                         const char* format, ...);
 
@@ -138,6 +139,7 @@ void format_log_message(char* buffer, size_t buffer_size, LogLevel level,
  * @param format printf-style format string
  * @param args Format arguments as va_list
  */
+/// @gdb{tag="DEBUG:LOG", msg="format_log_message_v"}
 void format_log_message_v(char* buffer, size_t buffer_size, LogLevel level,
                           const char* format, va_list args);
 
@@ -158,6 +160,7 @@ public:
      *
      * @param capacity Maximum number of messages to store (up to MAX_LOG_BUFFER_ENTRIES)
      */
+    /// @gdb{tag="DEBUG:LOG", msg="LogBuffer init"}
     void init(size_t capacity = MAX_LOG_BUFFER_ENTRIES);
 
     /**
@@ -167,6 +170,7 @@ public:
      *
      * @param message Null-terminated message string
      */
+    /// @gdb{tag="DEBUG:LOG", msg="LogBuffer add"}
     void add(const char* message);
 
     /**
@@ -183,6 +187,7 @@ public:
      * @param buffer Output buffer
      * @param buffer_size Size of output buffer
      */
+    /// @gdb{tag="DEBUG:LOG", msg="LogBuffer get_all"}
     void get_all(char* buffer, size_t buffer_size) const;
 
     /**
@@ -193,6 +198,7 @@ public:
     /**
      * @brief Clear all messages
      */
+    /// @gdb{tag="DEBUG:LOG", msg="LogBuffer clear"}
     void clear();
 
 private:
@@ -228,6 +234,7 @@ public:
      * @param config Debug configuration from config.ini
      * @param log_path Optional custom log file path (default: DEFAULT_LOG_PATH)
      */
+    /// @gdb{tag="DEBUG:LOGGER", msg="Logger initialized"}
     void init(const config::DebugConfig& config,
               const char* log_path = DEFAULT_LOG_PATH);
 
@@ -247,6 +254,7 @@ public:
      * @param level Log level to check
      * @return true if message should be logged
      */
+    /// @gdb{tag="DEBUG:LOG", msg="should_log"}
     bool should_log(LogLevel level) const;
 
     /**
@@ -256,6 +264,7 @@ public:
      * @param format printf-style format string
      * @param ... Format arguments
      */
+    /// @gdb{tag="DEBUG:LOG", msg="log"}
     void log(LogLevel level, const char* format, ...);
 
     /**
@@ -265,11 +274,13 @@ public:
      * @param format printf-style format string
      * @param args Format arguments
      */
+    /// @gdb{tag="DEBUG:LOG", msg="log_v"}
     void log_v(LogLevel level, const char* format, va_list args);
 
     /**
      * @brief Flush any buffered output to file
      */
+    /// @gdb{tag="DEBUG:LOG", msg="flush"}
     void flush();
 
     /**
