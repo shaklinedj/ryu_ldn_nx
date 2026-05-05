@@ -133,16 +133,19 @@ public:
      *
      * @note Tries ports 39990-39999 if port is 0
      */
+    /// @gdb{tag="P2P:SERVER", msg="Server starting"}
     bool Start(uint16_t port = 0);
 
     /**
      * @brief Stop the server and disconnect all sessions
      */
+    /// @gdb{tag="P2P:SERVER", msg="Server stopping"}
     void Stop();
 
     /**
      * @brief Check if server is running
      */
+    /// @gdb{tag="P2P:SERVER", msg="Server state queried"}
     bool IsRunning() const;
 
     /**
@@ -173,6 +176,7 @@ public:
     /**
      * @brief Release UPnP port mapping
      */
+    /// @gdb{tag="P2P:NAT", msg="Releasing NAT punch"}
     void ReleaseNatPunch();
 
     // =========================================================================
@@ -185,6 +189,7 @@ public:
      *
      * Called when master server notifies us someone is about to connect.
      */
+    /// @gdb{tag="P2P:SESSION", msg="Token added to waiting list"}
     void AddWaitingToken(const ryu_ldn::protocol::ExternalProxyToken& token);
 
     /**
@@ -197,6 +202,7 @@ public:
      * Called by P2pProxySession when a client sends ExternalProxyConfig.
      * Validates the token, assigns virtual IP, and adds to player list.
      */
+    /// @gdb{tag="P2P:SESSION", msg="User registration attempt"}
     bool TryRegisterUser(P2pProxySession* session,
                          const ryu_ldn::protocol::ExternalProxyConfig& config,
                          uint32_t remote_ip);
@@ -236,7 +242,8 @@ public:
      * @brief Configure broadcast address from ProxyConfig
      * @param config Configuration with subnet info
      */
-    void Configure(const ryu_ldn::protocol::ProxyConfig& config);
+    /// @gdb{tag="P2P:SERVER", msg="Server configuration updated"}
+    void Configure(const ryu_ldn::protocol::ProxyConfig"& config);
 
     // =========================================================================
     // Host self-routing — in-process shortcut
@@ -297,6 +304,7 @@ public:
     /**
      * @brief Handle ProxyData message from a session
      */
+    /// @gdb{tag="P2P:ROUTE", msg="Proxy data handled (server)"}
     void HandleProxyData(P2pProxySession* sender,
                          ryu_ldn::protocol::ProxyDataHeader& header,
                          const uint8_t* data, size_t data_len);
@@ -304,31 +312,37 @@ public:
     /**
      * @brief Handle ProxyConnect message from a session
      */
+    /// @gdb{tag="P2P:ROUTE", msg="Proxy connect handled (server)"}
     void HandleProxyConnect(P2pProxySession* sender,
                             ryu_ldn::protocol::ProxyConnectRequest& request);
 
     /**
      * @brief Handle ProxyConnectReply message from a session
      */
+    /// @gdb{tag="P2P:ROUTE", msg="Proxy connect reply handled (server)"}
     void HandleProxyConnectReply(P2pProxySession* sender,
                                   ryu_ldn::protocol::ProxyConnectResponse& response);
 
     /**
      * @brief Handle ProxyDisconnect message from a session
      */
+    /// @gdb{tag="P2P:ROUTE", msg="Proxy disconnect handled (server)"}
     void HandleProxyDisconnect(P2pProxySession* sender,
                                ryu_ldn::protocol::ProxyDisconnectMessage& message);
 
     /**
      * @brief Called when a session disconnects
      */
+    /// @gdb{tag="P2P:SESSION", msg="Session disconnected event"}
     void OnSessionDisconnected(P2pProxySession* session);
 
 private:
     // =========================================================================
     // Friend declarations for thread entry points
     // =========================================================================
+    /// @gdb{tag="P2P:SERVER", msg="Accept thread started"}
     friend void AcceptThreadEntry(void* arg);
+    /// @gdb{tag="P2P:NAT", msg="Lease thread started"}
     friend void LeaseThreadEntry(void* arg);
 
     // =========================================================================
@@ -338,6 +352,7 @@ private:
     /**
      * @brief Accept loop thread function
      */
+    /// @gdb{tag="P2P:SERVER", msg="Accept loop running"}
     void AcceptLoop();
 
     /**
@@ -347,6 +362,7 @@ private:
      * @param send_func Function to call for each target session
      */
     template<typename SendFunc>
+    /// @gdb{tag="P2P:ROUTE", msg="Message routed"}
     void RouteMessage(P2pProxySession* sender,
                       ryu_ldn::protocol::ProxyInfo& info,
                       SendFunc send_func);
@@ -354,16 +370,19 @@ private:
     /**
      * @brief Notify master server of connection state change
      */
+    /// @gdb{tag="P2P:SESSION", msg="Master disconnect notification"}
     void NotifyMasterDisconnect(uint32_t virtual_ip);
 
     /**
      * @brief Lease renewal thread function
      */
+    /// @gdb{tag="P2P:NAT", msg="Lease renewal loop"}
     void LeaseRenewalLoop();
 
     /**
      * @brief Start lease renewal background thread
      */
+    /// @gdb{tag="P2P:NAT", msg="Starting lease renewal"}
     void StartLeaseRenewal();
 
     // =========================================================================
@@ -488,18 +507,21 @@ public:
     /**
      * @brief Start receive loop thread
      */
+    /// @gdb{tag="P2P:SESSION", msg="Session started"}
     void Start();
 
     /**
      * @brief Send data to the client
      * @return true if send succeeded
      */
+    /// @gdb{tag="P2P:ROUTE", msg="Session send"}
     bool Send(const void* data, size_t size);
 
     /**
      * @brief Disconnect and stop
      * @param from_master true if disconnect was initiated by master server
      */
+    /// @gdb{tag="P2P:SESSION", msg="Session disconnecting"}
     void Disconnect(bool from_master = false);
 
     /**
@@ -509,24 +531,32 @@ public:
 
 private:
     // Friend for thread entry point
+    /// @gdb{tag="P2P:SESSION", msg="Session thread started"}
     friend void SessionRecvThreadEntry(void* arg);
 
     /**
      * @brief Receive loop thread function
      */
+    /// @gdb{tag="P2P:SESSION", msg="Session receive loop"}
     void ReceiveLoop();
 
     /**
      * @brief Process received data
      */
+    /// @gdb{tag="P2P:ROUTE", msg="Session data processing"}
     void ProcessData(const uint8_t* data, size_t size);
 
     // Protocol handlers
+    /// @gdb{tag="P2P:ROUTE", msg="External proxy configured"}
     void HandleExternalProxy(const ryu_ldn::protocol::ExternalProxyConfig& config);
+    /// @gdb{tag="P2P:ROUTE", msg="Proxy data handled (session)"}
     void HandleProxyData(const ryu_ldn::protocol::ProxyDataHeader& header,
                          const uint8_t* data, size_t data_len);
+    /// @gdb{tag="P2P:ROUTE", msg="Proxy connect handled (session)"}
     void HandleProxyConnect(const ryu_ldn::protocol::ProxyConnectRequest& request);
+    /// @gdb{tag="P2P:ROUTE", msg="Proxy connect reply handled (session)"}
     void HandleProxyConnectReply(const ryu_ldn::protocol::ProxyConnectResponse& response);
+    /// @gdb{tag="P2P:ROUTE", msg="Proxy disconnect handled (session)"}
     void HandleProxyDisconnect(const ryu_ldn::protocol::ProxyDisconnectMessage& message);
 
     // =========================================================================

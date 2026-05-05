@@ -272,6 +272,7 @@ public:
     bool ConsumeReconnectRequest();
 
 private:
+    /// @gdb{tag="LDN:STATE", msg="SharedState: constructor"}
     SharedState() = default;
     SharedState(const SharedState&) = delete;
     SharedState& operator=(const SharedState&) = delete;

@@ -135,6 +135,7 @@ public:
      * @note Thread-safe
      * @note Returns nullptr if fd already has a proxy socket
      */
+    /// @gdb{tag="BSD:SOCKET", msg="CreateProxySocket: fd=%d type=%d protocol=%d", args="$x1, $x2, $x3"}
     ProxySocket* CreateProxySocket(s32 fd, ryu_ldn::bsd::SocketType type, ryu_ldn::bsd::ProtocolType protocol);
 
     /**
@@ -146,6 +147,7 @@ public:
      * @note Thread-safe
      * @note The returned pointer is valid as long as the socket is not closed
      */
+    /// @gdb{tag="BSD:SOCKET", msg="GetProxySocket: fd=%d", args="$x1"}
     ProxySocket* GetProxySocket(s32 fd);
 
     /**
@@ -169,6 +171,7 @@ public:
      * @note Thread-safe
      * @note Also releases any allocated ephemeral port
      */
+    /// @gdb{tag="BSD:SOCKET", msg="CloseProxySocket: fd=%d", args="$x1"}
     bool CloseProxySocket(s32 fd);
 
     /**
@@ -178,6 +181,7 @@ public:
      *
      * @note Thread-safe
      */
+    /// @gdb{tag="BSD:SOCKET", msg="CloseAllProxySockets"}
     void CloseAllProxySockets();
 
     /**
@@ -202,6 +206,7 @@ public:
      *
      * @note Thread-safe (delegated to EphemeralPortPool)
      */
+    /// @gdb{tag="BSD:SOCKET", msg="AllocatePort: protocol=%d", args="$x1"}
     uint16_t AllocatePort(ryu_ldn::bsd::ProtocolType protocol);
 
     /**
@@ -215,6 +220,7 @@ public:
      *
      * @note Thread-safe
      */
+    /// @gdb{tag="BSD:SOCKET", msg="ReservePort: port=%u protocol=%d", args="$x1, $x2"}
     bool ReservePort(uint16_t port, ryu_ldn::bsd::ProtocolType protocol);
 
     /**
@@ -225,6 +231,7 @@ public:
      *
      * @note Thread-safe
      */
+    /// @gdb{tag="BSD:SOCKET", msg="ReleasePort: port=%u protocol=%d", args="$x1, $x2"}
     void ReleasePort(uint16_t port, ryu_ldn::bsd::ProtocolType protocol);
 
     // =========================================================================
@@ -249,6 +256,7 @@ public:
      *
      * @note Thread-safe
      */
+    /// @gdb{tag="BSD:DATA", msg="RouteIncomingData: dest_ip=0x%x dest_port=%u", args="$x3, $x4"}
     bool RouteIncomingData(uint32_t source_ip, uint16_t source_port,
                            uint32_t dest_ip, uint16_t dest_port,
                            ryu_ldn::bsd::ProtocolType protocol,
@@ -287,6 +295,7 @@ public:
      *
      * @note Thread-safe
      */
+    /// @gdb{tag="BSD:CONFIG", msg="SetSendCallback"}
     void SetSendCallback(SendProxyDataCallback callback);
 
     /**
@@ -305,6 +314,7 @@ public:
      *
      * @note Thread-safe
      */
+    /// @gdb{tag="BSD:DATA", msg="SendProxyData: src=0x%x:%u -> dst=0x%x:%u", args="$x1, $x2, $x3, $x4"}
     bool SendProxyData(uint32_t source_ip, uint16_t source_port,
                        uint32_t dest_ip, uint16_t dest_port,
                        ryu_ldn::bsd::ProtocolType protocol,
@@ -335,6 +345,7 @@ public:
      *
      * @note Thread-safe
      */
+    /// @gdb{tag="BSD:CONFIG", msg="SetProxyConnectCallback"}
     void SetProxyConnectCallback(SendProxyConnectCallback callback);
 
     /**
@@ -351,6 +362,7 @@ public:
      *
      * @note Thread-safe
      */
+    /// @gdb{tag="BSD:DATA", msg="SendProxyConnect: src=0x%x:%u -> dst=0x%x:%u", args="$x1, $x2, $x3, $x4"}
     bool SendProxyConnect(uint32_t source_ip, uint16_t source_port,
                           uint32_t dest_ip, uint16_t dest_port,
                           ryu_ldn::bsd::ProtocolType protocol);
@@ -429,6 +441,7 @@ public:
      *
      * @note Thread-safe
      */
+    /// @gdb{tag="BSD:DATA", msg="RouteConnectResponse"}
     bool RouteConnectResponse(const ryu_ldn::protocol::ProxyConnectResponse& response);
 
     /**
@@ -442,6 +455,7 @@ public:
      *
      * @note Thread-safe
      */
+    /// @gdb{tag="BSD:DATA", msg="RouteConnectRequest"}
     bool RouteConnectRequest(const ryu_ldn::protocol::ProxyConnectRequest& request);
 
     // =========================================================================
@@ -457,6 +471,7 @@ public:
      *
      * @note Thread-safe
      */
+    /// @gdb{tag="BSD:CONFIG", msg="SetLocalIp: ip=0x%x", args="$x1"}
     void SetLocalIp(uint32_t ip);
 
     /**

@@ -307,7 +307,9 @@ public:
 
 private:
     void output_message(const char* message);
+    /// @gdb{tag="DEBUG:LOGGER", msg="Log file opened"}
     void open_file();
+    /// @gdb{tag="DEBUG:LOGGER", msg="Log file closed"}
     void close_file();
 
     bool m_enabled = false;

@@ -121,6 +121,7 @@ public:
      * Establishes a TCP connection to the P2P host server.
      * Does not perform authentication - call PerformAuth() after connecting.
      */
+    /// @gdb{tag="P2P:CLIENT", msg="Client connecting"}
     bool Connect(const char* address, uint16_t port);
 
     /**
@@ -130,16 +131,19 @@ public:
      * @param port Host port number
      * @return true if connection established
      */
+    /// @gdb{tag="P2P:CLIENT", msg="Client connecting (IP bytes)"}
     bool Connect(const uint8_t* ip_bytes, size_t ip_len, uint16_t port);
 
     /**
      * @brief Disconnect from the host
      */
+    /// @gdb{tag="P2P:CLIENT", msg="Client disconnecting"}
     void Disconnect();
 
     /**
      * @brief Check if connected to host
      */
+    /// @gdb{tag="P2P:CLIENT", msg="Connection state queried"}
     bool IsConnected() const;
 
     // =========================================================================
@@ -156,7 +160,8 @@ public:
      *
      * @note Call EnsureProxyReady() after this to wait for the response.
      */
-    bool PerformAuth(const ryu_ldn::protocol::ExternalProxyConfig& config);
+    /// @gdb{tag="P2P:CLIENT", msg="Performing authentication"}
+    bool PerformAuth(const ryu_ldn::protocol::ExternalProxyConfig"& config);
 
     /**
      * @brief Wait for proxy to be ready
@@ -166,11 +171,13 @@ public:
      * Blocks until the host sends ProxyConfig (authentication success)
      * or timeout expires.
      */
+    /// @gdb{tag="P2P:CLIENT", msg="Ensuring proxy ready"}
     bool EnsureProxyReady(int timeout_ms = FAILURE_TIMEOUT_MS);
 
     /**
      * @brief Check if proxy is ready (authenticated)
      */
+    /// @gdb{tag="P2P:CLIENT", msg="Ready state queried"}
     bool IsReady() const;
 
     // =========================================================================
@@ -202,6 +209,7 @@ public:
      * @param data_len Payload length
      * @return true if sent successfully
      */
+    /// @gdb{tag="P2P:MSG", msg="Client sending proxy data"}
     bool SendProxyData(const ryu_ldn::protocol::ProxyDataHeader& header,
                        const uint8_t* data, size_t data_len);
 
@@ -210,6 +218,7 @@ public:
      * @param request Connect request with destination info
      * @return true if sent successfully
      */
+    /// @gdb{tag="P2P:MSG", msg="Client sending proxy connect"}
     bool SendProxyConnect(const ryu_ldn::protocol::ProxyConnectRequest& request);
 
     /**
@@ -217,6 +226,7 @@ public:
      * @param response Connect response
      * @return true if sent successfully
      */
+    /// @gdb{tag="P2P:MSG", msg="Client sending connect reply"}
     bool SendProxyConnectReply(const ryu_ldn::protocol::ProxyConnectResponse& response);
 
     /**
@@ -224,6 +234,7 @@ public:
      * @param message Disconnect message
      * @return true if sent successfully
      */
+    /// @gdb{tag="P2P:MSG", msg="Client sending disconnect"}
     bool SendProxyDisconnect(const ryu_ldn::protocol::ProxyDisconnectMessage& message);
 
     /**
@@ -232,12 +243,14 @@ public:
      * @param size Packet size
      * @return true if sent successfully
      */
+    /// @gdb{tag="P2P:CLIENT", msg="Sending data"}
     bool Send(const void* data, size_t size);
 
 private:
     // =========================================================================
     // Friend declarations for thread entry point
     // =========================================================================
+    /// @gdb{tag="P2P:CLIENT", msg="Receive thread started"}
     friend void ClientRecvThreadEntry(void* arg);
 
     // =========================================================================
@@ -247,6 +260,7 @@ private:
     /**
      * @brief Receive loop thread function
      */
+    /// @gdb{tag="P2P:CLIENT", msg="Receive loop running"}
     void ReceiveLoop();
 
     /**
@@ -254,14 +268,20 @@ private:
      * @param data Buffer containing packet(s)
      * @param size Size of data in buffer
      */
+    /// @gdb{tag="P2P:CLIENT", msg="Processing received data"}
     void ProcessData(const uint8_t* data, size_t size);
 
     // Protocol handlers
+    /// @gdb{tag="P2P:MSG", msg="Client handling proxy config"}
     void HandleProxyConfig(const ryu_ldn::protocol::ProxyConfig& config);
+    /// @gdb{tag="P2P:MSG", msg="Client handling proxy data"}
     void HandleProxyData(const ryu_ldn::protocol::ProxyDataHeader& header,
                          const uint8_t* data, size_t data_len);
+    /// @gdb{tag="P2P:MSG", msg="Client handling proxy connect"}
     void HandleProxyConnect(const ryu_ldn::protocol::ProxyConnectRequest& request);
+    /// @gdb{tag="P2P:MSG", msg="Client handling connect reply"}
     void HandleProxyConnectReply(const ryu_ldn::protocol::ProxyConnectResponse& response);
+    /// @gdb{tag="P2P:MSG", msg="Client handling disconnect"}
     void HandleProxyDisconnect(const ryu_ldn::protocol::ProxyDisconnectMessage& message);
 
     // =========================================================================

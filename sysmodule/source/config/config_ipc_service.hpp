@@ -116,46 +116,69 @@ public:
     ConfigService() = default;
 
     // Version
+    /// @gdb{tag="CONFIG:IPC", msg="GetVersion"}
     ams::Result GetVersion(ams::sf::Out<std::array<char, 32>> out);
 
     // Connection status (0 = service running)
+    /// @gdb{tag="CONFIG:IPC", msg="GetConnectionStatus"}
     ams::Result GetConnectionStatus(ams::sf::Out<u32> out);
 
     // Passphrase
+    /// @gdb{tag="CONFIG:IPC", msg="GetPassphrase"}
     ams::Result GetPassphrase(ams::sf::Out<std::array<char, 64>> out);
+    /// @gdb{tag="CONFIG:IPC", msg="SetPassphrase"}
     ams::Result SetPassphrase(std::array<char, 64> passphrase);
 
     // Server address
+    /// @gdb{tag="CONFIG:IPC", msg="GetServerAddress"}
     ams::Result GetServerAddress(ams::sf::Out<ServerAddressIpc> out);
+    /// @gdb{tag="CONFIG:IPC", msg="SetServerAddress"}
     ams::Result SetServerAddress(ServerAddressIpc address);
 
     // LDN enabled
+    /// @gdb{tag="CONFIG:IPC", msg="GetLdnEnabled"}
     ams::Result GetLdnEnabled(ams::sf::Out<u32> out);
+    /// @gdb{tag="CONFIG:IPC", msg="SetLdnEnabled"}
     ams::Result SetLdnEnabled(u32 enabled);
 
     // TLS
+    /// @gdb{tag="CONFIG:IPC", msg="GetUseTls"}
     ams::Result GetUseTls(ams::sf::Out<u32> out);
+    /// @gdb{tag="CONFIG:IPC", msg="SetUseTls"}
     ams::Result SetUseTls(u32 enabled);
 
     // Debug
+    /// @gdb{tag="CONFIG:IPC", msg="GetDebugEnabled"}
     ams::Result GetDebugEnabled(ams::sf::Out<u32> out);
+    /// @gdb{tag="CONFIG:IPC", msg="SetDebugEnabled"}
     ams::Result SetDebugEnabled(u32 enabled);
+    /// @gdb{tag="CONFIG:IPC", msg="GetDebugLevel"}
     ams::Result GetDebugLevel(ams::sf::Out<u32> out);
+    /// @gdb{tag="CONFIG:IPC", msg="SetDebugLevel"}
     ams::Result SetDebugLevel(u32 level);
+    /// @gdb{tag="CONFIG:IPC", msg="GetLogToFile"}
     ams::Result GetLogToFile(ams::sf::Out<u32> out);
+    /// @gdb{tag="CONFIG:IPC", msg="SetLogToFile"}
     ams::Result SetLogToFile(u32 enabled);
 
     // Timeouts
+    /// @gdb{tag="CONFIG:IPC", msg="GetConnectTimeout"}
     ams::Result GetConnectTimeout(ams::sf::Out<u32> out);
+    /// @gdb{tag="CONFIG:IPC", msg="SetConnectTimeout"}
     ams::Result SetConnectTimeout(u32 timeout_ms);
+    /// @gdb{tag="CONFIG:IPC", msg="GetPingInterval"}
     ams::Result GetPingInterval(ams::sf::Out<u32> out);
+    /// @gdb{tag="CONFIG:IPC", msg="SetPingInterval"}
     ams::Result SetPingInterval(u32 interval_ms);
 
     // Config file operations
+    /// @gdb{tag="CONFIG:IPC", msg="SaveConfig"}
     ams::Result SaveConfig(ams::sf::Out<ConfigResult> out);
+    /// @gdb{tag="CONFIG:IPC", msg="ReloadConfig"}
     ams::Result ReloadConfig(ams::sf::Out<ConfigResult> out);
 
     // Service check
+    /// @gdb{tag="CONFIG:IPC", msg="IsServiceActive"}
     ams::Result IsServiceActive(ams::sf::Out<u32> out);
 
     // =========================================================================
@@ -163,21 +186,27 @@ public:
     // =========================================================================
 
     /// Returns 1 if a game is actively using LDN, 0 otherwise
+    /// @gdb{tag="CONFIG:IPC", msg="IsGameActive"}
     ams::Result IsGameActive(ams::sf::Out<u32> out);
 
     /// Returns current LDN CommState (0=None, 1=Initialized, etc.)
+    /// @gdb{tag="CONFIG:IPC", msg="GetLdnState"}
     ams::Result GetLdnState(ams::sf::Out<u32> out);
 
     /// Returns session information (node count, max, local id, is_host)
+    /// @gdb{tag="CONFIG:IPC", msg="GetSessionInfo"}
     ams::Result GetSessionInfo(ams::sf::Out<SessionInfoIpc> out);
 
     /// Returns last measured RTT in milliseconds
+    /// @gdb{tag="CONFIG:IPC", msg="GetLastRtt"}
     ams::Result GetLastRtt(ams::sf::Out<u32> out);
 
     /// Requests the MITM service to reconnect
+    /// @gdb{tag="CONFIG:IPC", msg="ForceReconnect"}
     ams::Result ForceReconnect();
 
     /// Returns the process ID of the active game (for debugging)
+    /// @gdb{tag="CONFIG:IPC", msg="GetActiveProcessId"}
     ams::Result GetActiveProcessId(ams::sf::Out<u64> out);
 
     // =========================================================================
@@ -185,9 +214,11 @@ public:
     // =========================================================================
 
     /// Returns 1 if P2P proxy is disabled
+    /// @gdb{tag="CONFIG:IPC", msg="GetDisableP2p"}
     ams::Result GetDisableP2p(ams::sf::Out<u32> out);
 
     /// Sets P2P proxy disabled state (like Ryujinx MultiplayerDisableP2p)
+    /// @gdb{tag="CONFIG:IPC", msg="SetDisableP2p"}
     ams::Result SetDisableP2p(u32 disabled);
 };
 

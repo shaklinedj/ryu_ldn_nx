@@ -45,7 +45,8 @@ RE_ANNOTATION = re.compile(
 )
 
 RE_NAMESPACE = re.compile(r'\bnamespace\s+([\w:]+)\s*\{')
-RE_CLASS = re.compile(r'\b(?:class|struct)\s+(\w+)\s*(?::.*?)?\s*\{')
+RE_CLASS = re.compile(r'\b(?:class|struct)\s+(?:__attribute__\s*\(\(.*?\)\)\s+)?(\w+)\s*(?:__attribute__\s*\(\(.*?\)\)\s*)?(?::.*?)?\s*\{')
+RE_ENUM_CLASS = re.compile(r'\benum\s+class\s+\w+')
 RE_DPRINTF = re.compile(
     r'dprintf\s+([\w:]+)\s*,\s*"([^"]*)"(?:\s*,\s*(.+))?'
 )
@@ -157,9 +158,9 @@ class SourceScanner:
                 pending = None
                 continue
 
-            # Track classes
+            # Track classes (skip enum class)
             cm = RE_CLASS.search(line)
-            if cm:
+            if cm and not RE_ENUM_CLASS.search(line):
                 cls_stack.append(cm.group(1))
                 pending = None
                 continue

@@ -122,6 +122,7 @@ public:
      * @note Thread-safe. Uses internal mutex.
      * @note O(n) worst case where n = EPHEMERAL_PORT_COUNT
      */
+    /// @gdb{tag="BSD:SOCKET", msg="AllocatePort: protocol=%d", args="$x1"}
     uint16_t AllocatePort(ryu_ldn::bsd::ProtocolType protocol);
 
     /**
@@ -137,6 +138,7 @@ public:
      * @note Thread-safe. Uses internal mutex.
      * @note O(1) operation
      */
+    /// @gdb{tag="BSD:SOCKET", msg="AllocateSpecificPort: port=%u protocol=%d", args="$x1, $x2"}
     bool AllocateSpecificPort(uint16_t port, ryu_ldn::bsd::ProtocolType protocol);
 
     /**
@@ -151,6 +153,7 @@ public:
      * @note Thread-safe. Uses internal mutex.
      * @note O(1) operation
      */
+    /// @gdb{tag="BSD:SOCKET", msg="ReleasePort: port=%u protocol=%d", args="$x1, $x2"}
     void ReleasePort(uint16_t port, ryu_ldn::bsd::ProtocolType protocol);
 
     /**

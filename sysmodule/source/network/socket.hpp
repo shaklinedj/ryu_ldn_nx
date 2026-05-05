@@ -205,6 +205,7 @@ private:
  * On Switch, this calls socketInitializeDefault().
  * On host, this is a no-op.
  */
+/// @gdb{tag="NETWORK:STATE", msg="socket_init"}
 SocketResult socket_init();
 
 /**
@@ -213,6 +214,7 @@ SocketResult socket_init();
  * Should be called when done with sockets.
  * On Switch, this calls socketExit().
  */
+/// @gdb{tag="NETWORK:STATE", msg="socket_exit"}
 void socket_exit();
 
 /**

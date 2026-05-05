@@ -37,11 +37,13 @@ public:
      * @param s Shared pointer to the original service
      * @param c MITM process info for the client
      */
+    /// @gdb{tag="LDN:LIFECYCLE", msg="MitMService constructor"}
     LdnMitMService(std::shared_ptr<::Service>&& s, const sm::MitmProcessInfo& c);
 
     /**
      * @brief Destructor
      */
+    /// @gdb{tag="LDN:LIFECYCLE", msg="MitMService destructor"}
     ~LdnMitMService();
 
     /**
@@ -54,6 +56,7 @@ public:
      * @param client_info Process information for the client
      * @return true Always intercept
      */
+    /// @gdb{tag="LDN:LIFECYCLE", msg="ShouldMitm check"}
     static bool ShouldMitm(const sm::MitmProcessInfo& client_info);
 
 public:

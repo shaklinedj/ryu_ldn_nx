@@ -327,6 +327,7 @@ Config get_default_config();
  * - ParseError: File has syntax errors - partial config may be loaded
  * - IoError: Read error - config unchanged
  */
+/// @gdb{tag="CONFIG:PARSE", msg="Parsing config content"}
 ConfigResult load_config(const char* path, Config& config);
 
 /**

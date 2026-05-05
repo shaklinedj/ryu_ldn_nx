@@ -19,7 +19,9 @@ namespace ams::mitm::ldn {
 
 class IClientProcessMonitor {
 public:
+    /// @gdb{tag="LDN:LIFECYCLE", msg="ClientProcessMonitor created"}
     IClientProcessMonitor();
+    /// @gdb{tag="LDN:LIFECYCLE", msg="ClientProcessMonitor destroyed"}
     ~IClientProcessMonitor();
 
     Result RegisterClient(const sf::ClientProcessId &client_process_id);

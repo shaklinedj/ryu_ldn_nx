@@ -183,6 +183,8 @@ The `bsd:s` service type is used instead of `bsd:u` because UPnP's `upnpDiscover
 
 All commits must be DCO-signed (`git commit -s`). The project enforces this via `CONTRIBUTING.md` and PR checks. Conventional commits format is preferred.
 
+**NEVER add promotional or attribution lines to commit messages** (no "Generated with Crush", "Assisted-by: AI", "Co-authored-by: AI", or similar). Only the author's own `Signed-off-by:` trail.
+
 ## IDE Noise
 
 The host IDE will show errors for `<stratosphere.hpp>`, libnx APIs, and Switch-specific headers because devkitPro only exists in the Docker container. This is expected and intentional. Do not spend time trying to resolve these "errors" — they compile fine in the container.

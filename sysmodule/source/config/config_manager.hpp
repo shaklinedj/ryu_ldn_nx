@@ -75,6 +75,7 @@ public:
     /**
      * @brief Get the singleton instance
      */
+    /// @gdb{tag="CONFIG:MGR", msg="Getting manager instance"}
     static ConfigManager& Instance();
 
     /**
@@ -86,6 +87,7 @@ public:
      * @param config_path Path to config file (default: CONFIG_PATH)
      * @return true if config loaded successfully
      */
+    /// @gdb{tag="CONFIG:MGR", msg="Initializing configuration manager"}
     bool Initialize(const char* config_path = CONFIG_PATH);
 
     /**
@@ -103,6 +105,7 @@ public:
      *
      * @return ConfigResult indicating success or failure
      */
+    /// @gdb{tag="CONFIG:MGR", msg="Saving configuration to disk"}
     ConfigResult Save();
 
     /**
@@ -112,6 +115,7 @@ public:
      *
      * @return ConfigResult indicating success or failure
      */
+    /// @gdb{tag="CONFIG:MGR", msg="Reloading configuration from disk"}
     ConfigResult Reload();
 
     // =========================================================================
@@ -128,6 +132,7 @@ public:
      *
      * @param host New hostname (max 128 chars)
      */
+    /// @gdb{tag="CONFIG:MGR", msg="Setting server host"}
     void SetServerHost(const char* host);
 
     /**
@@ -138,6 +143,7 @@ public:
     /**
      * @brief Set server port
      */
+    /// @gdb{tag="CONFIG:MGR", msg="Setting server port"}
     void SetServerPort(uint16_t port);
 
     /**
@@ -148,6 +154,7 @@ public:
     /**
      * @brief Set TLS enabled state
      */
+    /// @gdb{tag="CONFIG:MGR", msg="Setting TLS enabled state"}
     void SetUseTls(bool enabled);
 
     // =========================================================================
@@ -162,6 +169,7 @@ public:
     /**
      * @brief Set connection timeout (ms)
      */
+    /// @gdb{tag="CONFIG:MGR", msg="Setting connect timeout"}
     void SetConnectTimeout(uint32_t timeout_ms);
 
     /**
@@ -172,6 +180,7 @@ public:
     /**
      * @brief Set ping interval (ms)
      */
+    /// @gdb{tag="CONFIG:MGR", msg="Setting ping interval"}
     void SetPingInterval(uint32_t interval_ms);
 
     /**
@@ -182,6 +191,7 @@ public:
     /**
      * @brief Set reconnect delay (ms)
      */
+    /// @gdb{tag="CONFIG:MGR", msg="Setting reconnect delay"}
     void SetReconnectDelay(uint32_t delay_ms);
 
     /**
@@ -192,6 +202,7 @@ public:
     /**
      * @brief Set max reconnect attempts (0 = infinite)
      */
+    /// @gdb{tag="CONFIG:MGR", msg="Setting max reconnect attempts"}
     void SetMaxReconnectAttempts(uint32_t attempts);
 
     // =========================================================================
@@ -206,6 +217,7 @@ public:
     /**
      * @brief Set LDN enabled state
      */
+    /// @gdb{tag="CONFIG:MGR", msg="Setting LDN enabled"}
     void SetLdnEnabled(bool enabled);
 
     /**
@@ -222,6 +234,7 @@ public:
      * @param passphrase New passphrase
      * @return true if set successfully, false if invalid format
      */
+    /// @gdb{tag="CONFIG:MGR", msg="Setting passphrase"}
     bool SetPassphrase(const char* passphrase);
 
     /**
@@ -234,6 +247,7 @@ public:
      *
      * @param name Interface name (empty = auto-detect)
      */
+    /// @gdb{tag="CONFIG:MGR", msg="Setting interface name"}
     void SetInterfaceName(const char* name);
 
     // =========================================================================
@@ -248,6 +262,7 @@ public:
     /**
      * @brief Set debug enabled state
      */
+    /// @gdb{tag="CONFIG:MGR", msg="Setting debug enabled"}
     void SetDebugEnabled(bool enabled);
 
     /**
@@ -258,6 +273,7 @@ public:
     /**
      * @brief Set debug log level (0-3)
      */
+    /// @gdb{tag="CONFIG:MGR", msg="Setting debug level"}
     void SetDebugLevel(uint32_t level);
 
     /**
@@ -268,6 +284,7 @@ public:
     /**
      * @brief Set log to file state
      */
+    /// @gdb{tag="CONFIG:MGR", msg="Setting log to file"}
     void SetLogToFile(bool enabled);
 
     // =========================================================================
@@ -279,6 +296,7 @@ public:
      *
      * @param callback Function to call when config changes (nullptr to clear)
      */
+    /// @gdb{tag="CONFIG:MGR", msg="Setting change callback"}
     void SetChangeCallback(ConfigChangeCallback callback);
 
     /**
@@ -294,6 +312,7 @@ private:
     ConfigManager(const ConfigManager&) = delete;
     ConfigManager& operator=(const ConfigManager&) = delete;
 
+    /// @gdb{tag="CONFIG:MGR", msg="Config change notified"}
     void NotifyChange(const char* section);
 
     Config m_config{};

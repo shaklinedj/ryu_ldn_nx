@@ -138,6 +138,7 @@ public:
      * @param type Socket type (Stream for TCP, Dgram for UDP)
      * @param protocol Protocol type (Tcp or Udp)
      */
+    /// @gdb{tag="BSD:ALIGN", msg="ProxySocket constructed: type=%d protocol=%d", args="$x0, $x1"}
     ProxySocket(ryu_ldn::bsd::SocketType type, ryu_ldn::bsd::ProtocolType protocol);
 
     /**
@@ -145,6 +146,7 @@ public:
      *
      * Cleans up resources. Does NOT send ProxyDisconnect - call Close() first.
      */
+    /// @gdb{tag="BSD:ALIGN", msg="ProxySocket destroyed"}
     ~ProxySocket();
 
     /**
@@ -208,6 +210,7 @@ public:
      *
      * @note Does not validate that the address is actually ours - caller must check
      */
+    /// @gdb{tag="BSD:ALIGN", msg="ProxySocket::Bind"}
     Result Bind(const ryu_ldn::bsd::SockAddrIn& addr);
 
     /**
@@ -221,6 +224,7 @@ public:
      *
      * @note For TCP, this should trigger sending ProxyConnect to the server
      */
+    /// @gdb{tag="BSD:ALIGN", msg="ProxySocket::Connect"}
     Result Connect(const ryu_ldn::bsd::SockAddrIn& addr);
 
     /**
@@ -265,6 +269,7 @@ public:
      * @param flags Send flags (currently ignored)
      * @return Bytes sent or negative errno on error
      */
+    /// @gdb{tag="BSD:DATA", msg="ProxySocket::Send"}
     s32 Send(const void* data, size_t len, s32 flags);
 
     /**
@@ -278,6 +283,7 @@ public:
      * @param dest Destination address
      * @return Bytes sent or negative errno on error
      */
+    /// @gdb{tag="BSD:ALIGN", msg="ProxySocket::SendTo"}
     s32 SendTo(const void* data, size_t len, s32 flags, const ryu_ldn::bsd::SockAddrIn& dest);
 
     /**
@@ -290,6 +296,7 @@ public:
      * @param flags Receive flags (currently supports MSG_PEEK, MSG_DONTWAIT)
      * @return Bytes received, 0 if connection closed, or negative errno on error
      */
+    /// @gdb{tag="BSD:DATA", msg="ProxySocket::Recv"}
     s32 Recv(void* buffer, size_t len, s32 flags);
 
     /**
@@ -303,6 +310,7 @@ public:
      * @param from Output: source address (can be nullptr)
      * @return Bytes received, 0 if connection closed, or negative errno on error
      */
+    /// @gdb{tag="BSD:DATA", msg="ProxySocket::RecvFrom"}
     s32 RecvFrom(void* buffer, size_t len, s32 flags, ryu_ldn::bsd::SockAddrIn* from);
 
     /**
@@ -317,6 +325,7 @@ public:
      *
      * @note Thread-safe. Signals the receive event.
      */
+    /// @gdb{tag="BSD:DATA", msg="ProxySocket::IncomingData"}
     void IncomingData(const void* data, size_t len, const ryu_ldn::bsd::SockAddrIn& from);
 
     // =========================================================================
@@ -335,6 +344,7 @@ public:
      * @param optlen Option value length
      * @return Success or error
      */
+    /// @gdb{tag="BSD:CONFIG", msg="ProxySocket::SetSockOpt"}
     Result SetSockOpt(s32 level, s32 optname, const void* optval, size_t optlen);
 
     /**
@@ -346,6 +356,7 @@ public:
      * @param optlen Input/Output: option value length
      * @return Success or error
      */
+    /// @gdb{tag="BSD:CONFIG", msg="ProxySocket::GetSockOpt"}
     Result GetSockOpt(s32 level, s32 optname, void* optval, size_t* optlen) const;
 
     // =========================================================================
@@ -358,6 +369,7 @@ public:
      * @param backlog Maximum pending connections (currently ignored)
      * @return Success or error if not TCP or not bound
      */
+    /// @gdb{tag="BSD:CONNECT", msg="ProxySocket::Listen"}
     Result Listen(s32 backlog);
 
     /**
@@ -370,6 +382,7 @@ public:
      *
      * @note The returned socket is owned by the caller
      */
+    /// @gdb{tag="BSD:CONNECT", msg="ProxySocket::Accept"}
     std::unique_ptr<ProxySocket> Accept(ryu_ldn::bsd::SockAddrIn* out_addr);
 
     /**
@@ -380,6 +393,7 @@ public:
      *
      * @param request The connection request info
      */
+    /// @gdb{tag="BSD:DATA", msg="ProxySocket::IncomingConnection"}
     void IncomingConnection(const ryu_ldn::protocol::ProxyConnectRequest& request);
 
     /**
@@ -389,6 +403,7 @@ public:
      *
      * @param response The connect response
      */
+    /// @gdb{tag="BSD:DATA", msg="ProxySocket::HandleConnectResponse"}
     void HandleConnectResponse(const ryu_ldn::protocol::ProxyConnectResponse& response);
 
     /**
@@ -425,6 +440,7 @@ public:
      * @param how How to shutdown (read, write, or both)
      * @return Success or error
      */
+    /// @gdb{tag="BSD:CONNECT", msg="ProxySocket::Shutdown"}
     Result Shutdown(ryu_ldn::bsd::ShutdownHow how);
 
     /**
@@ -435,6 +451,7 @@ public:
      *
      * @return Success or error
      */
+    /// @gdb{tag="BSD:SOCKET", msg="ProxySocket::Close"}
     Result Close();
 
     // =========================================================================

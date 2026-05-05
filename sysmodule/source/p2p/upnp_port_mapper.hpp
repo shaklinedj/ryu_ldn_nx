@@ -122,6 +122,7 @@ public:
      * @note Thread-safe
      * @note Must be called before any port mapping operations
      */
+    /// @gdb{tag="P2P:NAT", msg="UPnP discovery initiated"}
     bool Discover();
 
     /**
@@ -129,6 +130,7 @@ public:
      *
      * @return true if Discover() succeeded and IGD is available
      */
+    /// @gdb{tag="P2P:NAT", msg="Checking UPnP availability"}
     bool IsAvailable() const;
 
     // =========================================================================
@@ -149,6 +151,7 @@ public:
      * @note Thread-safe
      * @note Requires Discover() to have succeeded
      */
+    /// @gdb{tag="P2P:NAT", msg="Adding port mapping"}
     bool AddPortMapping(uint16_t internal_port, uint16_t external_port,
                         const char* description, int lease_duration = PORT_LEASE_DURATION);
 
@@ -162,6 +165,7 @@ public:
      *
      * @note Thread-safe
      */
+    /// @gdb{tag="P2P:NAT", msg="Deleting port mapping"}
     bool DeletePortMapping(uint16_t external_port);
 
     /**
@@ -175,6 +179,7 @@ public:
      * @param description Description (must match original)
      * @return true if lease was refreshed, false on error
      */
+    /// @gdb{tag="P2P:NAT", msg="Refreshing port mapping"}
     bool RefreshPortMapping(uint16_t internal_port, uint16_t external_port,
                             const char* description);
 
@@ -191,6 +196,7 @@ public:
      *
      * @note Thread-safe
      */
+    /// @gdb{tag="P2P:NAT", msg="Getting external IP"}
     bool GetExternalIPAddress(char* ip_out, size_t ip_len);
 
     /**
@@ -200,6 +206,7 @@ public:
      * @param ip_len Size of buffer (should be at least 16 bytes)
      * @return true if IP was retrieved, false on error
      */
+    /// @gdb{tag="P2P:NAT", msg="Getting local IP"}
     bool GetLocalIPAddress(char* ip_out, size_t ip_len);
 
     /**
@@ -221,6 +228,7 @@ public:
      *
      * @note Thread-safe
      */
+    /// @gdb{tag="P2P:NAT", msg="UPnP cleanup"}
     void Cleanup();
 
 private:

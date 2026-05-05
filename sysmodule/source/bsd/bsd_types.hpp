@@ -58,6 +58,7 @@ constexpr uint32_t LDN_NETWORK_MASK = 0xFFFF0000;
  * @param ip IPv4 address in host byte order
  * @return true if the address is in 10.114.0.0/16
  */
+/// @gdb{tag="BSD:ALIGN", msg="IsLdnAddress(free): ip=0x%x", args="$x0"}
 inline bool IsLdnAddress(uint32_t ip) {
     return (ip & LDN_NETWORK_MASK) == LDN_NETWORK_BASE;
 }
@@ -148,6 +149,7 @@ struct __attribute__((packed)) SockAddrIn {
     /**
      * @brief Check if this address is in the LDN network
      */
+    /// @gdb{tag="BSD:ALIGN", msg="SockAddrIn::IsLdnAddress: this=%p", args="$x0"}
     bool IsLdnAddress() const {
         // Convert from network to host byte order for comparison
         uint32_t host_addr = __builtin_bswap32(sin_addr);
@@ -157,6 +159,7 @@ struct __attribute__((packed)) SockAddrIn {
     /**
      * @brief Get port in host byte order
      */
+    /// @gdb{tag="BSD:ALIGN", msg="SockAddrIn::GetPort"}
     uint16_t GetPort() const {
         return __builtin_bswap16(sin_port);
     }
@@ -164,6 +167,7 @@ struct __attribute__((packed)) SockAddrIn {
     /**
      * @brief Get address in host byte order
      */
+    /// @gdb{tag="BSD:ALIGN", msg="SockAddrIn::GetAddr"}
     uint32_t GetAddr() const {
         return __builtin_bswap32(sin_addr);
     }
