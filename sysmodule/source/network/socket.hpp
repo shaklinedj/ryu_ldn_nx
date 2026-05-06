@@ -67,13 +67,13 @@ public:
     /**
      * @brief Default constructor - creates invalid socket
      */
-    /// @gdb{tag="NETWORK:STATE", msg="Socket created"}
+    /// @gdb{tag="NETWORK:STATE_MACHINE", msg="Socket created"}
     Socket();
 
     /**
      * @brief Destructor - closes socket if open
      */
-    /// @gdb{tag="NETWORK:STATE", msg="Socket destroyed"}
+    /// @gdb{tag="NETWORK:STATE_MACHINE", msg="Socket destroyed"}
     ~Socket();
 
     // Non-copyable
@@ -91,7 +91,7 @@ public:
      * @param timeout_ms Connection timeout in milliseconds (0 = blocking)
      * @return SocketResult::Success or error
      */
-    /// @gdb{tag="NETWORK:STATE", msg="Socket connect"}
+    /// @gdb{tag="NETWORK:STATE_MACHINE", msg="Socket connect"}
     SocketResult connect(const char* host, uint16_t port, uint32_t timeout_ms = 0);
 
     /**
@@ -124,14 +124,14 @@ public:
     /**
      * @brief Close the socket
      */
-    /// @gdb{tag="NETWORK:STATE", msg="Socket closed"}
+    /// @gdb{tag="NETWORK:STATE_MACHINE", msg="Socket closed"}
     void close();
 
     /**
      * @brief Check if socket is connected
      * @return true if connected
      */
-    /// @gdb{tag="NETWORK:STATE", msg="Socket is_connected"}
+    /// @gdb{tag="NETWORK:STATE_MACHINE", msg="Socket is_connected"}
     bool is_connected() const;
 
     /**
@@ -205,7 +205,7 @@ private:
  * On Switch, this calls socketInitializeDefault().
  * On host, this is a no-op.
  */
-/// @gdb{tag="NETWORK:STATE", msg="socket_init"}
+/// @gdb{tag="NETWORK:STATE_MACHINE", msg="socket_init"}
 SocketResult socket_init();
 
 /**
@@ -214,7 +214,7 @@ SocketResult socket_init();
  * Should be called when done with sockets.
  * On Switch, this calls socketExit().
  */
-/// @gdb{tag="NETWORK:STATE", msg="socket_exit"}
+/// @gdb{tag="NETWORK:STATE_MACHINE", msg="socket_exit"}
 void socket_exit();
 
 /**

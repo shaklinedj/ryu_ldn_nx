@@ -45,6 +45,7 @@ namespace ryu_ldn::config {
  * @param passphrase Passphrase to validate
  * @return true if valid or empty, false otherwise
  */
+/// @gdb{tag="CONFIG:MGR", msg="Validating passphrase"}
 bool IsValidPassphrase(const char* passphrase);
 
 /**
@@ -56,6 +57,7 @@ bool IsValidPassphrase(const char* passphrase);
  * @param out Output buffer (at least 17 bytes for null terminator)
  * @param out_size Size of output buffer
  */
+/// @gdb{tag="CONFIG:MGR", msg="Generating random passphrase"}
 void GenerateRandomPassphrase(char* out, size_t out_size);
 
 /**

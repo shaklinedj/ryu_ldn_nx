@@ -177,7 +177,7 @@ public:
      *
      * Creates handler in unconfigured state with no connections.
      */
-    /// @gdb{tag="LDN:PROXY", msg="Handler created"}
+    /// @gdb{tag="LDN:PROXY_HANDLER", msg="Handler created"}
     LdnProxyHandler();
 
     /**
@@ -198,7 +198,7 @@ public:
      *
      * @param callback Function to call when config received (nullptr to disable)
      */
-    /// @gdb{tag="LDN:PROXY", msg="Config callback registered"}
+    /// @gdb{tag="LDN:PROXY_HANDLER", msg="Config callback registered"}
     void set_config_callback(ProxyConfigCallback callback);
 
     /**
@@ -206,7 +206,7 @@ public:
      *
      * @param callback Function to call for connect requests
      */
-    /// @gdb{tag="LDN:PROXY", msg="Connect callback registered"}
+    /// @gdb{tag="LDN:PROXY_HANDLER", msg="Connect callback registered"}
     void set_connect_callback(ProxyConnectCallback callback);
 
     /**
@@ -214,7 +214,7 @@ public:
      *
      * @param callback Function to call for connect replies
      */
-    /// @gdb{tag="LDN:PROXY", msg="Connect reply callback registered"}
+    /// @gdb{tag="LDN:PROXY_HANDLER", msg="Connect reply callback registered"}
     void set_connect_reply_callback(ProxyConnectReplyCallback callback);
 
     /**
@@ -222,7 +222,7 @@ public:
      *
      * @param callback Function to call when data arrives
      */
-    /// @gdb{tag="LDN:PROXY", msg="Data callback registered"}
+    /// @gdb{tag="LDN:PROXY_HANDLER", msg="Data callback registered"}
     void set_data_callback(ProxyDataCallback callback);
 
     /**
@@ -230,7 +230,7 @@ public:
      *
      * @param callback Function to call on disconnect
      */
-    /// @gdb{tag="LDN:PROXY", msg="Disconnect callback registered"}
+    /// @gdb{tag="LDN:PROXY_HANDLER", msg="Disconnect callback registered"}
     void set_disconnect_callback(ProxyDisconnectCallback callback);
 
     // ========================================================================
@@ -246,7 +246,7 @@ public:
      * @param header Packet header
      * @param config Proxy configuration
      */
-    /// @gdb{tag="LDN:PROXY", msg="Handling proxy config"}
+    /// @gdb{tag="LDN:PROXY_HANDLER", msg="Handling proxy config"}
     void handle_proxy_config(const protocol::LdnHeader& header,
                               const protocol::ProxyConfig& config);
 
@@ -259,7 +259,7 @@ public:
      * @param header Packet header
      * @param req Connect request
      */
-    /// @gdb{tag="LDN:PROXY", msg="Handling proxy connect"}
+    /// @gdb{tag="LDN:PROXY_HANDLER", msg="Handling proxy connect"}
     void handle_proxy_connect(const protocol::LdnHeader& header,
                                const protocol::ProxyConnectRequest& req);
 
@@ -271,7 +271,7 @@ public:
      * @param header Packet header
      * @param resp Connect response
      */
-    /// @gdb{tag="LDN:PROXY", msg="Handling proxy connect reply"}
+    /// @gdb{tag="LDN:PROXY_HANDLER", msg="Handling proxy connect reply"}
     void handle_proxy_connect_reply(const protocol::LdnHeader& header,
                                      const protocol::ProxyConnectResponse& resp);
 
@@ -285,7 +285,7 @@ public:
      * @param payload Pointer to payload data
      * @param payload_length Length of payload in bytes
      */
-    /// @gdb{tag="LDN:PROXY", msg="Handling proxy data"}
+    /// @gdb{tag="LDN:PROXY_HANDLER", msg="Handling proxy data"}
     void handle_proxy_data(const protocol::LdnHeader& header,
                             const protocol::ProxyDataHeader& data_header,
                             const uint8_t* payload, size_t payload_length);
@@ -299,7 +299,7 @@ public:
      * @param header Packet header
      * @param msg Disconnect message
      */
-    /// @gdb{tag="LDN:PROXY", msg="Handling proxy disconnect"}
+    /// @gdb{tag="LDN:PROXY_HANDLER", msg="Handling proxy disconnect"}
     void handle_proxy_disconnect(const protocol::LdnHeader& header,
                                   const protocol::ProxyDisconnectMessage& msg);
 
@@ -359,7 +359,7 @@ public:
      * Clears configuration and all connections.
      * Does not clear callbacks.
      */
-    /// @gdb{tag="LDN:PROXY", msg="Reset handler"}
+    /// @gdb{tag="LDN:PROXY_HANDLER", msg="Reset handler"}
     void reset();
 
 private:

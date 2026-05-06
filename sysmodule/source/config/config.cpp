@@ -168,6 +168,7 @@ void process_debug_key(const char* key, const char* value, DebugConfig& config) 
 /**
  * @brief Parse file content line by line (for ams::fs buffer-based reading)
  */
+/// @gdb{tag="CONFIG:PARSE", msg="Parsing config content"}
 void parse_config_content(const char* content, size_t size, Config& config) {
     char line[512];
     Section current_section = Section::None;

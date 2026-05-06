@@ -106,12 +106,12 @@ class GdbAnnotation:
 # ---------------------------------------------------------------------------
 
 COMPONENT_ORDER = {
-    "ldn": ["LIFECYCLE", "CONFIG", "OPS", "PROXY", "SESSION", "DISPATCHER", "STATE", "ASYNC"],
+    "ldn": ["LIFECYCLE", "CONFIG", "OPS", "PROXY_HANDLER", "SESSION_HANDLER", "DISPATCHER", "STATE", "ASYNC"],
     "config": ["PARSE", "MGR", "IPC"],
     "p2p": ["SERVER", "SESSION", "ROUTE", "CLIENT", "MSG", "NAT"],
     "bsd": ["LIFECYCLE", "SOCKET", "CONNECT", "DATA", "CONFIG", "ALIGN"],
     "debug": ["LOGGER", "LOG"],
-    "network": ["LIFECYCLE", "CONNECT", "TCP", "PACKET", "STATE", "CB"],
+    "network": ["LIFECYCLE", "CONNECTION", "TCP", "PACKET", "STATE_MACHINE", "STATE_CALLBACKS"],
 }
 
 TAG_TO_FILE = {}
@@ -140,32 +140,67 @@ class SourceScanner:
 
         ns_stack: list[str] = []
         cls_stack: list[str] = []
+        # Track brace depth per scope entry so we can pop when the closing '}' is seen.
+        # Each entry is (type, depth_at_entry), type is 'ns' or 'cls'.
+        scope_stack: list[tuple[str, int]] = []
+        depth = 0
         pending: Optional[re.Match] = None
 
         for i, raw in enumerate(lines):
             line = raw.strip()
+
+            # --- Preprocessor lines: skip entirely ---
+            if line.startswith("#"):
+                continue
+
+            # --- Check for @gdb annotation ---
             m = RE_ANNOTATION.search(line)
             if m:
                 pending = m
                 continue
 
-            # Track namespaces
-            nm = RE_NAMESPACE.search(line)
-            if nm:
-                for part in nm.group(1).split("::"):
-                    if part:
-                        ns_stack.append(part)
-                pending = None
-                continue
+            # --- Detect 'friend' declarations before class/namespace tracking ---
+            is_friend = bool(re.search(r'\bfriend\b', line))
 
-            # Track classes (skip enum class)
-            cm = RE_CLASS.search(line)
-            if cm and not RE_ENUM_CLASS.search(line):
-                cls_stack.append(cm.group(1))
-                pending = None
-                continue
+            # --- Track opening braces ---
+            # We count ALL '{' and '}' on every line to maintain depth,
+            # but only push/pop scope for namespace and class declarations.
+            open_count = line.count("{")
+            close_count = line.count("}")
 
-            if pending:
+            # Before processing open braces, check for namespace/class on this line
+            if open_count > 0:
+                nm = RE_NAMESPACE.search(line)
+                if nm:
+                    # C++ namespace ams::os opens ONE scope, not two.
+                    # Treat the full qualified name as a single namespace entry.
+                    full_ns = nm.group(1)
+                    ns_stack.append(full_ns)
+                    scope_stack.append(("ns", depth))
+                    depth += 1
+                    open_count -= 1  # consumed one '{' for the namespace
+
+                cm = RE_CLASS.search(line)
+                if cm and not RE_ENUM_CLASS.search(line) and not is_friend:
+                    cls_stack.append(cm.group(1))
+                    scope_stack.append(("cls", depth))
+                    depth += 1
+                    open_count -= 1  # consumed one '{' for the class
+
+                # Any remaining '{' on this line are anonymous/other scopes
+                depth += open_count
+
+            # Process closing braces — pop scopes whose depth matches
+            for _ in range(close_count):
+                depth -= 1
+                while scope_stack and scope_stack[-1][1] >= depth:
+                    stype, _ = scope_stack.pop()
+                    if stype == "ns" and ns_stack:
+                        ns_stack.pop()
+                    elif stype == "cls" and cls_stack:
+                        cls_stack.pop()
+
+            if pending and not is_friend:
                 # Try to extract function name
                 # Destructor
                 dtor = re.search(r'~(\w+)\s*\(', line)
@@ -184,11 +219,20 @@ class SourceScanner:
 
                 # Regular function
                 func = re.search(r'\b(\w+)\s*\(', line)
-                if func and func.group(1) not in ("if", "for", "while", "switch", "catch", "return", "namespace", "class", "struct"):
+                if func and func.group(1) not in ("if", "for", "while", "switch", "catch", "return", "namespace", "class", "struct", "friend"):
                     self._add(pending, func.group(1), ns_stack, cls_stack, filepath, i + 1)
                     pending = None
                     continue
 
+                pending = None
+
+            elif pending and is_friend:
+                # Friend function: treat as free function (no class scope)
+                func = re.search(r'\b(\w+)\s*\(', line)
+                if func and func.group(1) not in ("if", "for", "while", "switch", "catch", "return", "namespace", "class", "struct"):
+                    self._add(pending, func.group(1), ns_stack, [], filepath, i + 1)
+                    pending = None
+                    continue
                 pending = None
 
     def _add(self, match, func_name, ns_stack, cls_stack, filepath, line_num):

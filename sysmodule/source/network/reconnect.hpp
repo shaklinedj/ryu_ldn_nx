@@ -179,7 +179,7 @@ public:
      * - 2x multiplier
      * - 10% jitter
      */
-    /// @gdb{tag="NETWORK:CONNECT", msg="ReconnectManager created"}
+    /// @gdb{tag="NETWORK:CONNECTION", msg="ReconnectManager created"}
     ReconnectManager();
 
     /**
@@ -198,7 +198,7 @@ public:
      *
      * @return Delay in milliseconds before next retry
      */
-    /// @gdb{tag="NETWORK:CONNECT", msg="Getting next backoff delay"}
+    /// @gdb{tag="NETWORK:CONNECTION", msg="Getting next backoff delay"}
     uint32_t get_next_delay_ms() const;
 
     /**
@@ -221,7 +221,7 @@ public:
      * @return RetryResult::ShouldRetry if OK to retry
      * @return RetryResult::MaxRetriesReached if limit exceeded
      */
-    /// @gdb{tag="NETWORK:CONNECT", msg="Should we retry?"}
+    /// @gdb{tag="NETWORK:CONNECTION", msg="Should we retry?"}
     RetryResult should_retry() const;
 
     /**
@@ -230,7 +230,7 @@ public:
      * Increments the retry counter, which increases the backoff
      * delay for the next attempt.
      */
-    /// @gdb{tag="NETWORK:CONNECT", msg="Recording connection failure"}
+    /// @gdb{tag="NETWORK:CONNECTION", msg="Recording connection failure"}
     void record_failure();
 
     /**
@@ -239,7 +239,7 @@ public:
      * Resets the retry counter to zero, so the next failure
      * will start with the initial delay again.
      */
-    /// @gdb{tag="NETWORK:CONNECT", msg="Resetting reconnect state"}
+    /// @gdb{tag="NETWORK:CONNECTION", msg="Resetting reconnect state"}
     void reset();
 
     /**
@@ -261,7 +261,7 @@ public:
      *
      * @return Reference to current configuration
      */
-    /// @gdb{tag="NETWORK:STATE", msg="ReconnectManager get_config"}
+    /// @gdb{tag="NETWORK:STATE_MACHINE", msg="ReconnectManager get_config"}
     const ReconnectConfig& get_config() const { return m_config; }
 
     /**
@@ -272,7 +272,7 @@ public:
      *
      * @param config New configuration to use
      */
-    /// @gdb{tag="NETWORK:STATE", msg="ReconnectManager set_config"}
+    /// @gdb{tag="NETWORK:STATE_MACHINE", msg="ReconnectManager set_config"}
     void set_config(const ReconnectConfig& config);
 
 private:

@@ -96,7 +96,7 @@ public:
     /**
      * @brief Constructor - starts in Disconnected state
      */
-    /// @gdb{tag="NETWORK:STATE", msg="State transition"}
+    /// @gdb{tag="NETWORK:STATE_MACHINE", msg="State transition"}
     ConnectionStateMachine();
 
     /**
@@ -109,7 +109,7 @@ public:
      * @brief Check if currently connected (Connected, Handshaking, or Ready)
      * @return true if in a connected state
      */
-    /// @gdb{tag="NETWORK:STATE", msg="is_connected"}
+    /// @gdb{tag="NETWORK:STATE_MACHINE", msg="is_connected"}
     bool is_connected() const;
 
     /**
@@ -122,7 +122,7 @@ public:
      * @brief Check if in a transitional state (Connecting, Handshaking, etc.)
      * @return true if transitioning
      */
-    /// @gdb{tag="NETWORK:STATE", msg="is_transitioning"}
+    /// @gdb{tag="NETWORK:STATE_MACHINE", msg="is_transitioning"}
     bool is_transitioning() const;
 
     /**
@@ -130,14 +130,14 @@ public:
      * @param event Event to process
      * @return Result of the transition attempt
      */
-    /// @gdb{tag="NETWORK:STATE", msg="Processing event"}
+    /// @gdb{tag="NETWORK:STATE_MACHINE", msg="Processing event"}
     TransitionResult process_event(ConnectionEvent event);
 
     /**
      * @brief Set callback for state changes
      * @param callback Function to call on state change (nullptr to disable)
      */
-    /// @gdb{tag="NETWORK:STATE", msg="set_state_change_callback: cb=%p", args="$x0"}
+    /// @gdb{tag="NETWORK:STATE_MACHINE", msg="set_state_change_callback: cb=%p", args="$x0"}
     void set_state_change_callback(StateChangeCallback callback);
 
     /**
@@ -155,7 +155,7 @@ public:
      * @brief Force state (use with caution, bypasses transition validation)
      * @param state State to force
      */
-    /// @gdb{tag="NETWORK:STATE", msg="force_state: new=%d", args="$x1"}
+    /// @gdb{tag="NETWORK:STATE_MACHINE", msg="force_state: new=%d", args="$x1"}
     void force_state(ConnectionState state);
 
     /**
@@ -184,6 +184,7 @@ private:
      * @param to Output: target state if valid
      * @return true if transition is valid
      */
+    /// @gdb{tag="NETWORK:STATE_MACHINE", msg="is_valid_transition"}
     bool is_valid_transition(ConnectionState from, ConnectionEvent event,
                              ConnectionState& to) const;
 
@@ -192,7 +193,7 @@ private:
      * @param new_state Target state
      * @param event Event that caused transition
      */
-    /// @gdb{tag="NETWORK:STATE", msg="transition_to: old=%d new=%d event=%d", args="$x1, $x2, $x3"}
+    /// @gdb{tag="NETWORK:STATE_MACHINE", msg="transition_to: old=%d new=%d event=%d", args="$x1, $x2, $x3"}
     void transition_to(ConnectionState new_state, ConnectionEvent event);
 };
 

@@ -1,0 +1,18 @@
+# =========================================
+# DEBUG:LOG
+# =========================================
+
+echo [DEBUG] Loading log breakpoints...\n
+# Namespace: ryu_ldn::debug
+dprintf ryu_ldn::debug::format_log_message, "[DEBUG:LOG] format_log_message\n"
+dprintf ryu_ldn::debug::format_log_message_v, "[DEBUG:LOG] format_log_message_v\n"
+dprintf ryu_ldn::debug::LogBuffer::init, "[DEBUG:LOG] LogBuffer init\n"
+dprintf ryu_ldn::debug::LogBuffer::add, "[DEBUG:LOG] LogBuffer add\n"
+dprintf ryu_ldn::debug::LogBuffer::get_all, "[DEBUG:LOG] LogBuffer get_all\n"
+dprintf ryu_ldn::debug::LogBuffer::clear, "[DEBUG:LOG] LogBuffer clear\n"
+dprintf ryu_ldn::debug::Logger::should_log, "[DEBUG:LOG] should_log\n"
+dprintf ryu_ldn::debug::Logger::log, "[DEBUG:LOG] log\n"
+dprintf ryu_ldn::debug::Logger::log_v, "[DEBUG:LOG] log_v\n"
+dprintf ryu_ldn::debug::Logger::flush, "[DEBUG:LOG] flush\n"
+
+echo [DEBUG] log: 10 dprintf points\n

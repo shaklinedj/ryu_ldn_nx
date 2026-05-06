@@ -1,37 +1,22 @@
-# ==========================================
-# Network Component - Connection Management
-# ==========================================
-# Connect, disconnect, reconnect, state queries
-# Updated for async architecture (no duplicate symbols from 05)
-# Using dprintf for automatic continue
+# =========================================
+# NETWORK:CONNECTION
+# =========================================
 
-echo [NETWORK] Loading connection management breakpoints...\n
+echo [NETWORK] Loading connection breakpoints...\n
+# Namespace: ryu_ldn::network
+dprintf ryu_ldn::network::RyuLdnClient::get_config, "[NETWORK:CONNECTION] get_config\n"
+dprintf ryu_ldn::network::RyuLdnClient::connect, "[NETWORK:CONNECTION] Connect initiated\n"
+dprintf ryu_ldn::network::RyuLdnClient::get_state, "[NETWORK:CONNECTION] get_state\n"
+dprintf ryu_ldn::network::RyuLdnClient::is_connected, "[NETWORK:CONNECTION] is_connected queried\n"
+dprintf ryu_ldn::network::RyuLdnClient::is_ready, "[NETWORK:CONNECTION] is_ready queried\n"
+dprintf ryu_ldn::network::RyuLdnClient::is_transitioning, "[NETWORK:CONNECTION] is_transitioning queried\n"
+dprintf ryu_ldn::network::RyuLdnClient::get_retry_count, "[NETWORK:CONNECTION] get_retry_count\n"
+dprintf ryu_ldn::network::RyuLdnClient::get_last_error_code, "[NETWORK:CONNECTION] get_last_error_code\n"
+dprintf ryu_ldn::network::RyuLdnClient::get_last_rtt_ms, "[NETWORK:CONNECTION] get_last_rtt_ms\n"
+dprintf ryu_ldn::network::ReconnectManager::ReconnectManager, "[NETWORK:CONNECTION] ReconnectManager created\n"
+dprintf ryu_ldn::network::ReconnectManager::get_next_delay_ms, "[NETWORK:CONNECTION] Getting next backoff delay\n"
+dprintf ryu_ldn::network::ReconnectManager::should_retry, "[NETWORK:CONNECTION] Should we retry?\n"
+dprintf ryu_ldn::network::ReconnectManager::record_failure, "[NETWORK:CONNECTION] Recording connection failure\n"
+dprintf ryu_ldn::network::ReconnectManager::reset, "[NETWORK:CONNECTION] Resetting reconnect state\n"
 
-# Connection operations (unique — state callback invocations are in 05)
-dprintf ryu_ldn::network::RyuLdnClient::connect, "[NETWORK:CONNECT] Connect initiated\n"
-dprintf ryu_ldn::network::RyuLdnClient::disconnect, "[NETWORK:CONNECT] Disconnect initiated\n"
-dprintf ryu_ldn::network::RyuLdnClient::try_connect, "[NETWORK:CONNECT] Attempting TCP connection...\n"
-
-# State queries
-dprintf ryu_ldn::network::RyuLdnClient::is_connected, "[NETWORK:CONNECT] is_connected queried\n"
-dprintf ryu_ldn::network::RyuLdnClient::is_ready, "[NETWORK:CONNECT] is_ready queried\n"
-dprintf ryu_ldn::network::RyuLdnClient::is_transitioning, "[NETWORK:CONNECT] is_transitioning queried\n"
-dprintf ryu_ldn::network::RyuLdnClient::get_state, "[NETWORK:CONNECT] get_state\n"
-dprintf ryu_ldn::network::RyuLdnClient::get_retry_count, "[NETWORK:CONNECT] get_retry_count\n"
-dprintf ryu_ldn::network::RyuLdnClient::get_last_error_code, "[NETWORK:CONNECT] get_last_error_code\n"
-dprintf ryu_ldn::network::RyuLdnClient::get_last_rtt_ms, "[NETWORK:CONNECT] get_last_rtt_ms\n"
-dprintf ryu_ldn::network::RyuLdnClient::get_config, "[NETWORK:CONNECT] get_config\n"
-
-# Reconnection logic (unique — backoff details not in 05)
-dprintf ryu_ldn::network::RyuLdnClient::start_backoff, "[NETWORK:CONNECT] Backoff started\n"
-dprintf ryu_ldn::network::RyuLdnClient::is_backoff_expired, "[NETWORK:CONNECT] Checking backoff expiration\n"
-dprintf ryu_ldn::network::RyuLdnClient::is_handshake_timeout, "[NETWORK:CONNECT] Checking handshake timeout\n"
-
-# ReconnectManager
-dprintf ryu_ldn::network::ReconnectManager::ReconnectManager, "[NETWORK:CONNECT] ReconnectManager created\n"
-dprintf ryu_ldn::network::ReconnectManager::get_next_delay_ms, "[NETWORK:CONNECT] Getting next backoff delay\n"
-dprintf ryu_ldn::network::ReconnectManager::should_retry, "[NETWORK:CONNECT] Should we retry?\n"
-dprintf ryu_ldn::network::ReconnectManager::record_failure, "[NETWORK:CONNECT] Recording connection failure\n"
-dprintf ryu_ldn::network::ReconnectManager::reset, "[NETWORK:CONNECT] Resetting reconnect state\n"
-
-echo [NETWORK] Connection management: 19 dprintf points\n
+echo [NETWORK] connection: 14 dprintf points\n
