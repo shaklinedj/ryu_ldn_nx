@@ -161,7 +161,7 @@ public:
      * @note Call EnsureProxyReady() after this to wait for the response.
      */
     /// @gdb{tag="P2P:CLIENT", msg="Performing authentication"}
-    bool PerformAuth(const ryu_ldn::protocol::ExternalProxyConfig"& config);
+    bool PerformAuth(const ryu_ldn::protocol::ExternalProxyConfig& config);
 
     /**
      * @brief Wait for proxy to be ready

@@ -243,7 +243,7 @@ public:
      * @param config Configuration with subnet info
      */
     /// @gdb{tag="P2P:SERVER", msg="Server configuration updated"}
-    void Configure(const ryu_ldn::protocol::ProxyConfig"& config);
+    void Configure(const ryu_ldn::protocol::ProxyConfig& config);
 
     // =========================================================================
     // Host self-routing — in-process shortcut
