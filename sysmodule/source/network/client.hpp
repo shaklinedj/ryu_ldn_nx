@@ -657,9 +657,15 @@ private:
 
     /**
      * @brief Check if backoff has expired
+     *
+     * Captures current time on first call after start_backoff(),
+     * then checks if the backoff delay has elapsed.
+     *
+     * @param current_time_ms Current time in milliseconds
+     * @return true if backoff period has elapsed
      */
     /// @gdb{tag="NETWORK:STATE_CALLBACKS", msg="is_backoff_expired"}
-    bool is_backoff_expired(uint64_t current_time_ms) const;
+    bool is_backoff_expired(uint64_t current_time_ms);
 };
 
 /**

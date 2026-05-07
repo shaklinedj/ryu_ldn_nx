@@ -1134,8 +1134,11 @@ void RyuLdnClient::generate_mac_address() {
  * Records the current time and calculates backoff delay.
  */
 void RyuLdnClient::start_backoff() {
-    m_backoff_start_time_ms = 0;  // Will be set on first update check
+    m_backoff_start_time_ms = 0;  // Set to 0 so is_backoff_expired() captures
+                                  // current time on first check (see below)
     m_current_backoff_delay_ms = m_reconnect_manager.get_next_delay_ms();
+    LOG_INFO("start_backoff: delay=%u ms, retry=%u",
+             m_current_backoff_delay_ms, m_reconnect_manager.get_retry_count());
 }
 
 /**
@@ -1144,12 +1147,14 @@ void RyuLdnClient::start_backoff() {
  * @param current_time_ms Current time in milliseconds
  * @return true if backoff period has elapsed
  */
-bool RyuLdnClient::is_backoff_expired(uint64_t current_time_ms) const {
-    // If start time not set, this is the first check - set it
+bool RyuLdnClient::is_backoff_expired(uint64_t current_time_ms) {
+    // First check after start_backoff(): capture current time as start.
+    // start_backoff() sets m_backoff_start_time_ms to 0, meaning "capture
+    // now". This avoids needing a separate timestamp at start_backoff() call
+    // time (which may not have the right time source available).
     if (m_backoff_start_time_ms == 0) {
-        // Workaround: can't modify const, so check will fail first time
-        // Real implementation would handle this differently
-        return false;
+        m_backoff_start_time_ms = current_time_ms;
+        return false;  // Start timer this tick, check expiry next tick
     }
 
     return (current_time_ms - m_backoff_start_time_ms) >= m_current_backoff_delay_ms;

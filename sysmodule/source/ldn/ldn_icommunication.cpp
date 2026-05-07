@@ -2130,8 +2130,13 @@ bool ICommunicationService::WaitForResponse(ryu_ldn::protocol::PacketId expected
                 break;
             }
 
-            // ProxyData, SyncNetwork, Ping — expected during connection, keep waiting
+            // These packets can arrive during WaitForResponse without being the
+            // expected reply — they're handled by HandleServerPacket on the
+            // receive thread.  Don't warn for them.
             if (last_id != ryu_ldn::protocol::PacketId::ProxyData &&
+                last_id != ryu_ldn::protocol::PacketId::ProxyConfig &&
+                last_id != ryu_ldn::protocol::PacketId::ProxyConnect &&
+                last_id != ryu_ldn::protocol::PacketId::ExternalProxy &&
                 last_id != ryu_ldn::protocol::PacketId::SyncNetwork &&
                 last_id != ryu_ldn::protocol::PacketId::Ping) {
                 LOG_WARN("Received unexpected response: expected=%u, got=%u",

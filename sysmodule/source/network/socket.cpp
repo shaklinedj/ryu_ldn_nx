@@ -416,9 +416,12 @@ SocketResult Socket::connect(const char* host, uint16_t port, uint32_t timeout_m
     // Resolve hostname to IPv4 address
     struct sockaddr_in addr;
     if (!resolve_host(host, addr)) {
+        LOG_ERROR("Socket::connect: resolve_host failed for '%s'", host);
         close();  // Clean up the created socket on resolution failure
         return SocketResult::InvalidAddress;
     }
+    LOG_INFO("Socket::connect: resolved '%s' -> %s:%u", host,
+             inet_ntoa(addr.sin_addr), port);
     addr.sin_port = htons(port);  // Convert port to network byte order
 
     // Determine if we should use timeout
@@ -439,8 +442,10 @@ SocketResult Socket::connect(const char* host, uint16_t port, uint32_t timeout_m
     if (ret < 0) {
         if (use_timeout && (errno == EINPROGRESS || errno == EWOULDBLOCK)) {
             // Connection in progress - wait for it to complete
+            LOG_VERBOSE("Socket::connect: EINPROGRESS, waiting up to %u ms", timeout_ms);
             result = wait_ready(timeout_ms, true);  // Wait for socket to be writable
             if (result != SocketResult::Success) {
+                LOG_WARN("Socket::connect: wait_ready failed: %s", socket_result_to_string(result));
                 close();
                 return result;
             }
@@ -449,17 +454,20 @@ SocketResult Socket::connect(const char* host, uint16_t port, uint32_t timeout_m
             int error = 0;
             socklen_t len = sizeof(error);
             if (getsockopt(m_fd, SOL_SOCKET, SO_ERROR, &error, &len) < 0) {
+                LOG_ERROR("Socket::connect: getsockopt failed: %d", errno);
                 close();
                 return errno_to_result(errno);
             }
 
             if (error != 0) {
                 // Connection failed
+                LOG_WARN("Socket::connect: SO_ERROR=%d (%s) after poll", error, strerror(error));
                 close();
                 return errno_to_result(error);
             }
         } else {
             // Immediate failure (or blocking mode error)
+            LOG_WARN("Socket::connect: immediate failure: %d (%s)", errno, strerror(errno));
             close();
             return errno_to_result(errno);
         }
@@ -471,6 +479,7 @@ SocketResult Socket::connect(const char* host, uint16_t port, uint32_t timeout_m
     }
 
     m_connected = true;
+    LOG_INFO("Socket::connect: connected to %s:%u successfully", host, port);
     return SocketResult::Success;
 }
 

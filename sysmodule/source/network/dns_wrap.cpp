@@ -126,4 +126,8 @@ int __wrap_getnameinfo(const struct sockaddr* sa, socklen_t salen,
     return 0;
 }
 
+const char* __wrap_gai_strerror(int /*ecode*/) {
+    return "dns error";
+}
+
 } // extern "C"

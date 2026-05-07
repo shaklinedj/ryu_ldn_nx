@@ -44,6 +44,9 @@ RUN mkdir -p /root/.config/gdb && \
 # Create non-root user (UID/GID will be updated by VSCode's updateRemoteUserUID)
 RUN useradd -m -s /bin/bash devuser
 
+# Allow git to work with mounted volumes (different ownership inside Docker)
+RUN git config --global --add safe.directory '*'
+
 # Create workspace directory
 WORKDIR /workspace
 

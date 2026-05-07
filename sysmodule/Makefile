@@ -48,7 +48,8 @@ LIBS		+= -lminiupnpc
 #---------------------------------------------------------------------------------
 CXXWRAPS	+= -Wl,--wrap,getaddrinfo \
 		   -Wl,--wrap,freeaddrinfo \
-		   -Wl,--wrap,getnameinfo
+		   -Wl,--wrap,getnameinfo \
+		   -Wl,--wrap,gai_strerror
 
 #---------------------------------------------------------------------------------
 # no real need to edit anything past this point unless you need to add additional
