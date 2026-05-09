@@ -42,8 +42,15 @@ Load all memory diagnostic tools (allocations, crash detection, leaks, etc.)
 This is not loaded by default for performance - call this command when needed.
 end
 
-# Actually load them by default
-load-memory-tools
+# Memory-trace is NOT loaded by default — it is extremely expensive.
+# Each breakpoint on malloc/free/memcpy/etc. causes GDB to stop and resume
+# on every single call, which kills real-time performance for a sysmodule.
+# On a remote target (Switch via TCP), each hit costs a full network roundtrip.
+#
+# To load manually in a GDB session, type:
+#   load-memory-tools
+#
+# Or start the debugger with:  --memory
 
 # ==========================================
 # Generic GDB Helpers

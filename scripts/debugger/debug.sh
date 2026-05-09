@@ -2,15 +2,16 @@
 # ==========================================
 # ryu_ldn_nx Autonomous Debugger
 # ==========================================
-# Usage: ./debug.sh <IP> [PID]
+# Usage: ./debug.sh [--memory] <IP> [PID]
 #
-# Fonctionnement autonome:
-# 1. Connexion automatique à la Switch
-# 2. Détection du process et ASLR
-# 3. Chargement des symboles
-# 4. Menu interactif de sélection des composants
-# 5. Crash handlers toujours actifs
-# 6. Auto-continue sur breakpoints, STOP sur crash
+# Modes:
+#   9 = Crash-only (zero overhead, crash handlers only)
+#   8 = Lifecycle (dprintf on state transitions, low overhead)
+#   7 = Full (all dprintf tracepoints, moderate overhead)
+#   --memory = Enable memory tracing (very slow, only for leak/corruption debug)
+#
+# Crash handlers always active: SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGABRT
+# They capture: backtrace full, info locals, info args, registers, stack dump
 #
 # ==========================================
 
@@ -117,19 +118,42 @@ NC='\033[0m'
 # ==========================================
 # Arguments
 # ==========================================
-SWITCH_IP="${1:-}"
-EXPLICIT_PID="${2:-}"
+LOAD_MEMORY=0
+SWITCH_IP=""
+EXPLICIT_PID=""
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --memory)
+            LOAD_MEMORY=1
+            shift
+            ;;
+        *)
+            if [ -z "$SWITCH_IP" ]; then
+                SWITCH_IP="$1"
+            elif [ -z "$EXPLICIT_PID" ]; then
+                EXPLICIT_PID="$1"
+            fi
+            shift
+            ;;
+    esac
+done
 
 if [ -z "$SWITCH_IP" ]; then
     echo -e "${CYAN}${BOLD}╔══════════════════════════════════════════════════════════════╗${NC}"
     echo -e "${CYAN}${BOLD}║         ryu_ldn_nx Autonomous Debugger                       ║${NC}"
     echo -e "${CYAN}${BOLD}╚══════════════════════════════════════════════════════════════╝${NC}"
     echo ""
-    echo "Usage: $0 <SWITCH_IP> [PID]"
+    echo "Usage: $0 [--memory] <SWITCH_IP> [PID]"
+    echo ""
+    echo "Options:"
+    echo "  --memory    Enable memory tracing (malloc/free/memcpy breakpoints)"
+    echo "              WARNING: extremely slow, only for diagnosing corruption/leaks"
     echo ""
     echo "Examples:"
     echo "  $0 192.168.1.25           # Auto-detect process"
     echo "  $0 192.168.1.25 134       # Attach to specific PID"
+    echo "  $0 --memory 192.168.1.25  # Enable memory tracing"
     echo ""
     exit 1
 fi
@@ -441,19 +465,26 @@ echo -e "  ${BOLD}5.${NC} Config       - Configuration management  ${DIM}($(coun
 echo -e "  ${BOLD}6.${NC} Debug        - Logging utilities         ${DIM}($(count_files debug) fichiers)${NC}"
 echo ""
 echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "  ${BOLD}7.${NC} ${GREEN}TOUS${NC}         - Charger tous les composants"
-echo -e "  ${BOLD}8.${NC} ${YELLOW}Minimal${NC}      - Lifecycle uniquement (01-*.gdb)"
-echo -e "  ${BOLD}9.${NC} ${MAGENTA}Aucun${NC}        - Crash handlers seulement"
+echo -e "  ${BOLD}7.${NC} ${GREEN}All${NC}           - All components (dprintf tracepoints)"
+echo -e "  ${BOLD}8.${NC} ${YELLOW}Lifecycle${NC}     - Lifecycle only (01-*.gdb, lowest overhead)"
+echo -e "  ${BOLD}9.${NC} ${RED}Crash-only${NC}    - ${BOLD}No breakpoints${NC}, crash handlers only (zero overhead)"
 echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
-echo -e "${MAGENTA}${BOLD}Note:${NC} ${MAGENTA}Les crash handlers (SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGABRT)${NC}"
-echo -e "${MAGENTA}      sont TOUJOURS actifs automatiquement.${NC}"
+echo -e "${MAGENTA}${BOLD}Note:${NC} ${MAGENTA}Crash handlers (SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGABRT)${NC}"
+echo -e "${MAGENTA}      are ALWAYS active. They capture backtrace full, locals, args,${NC}"
+echo -e "${MAGENTA}      registers, stack dump — no breakpoints needed for that.${NC}"
 echo ""
-read -p "Sélection (ex: 1 3 4 ou 7 pour tout) [7]: " COMPONENT_CHOICE
+if [ "$LOAD_MEMORY" -eq 1 ]; then
+    echo -e "${RED}${BOLD}⚠ MEMORY TRACING ENABLED ⚠${NC}"
+    echo -e "${RED}This adds breakpoints on malloc/free/memcpy/etc — extremely slow!${NC}"
+    echo -e "${RED}Only use for diagnosing memory corruption or leaks.${NC}"
+    echo ""
+fi
+read -p "Selection (ex: 1 3 4 or 7 for all) [7]: " COMPONENT_CHOICE
 
 # Parse selection
 SELECTED_COMPONENTS=()
-LOAD_MODE="full"  # full or minimal
+LOAD_MODE="full"  # full, minimal, or crash-only
 
 if [ -z "$COMPONENT_CHOICE" ]; then
     COMPONENT_CHOICE="7"
@@ -472,17 +503,26 @@ for choice in $COMPONENT_CHOICE; do
             SELECTED_COMPONENTS=("bsd" "ldn" "network" "p2p")
             LOAD_MODE="minimal"
             ;;
-        9) SELECTED_COMPONENTS=() ;;
-        *) echo -e "${YELLOW}Choix inconnu: $choice${NC}" ;;
+        9)
+            SELECTED_COMPONENTS=()
+            LOAD_MODE="crash-only"
+            ;;
+        *) echo -e "${YELLOW}Unknown choice: $choice${NC}" ;;
     esac
 done
 
 echo ""
 if [ ${#SELECTED_COMPONENTS[@]} -eq 0 ]; then
-    echo -e "${YELLOW}Mode: Crash handlers uniquement${NC}"
+    echo -e "${RED}Mode: Crash-only (zero overhead, crash handlers only)${NC}"
+elif [ "$LOAD_MODE" = "minimal" ]; then
+    echo -e "${YELLOW}Components: ${SELECTED_COMPONENTS[*]}${NC}"
+    echo -e "${YELLOW}Mode: Lifecycle (dprintf on state transitions only)${NC}"
 else
-    echo -e "${GREEN}Composants: ${SELECTED_COMPONENTS[*]}${NC}"
-    [ "$LOAD_MODE" = "minimal" ] && echo -e "${YELLOW}Mode: Minimal (lifecycle seulement)${NC}"
+    echo -e "${GREEN}Components: ${SELECTED_COMPONENTS[*]}${NC}"
+    echo -e "${GREEN}Mode: Full (all dprintf tracepoints)${NC}"
+fi
+if [ "$LOAD_MEMORY" -eq 1 ]; then
+    echo -e "${RED}${BOLD}+ Memory tracing enabled (malloc/free/memcpy breakpoints)${NC}"
 fi
 echo ""
 
@@ -563,6 +603,13 @@ if [ -f "$TOOLS_DIR/common.gdb" ]; then
     echo "source $GDB_TOOLS_DIR/common.gdb" >> "$INIT_FILE"
 fi
 
+# Load memory tracing if --memory was specified
+if [ "$LOAD_MEMORY" -eq 1 ]; then
+    echo "" >> "$INIT_FILE"
+    echo "# Memory tracing (expensive — breakpoints on malloc/free/memcpy)" >> "$INIT_FILE"
+    echo "load-memory-tools" >> "$INIT_FILE"
+fi
+
 # ==========================================
 # CRASH HANDLERS (Always active)
 # ==========================================
@@ -585,25 +632,21 @@ commands
     echo ┌──────────────────────────────────────────────────────────────────────────────┐
     echo │ CRASH LOCATION                                                               │
     echo └──────────────────────────────────────────────────────────────────────────────┘
-    printf "  PC  = 0x%lx", $pc
-    printf "  LR  = 0x%lx", $x30
-    printf "  SP  = 0x%lx", $sp
-    printf "  FP  = 0x%lx", $x29
+    printf "  PC  = 0x%016lx\n", $pc
+    printf "  LR  = 0x%016lx\n", $x30
+    printf "  SP  = 0x%016lx\n", $sp
+    printf "  FP  = 0x%016lx\n", $x29
     echo 
     echo ┌──────────────────────────────────────────────────────────────────────────────┐
-    echo │ CALL STACK                                                                   │
+    echo │ CALL STACK (with locals)                                                    │
     echo └──────────────────────────────────────────────────────────────────────────────┘
-    backtrace 30
+    backtrace full
     echo 
     echo ┌──────────────────────────────────────────────────────────────────────────────┐
-    echo │ FRAME POINTER CHAIN (manual unwind)                                          │
+    echo │ LOCAL VARIABLES & ARGUMENTS                                                  │
     echo └──────────────────────────────────────────────────────────────────────────────┘
-    echo   [FP] -> [next_FP, return_addr]
-    x/2xg $x29
-    x/2xg *(void**)$x29
-    x/2xg *(void**)(*(void**)$x29)
-    x/2xg *(void**)(*(void**)(*(void**)$x29))
-    x/2xg *(void**)(*(void**)(*(void**)(*(void**)$x29)))
+    info locals
+    info args
     echo 
     echo ┌──────────────────────────────────────────────────────────────────────────────┐
     echo │ REGISTERS                                                                    │
@@ -616,6 +659,7 @@ commands
     printf "  x0 = 0x%016lx  (mod4=%d, mod8=%d, mod16=%d)\n", $x0, ($x0 & 3), ($x0 & 7), ($x0 & 0xf)
     printf "  x1 = 0x%016lx  (mod4=%d, mod8=%d, mod16=%d)\n", $x1, ($x1 & 3), ($x1 & 7), ($x1 & 0xf)
     printf "  x2 = 0x%016lx  (mod4=%d, mod8=%d, mod16=%d)\n", $x2, ($x2 & 3), ($x2 & 7), ($x2 & 0xf)
+    printf "  x3 = 0x%016lx  (mod4=%d, mod8=%d, mod16=%d)\n", $x3, ($x3 & 3), ($x3 & 7), ($x3 & 0xf)
     printf "  SP = 0x%016lx  (mod16=%d)\n", $sp, ($sp & 0xf)
     echo 
     echo ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -629,13 +673,8 @@ commands
     x/16i $pc-32
     echo 
     echo ┌──────────────────────────────────────────────────────────────────────────────┐
-    echo │ DISASSEMBLY @ LR                                                             │
-    echo └──────────────────────────────────────────────────────────────────────────────────────┘
-    x/8i $x30-16
-    echo 
-    echo ┌──────────────────────────────────────────────────────────────────────────────┐
     echo │ STACK MEMORY                                                                 │
-    echo └──────────────────────────────────────────────────────────────────────────────────────┘
+    echo └──────────────────────────────────────────────────────────────────────────────┘
     x/32xg $sp
     echo 
     echo ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -687,9 +726,15 @@ commands
     echo on IPC buffer → IsLdnAddress → __builtin_bswap32
     echo 
     echo ┌──────────────────────────────────────────────────────────────────────────────┐
-    echo │ CALL STACK                                                                   │
+    echo │ CALL STACK (with locals)                                                    │
     echo └──────────────────────────────────────────────────────────────────────────────┘
-    backtrace 30
+    backtrace full
+    echo 
+    echo ┌──────────────────────────────────────────────────────────────────────────────┐
+    echo │ LOCAL VARIABLES & ARGUMENTS                                                  │
+    echo └──────────────────────────────────────────────────────────────────────────────┘
+    info locals
+    info args
     echo 
     echo ┌──────────────────────────────────────────────────────────────────────────────┐
     echo │ REGISTERS                                                                    │
@@ -724,14 +769,20 @@ commands
     echo ┌──────────────────────────────────────────────────────────────────────────────┐
     echo │ CRASH LOCATION                                                               │
     echo └──────────────────────────────────────────────────────────────────────────────┘
-    printf "  PC  = 0x%lx", $pc
-    printf "  LR  = 0x%lx", $x30
-    printf "  SP  = 0x%lx", $sp
+    printf "  PC  = 0x%016lx\n", $pc
+    printf "  LR  = 0x%016lx\n", $x30
+    printf "  SP  = 0x%016lx\n", $sp
     echo 
     echo ┌──────────────────────────────────────────────────────────────────────────────┐
-    echo │ CALL STACK                                                                   │
+    echo │ CALL STACK (with locals)                                                    │
     echo └──────────────────────────────────────────────────────────────────────────────┘
-    backtrace 30
+    backtrace full
+    echo 
+    echo ┌──────────────────────────────────────────────────────────────────────────────┐
+    echo │ LOCAL VARIABLES & ARGUMENTS                                                  │
+    echo └──────────────────────────────────────────────────────────────────────────────┘
+    info locals
+    info args
     echo 
     echo ┌──────────────────────────────────────────────────────────────────────────────┐
     echo │ DISASSEMBLY @ PC                                                             │
@@ -761,14 +812,20 @@ commands
     echo ┌──────────────────────────────────────────────────────────────────────────────┐
     echo │ CRASH LOCATION                                                               │
     echo └──────────────────────────────────────────────────────────────────────────────┘
-    printf "  PC  = 0x%lx", $pc
-    printf "  LR  = 0x%lx", $x30
-    printf "  SP  = 0x%lx", $sp
+    printf "  PC  = 0x%016lx\n", $pc
+    printf "  LR  = 0x%016lx\n", $x30
+    printf "  SP  = 0x%016lx\n", $sp
     echo 
     echo ┌──────────────────────────────────────────────────────────────────────────────┐
-    echo │ CALL STACK                                                                   │
+    echo │ CALL STACK (with locals)                                                    │
     echo └──────────────────────────────────────────────────────────────────────────────┘
-    backtrace 30
+    backtrace full
+    echo 
+    echo ┌──────────────────────────────────────────────────────────────────────────────┐
+    echo │ LOCAL VARIABLES & ARGUMENTS                                                  │
+    echo └──────────────────────────────────────────────────────────────────────────────┘
+    info locals
+    info args
     echo 
     echo ┌──────────────────────────────────────────────────────────────────────────────┐
     echo │ REGISTERS                                                                    │
@@ -795,20 +852,31 @@ commands
     echo ┌──────────────────────────────────────────────────────────────────────────────┐
     echo │ CRASH LOCATION                                                               │
     echo └──────────────────────────────────────────────────────────────────────────────┘
-    printf "  PC  = 0x%lx", $pc
-    printf "  LR  = 0x%lx", $x30
-    printf "  SP  = 0x%lx", $sp
+    printf "  PC  = 0x%016lx\n", $pc
+    printf "  LR  = 0x%016lx\n", $x30
+    printf "  SP  = 0x%016lx\n", $sp
     echo 
     echo ┌──────────────────────────────────────────────────────────────────────────────┐
-    echo │ CALL STACK                                                                   │
+    echo │ CALL STACK (with locals)                                                    │
     echo └──────────────────────────────────────────────────────────────────────────────┘
-    backtrace 30
+    backtrace full
+    echo 
+    echo ┌──────────────────────────────────────────────────────────────────────────────┐
+    echo │ LOCAL VARIABLES & ARGUMENTS                                                  │
+    echo └──────────────────────────────────────────────────────────────────────────────┘
+    info locals
+    info args
     echo 
     echo ┌──────────────────────────────────────────────────────────────────────────────┐
     echo │ REGISTERS                                                                    │
     echo └──────────────────────────────────────────────────────────────────────────────┘
     info registers
     echo 
+    echo ┌──────────────────────────────────────────────────────────────────────────────┐
+    echo │ STACK MEMORY                                                                 │
+    echo └──────────────────────────────────────────────────────────────────────────────┘
+    x/32xg $sp
+    echo
     echo ╔══════════════════════════════════════════════════════════════════════════════╗
     echo ║                           SESSION TERMINATED                                 ║
     echo ╚══════════════════════════════════════════════════════════════════════════════╝
@@ -929,9 +997,22 @@ echo ""
 # Launch GDB
 # ==========================================
 echo -e "${MAGENTA}${BOLD}╔══════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${MAGENTA}${BOLD}║  AUTONOMOUS MODE                                             ║${NC}"
-echo -e "${MAGENTA}${BOLD}║  • Breakpoints: auto-continue + logging                      ║${NC}"
-echo -e "${MAGENTA}${BOLD}║  • Crashes: full dump + EXIT                                 ║${NC}"
+if [ "$LOAD_MODE" = "crash-only" ]; then
+    echo -e "${RED}${BOLD}║  CRASH-ONLY MODE                                              ║${NC}"
+    echo -e "${RED}${BOLD}║  • No breakpoints — zero runtime overhead                    ║${NC}"
+    echo -e "${RED}${BOLD}║  • Crashes: full dump (backtrace, locals, args) + EXIT       ║${NC}"
+elif [ "$LOAD_MODE" = "minimal" ]; then
+    echo -e "${MAGENTA}${BOLD}║  LIFECYCLE MODE                                               ║${NC}"
+    echo -e "${MAGENTA}${BOLD}║  • dprintf on state transitions only (low overhead)         ║${NC}"
+    echo -e "${MAGENTA}${BOLD}║  • Crashes: full dump (backtrace, locals, args) + EXIT       ║${NC}"
+else
+    echo -e "${MAGENTA}${BOLD}║  FULL MODE                                                    ║${NC}"
+    echo -e "${MAGENTA}${BOLD}║  • All dprintf tracepoints (moderate overhead)                ║${NC}"
+    echo -e "${MAGENTA}${BOLD}║  • Crashes: full dump (backtrace, locals, args) + EXIT       ║${NC}"
+fi
+if [ "$LOAD_MEMORY" -eq 1 ]; then
+    echo -e "${RED}${BOLD}║  ⚠ MEMORY TRACING ON (very slow)                             ║${NC}"
+fi
 echo -e "${MAGENTA}${BOLD}║  • Press Ctrl+C to interrupt                                 ║${NC}"
 echo -e "${MAGENTA}${BOLD}╚══════════════════════════════════════════════════════════════╝${NC}"
 echo ""

@@ -1,8 +1,16 @@
 # ==========================================
 # Memory Trace - Crash Detection
 # ==========================================
-# Detect and diagnose memory-related crashes
-# Enhanced with ARM64 alignment fault diagnostics for DABRT 0x101
+# ADVANCED crash handlers with full variable capture.
+#
+# WARNING: This file DUPLICATES the crash handlers in debug.sh.
+# Do NOT load both — GDB would fire two catchpoints per signal.
+# This file is only loaded via load-memory-tools, which is opt-in.
+# The crash handlers in debug.sh are always active by default.
+#
+# If you loaded this by mistake, run:
+#   delete catchpoints
+#   source /workspace/scripts/debugger/presets/crash-analysis.gdb
 #
 
 echo [MEMORY] Loading crash detection...\n

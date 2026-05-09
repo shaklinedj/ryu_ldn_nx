@@ -41,6 +41,7 @@ RE_ANNOTATION = re.compile(
     r'(?:,\s*msg="(?P<msg>[^"]*)")?'
     r'(?:,\s*args="(?P<args>[^"]*)")?'
     r'(?:,\s*file="(?P<file>[^"]*)")?'
+    r'(?:,\s*hot="(?P<hot>[^"]*)")?'
     r'\}'
 )
 
@@ -70,6 +71,7 @@ class GdbAnnotation:
     tag: str
     msg: str
     args: Optional[str] = None
+    hot: bool = False
     namespace: str = ""
     class_name: Optional[str] = None
     function_name: str = ""
@@ -240,6 +242,7 @@ class SourceScanner:
             tag=match.group("tag"),
             msg=match.group("msg") or "",
             args=match.group("args"),
+            hot=match.group("hot") == "true",
             namespace="::".join(ns_stack),
             class_name=cls_stack[-1] if cls_stack else None,
             function_name=func_name,
@@ -281,43 +284,102 @@ def generate_gdb_files(annotations: list[GdbAnnotation], output_dir: str, dry_ru
 
         for gdb_file in sorted(file_groups.keys()):
             filepath = os.path.join(comp_dir, gdb_file)
-            lines = []
-            total = 0
+            lifecycle_lines = []
+            hot_lines = []
+            lifecycle_total = 0
+            hot_total = 0
 
             for tag_key, anns in file_groups[gdb_file]:
                 parts = tag_key.split(":", 1)
                 prefix = parts[0] if len(parts) > 1 else comp.upper()
                 suffix = parts[1] if len(parts) > 1 else tag_key
-                lines.append(f"# {'=' * 41}")
-                lines.append(f"# {prefix}:{suffix}")
-                lines.append(f"# {'=' * 41}")
-                lines.append("")
-                lines.append(f'echo [{prefix}] Loading {suffix.lower()} breakpoints...\\n')
 
-                by_ns: dict[str, list[GdbAnnotation]] = defaultdict(list)
+                lifecycle_anns_by_ns: dict[str, list[GdbAnnotation]] = defaultdict(list)
+                hot_anns_by_ns: dict[str, list[GdbAnnotation]] = defaultdict(list)
+
                 for a in anns:
-                    by_ns[a.namespace or "(global)"].append(a)
+                    if a.hot:
+                        hot_anns_by_ns[a.namespace or "(global)"].append(a)
+                    else:
+                        lifecycle_anns_by_ns[a.namespace or "(global)"].append(a)
 
-                for ns in sorted(by_ns.keys()):
-                    ns_anns = by_ns[ns]
-                    if ns != "(global)":
-                        lines.append(f"# Namespace: {ns}")
-                    for a in ns_anns:
-                        lines.append(a.dprintf_line)
-                        total += 1
-                lines.append("")
+                # Lifecycle section (non-hot)
+                if lifecycle_anns_by_ns:
+                    lifecycle_lines.append(f"# {'=' * 41}")
+                    lifecycle_lines.append(f"# {prefix}:{suffix}")
+                    lifecycle_lines.append(f"# {'=' * 41}")
+                    lifecycle_lines.append("")
+                    lifecycle_lines.append(f'echo [{prefix}] Loading {suffix.lower()} breakpoints...\\n')
 
-            lines.append(f'echo [{prefix}] {suffix.lower()}: {total} dprintf points\\n')
-            content = "\n".join(lines) + "\n"
+                    for ns in sorted(lifecycle_anns_by_ns.keys()):
+                        ns_anns = lifecycle_anns_by_ns[ns]
+                        if ns != "(global)":
+                            lifecycle_lines.append(f"# Namespace: {ns}")
+                        for a in ns_anns:
+                            lifecycle_lines.append(a.dprintf_line)
+                            lifecycle_total += 1
+                    lifecycle_lines.append("")
 
-            if dry_run:
-                print(f"[DRY RUN] Would write: {filepath} ({total} dprintfs)")
-            else:
-                os.makedirs(comp_dir, exist_ok=True)
-                with open(filepath, "w") as f:
-                    f.write(content)
-                written.append(filepath)
-                print(f"  ✓ {filepath} ({total} dprintfs)")
+                # Hot-path section (hot=true)
+                if hot_anns_by_ns:
+                    hot_lines.append(f"# {'=' * 41}")
+                    hot_lines.append(f"# {prefix}:{suffix} (HOT PATH)")
+                    hot_lines.append(f"# {'=' * 41}")
+                    hot_lines.append("")
+                    hot_lines.append(f'echo [{prefix}] Loading {suffix.lower()} HOT PATH breakpoints...\\n')
+
+                    for ns in sorted(hot_anns_by_ns.keys()):
+                        ns_anns = hot_anns_by_ns[ns]
+                        if ns != "(global)":
+                            hot_lines.append(f"# Namespace: {ns}")
+                        for a in ns_anns:
+                            hot_lines.append(a.dprintf_line)
+                            hot_total += 1
+                    hot_lines.append("")
+
+            # Write lifecycle file
+            total = lifecycle_total + hot_total
+            if lifecycle_lines or hot_lines:
+                # If there are no hot-path annotations, write everything in one file
+                if hot_total == 0:
+                    lifecycle_lines.append(f'echo [{prefix}] {gdb_file.replace(".gdb", "").split("-", 1)[-1]}: {total} dprintf points\\n')
+                    content = "\n".join(lifecycle_lines) + "\n"
+                    if dry_run:
+                        print(f"[DRY RUN] Would write: {filepath} ({total} dprintfs)")
+                    else:
+                        os.makedirs(comp_dir, exist_ok=True)
+                        with open(filepath, "w") as f:
+                            f.write(content)
+                        written.append(filepath)
+                        print(f"  ✓ {filepath} ({total} dprintfs)")
+                else:
+                    # Write lifecycle-only file
+                    base_name = gdb_file.replace(".gdb", "")
+                    lifecycle_file = f"{base_name}.gdb"
+                    hot_file = f"{base_name}-hot.gdb"
+
+                    lifecycle_lines.append(f'echo [{prefix}] Lifecycle: {lifecycle_total} dprintf points\\n')
+                    content = "\n".join(lifecycle_lines) + "\n"
+                    if dry_run:
+                        print(f"[DRY RUN] Would write: {os.path.join(comp_dir, lifecycle_file)} ({lifecycle_total} dprintfs)")
+                    else:
+                        os.makedirs(comp_dir, exist_ok=True)
+                        with open(os.path.join(comp_dir, lifecycle_file), "w") as f:
+                            f.write(content)
+                        written.append(os.path.join(comp_dir, lifecycle_file))
+                        print(f"  ✓ {os.path.join(comp_dir, lifecycle_file)} ({lifecycle_total} dprintfs)")
+
+                    # Write hot-path file
+                    hot_lines.append(f'echo [{prefix}] Hot-path: {hot_total} dprintf points\\n')
+                    hot_content = "\n".join(hot_lines) + "\n"
+                    if dry_run:
+                        print(f"[DRY RUN] Would write: {os.path.join(comp_dir, hot_file)} ({hot_total} dprintfs)")
+                    else:
+                        os.makedirs(comp_dir, exist_ok=True)
+                        with open(os.path.join(comp_dir, hot_file), "w") as f:
+                            f.write(hot_content)
+                        written.append(os.path.join(comp_dir, hot_file))
+                        print(f"  ✓ {os.path.join(comp_dir, hot_file)} ({hot_total} dprintfs)")
 
     return written
 
@@ -332,6 +394,7 @@ class GdbDprintf:
     symbol: str
     format_string: str
     args: Optional[str] = None
+    hot: bool = False
     component: str = ""
     tag_file: str = ""
 
@@ -367,6 +430,7 @@ def parse_gdb_files(gdb_dir: str) -> list[GdbDprintf]:
                             symbol=m.group(1),
                             format_string=m.group(2),
                             args=m.group(3).strip() if m.group(3) else None,
+                            hot=fname.endswith("-hot.gdb"),
                             component=comp,
                             tag_file=fname,
                         )
