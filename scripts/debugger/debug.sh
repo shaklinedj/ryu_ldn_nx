@@ -324,25 +324,34 @@ fi
 
 # Extract base address from Atmosphère gdbstub output.
 # "monitor get info" outputs lines like:
-#   Aslr: 0x7100000000 - 0x7100800000
-#   Heap: 0x7100000000 - 0x7100800000
+#   Modules:
+#     0x5ef2c00000 - 0x5ef2c74fff ryu_ldn_nx.elf
+#   Aslr: 0x0008000000 - 0x7fffffffff   <-- range, NOT module base!
+#   Heap: 0x580d600000 - 0x5a0d5fffff
 # "monitor get mappings" outputs lines like:
-#   0x7100000000 - 0x7100800000 r-x Code            ----
-#   Mappings (starting from 0x7100000000):
+#   0x5ef2c00000 - 0x5ef2c74fff r-x Code            ----
+#   Mappings (starting from 0x0000000134):
+#
+# IMPORTANT: The "Aslr:" line gives the overall ASLR virtual address range,
+# NOT the module's loaded base address. The correct base comes from the
+# "Modules:" section or the first r-x Code mapping.
 
 # Helper: convert hex string (0x...) to decimal for arithmetic
 hex_to_dec() {
     printf "%d" "$1" 2>/dev/null || echo "0"
 }
 
-# Strategy 1: parse "Aslr:" line from monitor get info
 BASE_ADDR=""
-ASLR_LINE=$(grep -iE '^\s*Aslr:' "$MAPPING_FILE" 2>/dev/null | head -1 || true)
-if [ -n "$ASLR_LINE" ]; then
-    BASE_ADDR=$(echo "$ASLR_LINE" | grep -oE '0x[0-9a-fA-F]+' | head -1 || true)
+
+# Strategy 1: "Modules:" section — first .elf line
+# This is the most reliable: Atmosphère outputs the exact module base address.
+MODULE_LINE=$(grep -E '\.elf|\.nss' "$MAPPING_FILE" 2>/dev/null | head -1 || true)
+if [ -n "$MODULE_LINE" ]; then
+    BASE_ADDR=$(echo "$MODULE_LINE" | grep -oE '0x[0-9a-fA-F]+' | head -1 || true)
 fi
 
 # Strategy 2: first r-x mapping line (executable code = sysmodule base)
+# Falls back if Modules line is missing but Code mapping is present.
 if [ -z "$BASE_ADDR" ]; then
     BASE_ADDR=$(grep 'r-x' "$MAPPING_FILE" 2>/dev/null | head -1 | grep -oE '0x[0-9a-fA-F]+' | head -1 || true)
 fi
@@ -357,9 +366,14 @@ if [ -z "$BASE_ADDR" ]; then
     BASE_ADDR=$(grep -E '^\s+0x[0-9a-fA-F]+\s+-\s+0x' "$MAPPING_FILE" 2>/dev/null | head -1 | grep -oE '0x[0-9a-fA-F]+' | head -1 || true)
 fi
 
-# Strategy 5: "Modules:" section — first .elf line
+# Strategy 5: parse "Aslr:" line from monitor get info
+# WARNING: This gives the ASLR range start (e.g. 0x0008000000), NOT the
+# module base address. Only use as a last resort.
 if [ -z "$BASE_ADDR" ]; then
-    BASE_ADDR=$(grep -E '\.elf|\.nss' "$MAPPING_FILE" 2>/dev/null | head -1 | grep -oE '0x[0-9a-fA-F]+' | head -1 || true)
+    ASLR_LINE=$(grep -iE '^\s*Aslr:' "$MAPPING_FILE" 2>/dev/null | head -1 || true)
+    if [ -n "$ASLR_LINE" ]; then
+        BASE_ADDR=$(echo "$ASLR_LINE" | grep -oE '0x[0-9a-fA-F]+' | head -1 || true)
+    fi
 fi
 
 # Strategy 6: align PC to 2MB boundary
@@ -381,6 +395,23 @@ if [ -z "$BASE_ADDR" ]; then
     echo -e "${YELLOW}Mapping file content:${NC}"
     cat "$MAPPING_FILE" 2>/dev/null | head -20 || true
     fallback_interactive "Impossible de détecter l'adresse de base ASLR"
+fi
+
+# Adjust base address for add-symbol-file: GDB expects the runtime address
+# of the .text section, not the module load base. If the ELF's .text VMA
+# is non-zero, we must subtract it from the runtime base so GDB adds the
+# correct per-section offsets.
+READELF="/opt/devkitpro/devkitA64/bin/aarch64-none-elf-readelf"
+TEXT_VMA=$("$READELF" -S "$ELF_FILE" 2>/dev/null | grep '\.text' | head -1 | awk '{print $4}' || true)
+if [ -n "$TEXT_VMA" ]; then
+    TEXT_VMA_DEC=$(hex_to_dec "0x$TEXT_VMA" 2>/dev/null || echo "0")
+    BASE_DEC=$(hex_to_dec "$BASE_ADDR" 2>/dev/null || echo "0")
+    if [ "$TEXT_VMA_DEC" != "0" ] && [ "$BASE_DEC" != "0" ]; then
+        ADJUSTED=$(printf "0x%x" $(( BASE_DEC - TEXT_VMA_DEC )) 2>/dev/null || true)
+        echo -e "ELF .text VMA: ${DIM}0x$TEXT_VMA${NC}"
+        echo -e "Adjusted base: ${YELLOW}$ADJUSTED${NC} (runtime base $BASE_ADDR - .text VMA)"
+        BASE_ADDR="$ADJUSTED"
+    fi
 fi
 
 echo -e "Base address: ${GREEN}$BASE_ADDR${NC}"
@@ -483,9 +514,13 @@ set height 0
 set width 0
 set print pretty on
 set breakpoint pending on
+set auto-load safe-path /
+set print object on
 
-# Signal handling - Continue signals (don't stop)
-handle SIGINT nostop pass
+# Signal handling
+# SIGINT: stop GDB on Ctrl+C (needed for interactive interruption).
+# Remote targets don't propagate SIGINT from keyboard — GDB must catch it.
+handle SIGINT stop pass
 handle SIGTERM nostop pass
 handle SIGPIPE nostop pass
 
@@ -901,8 +936,11 @@ echo -e "${MAGENTA}${BOLD}║  • Press Ctrl+C to interrupt                    
 echo -e "${MAGENTA}${BOLD}╚══════════════════════════════════════════════════════════════╝${NC}"
 echo ""
 
-"$GDB" -q -x "$INIT_FILE" 2>&1 | \
-    grep -Ev "(warning:.*auto-loading|add-auto-load-safe-path|set auto-load safe-path|Reading symbols)"
+# Run GDB directly — no pipe.
+# Piping through grep breaks signal delivery: grep absorbs SIGINT
+# and GDB never receives the interrupt, making Ctrl+C non-functional.
+# GDB output goes to both the terminal and the log file (via set logging).
+"$GDB" -q -x "$INIT_FILE"
 GDB_EXIT=$?
 
 if [ $GDB_EXIT -ne 0 ]; then
