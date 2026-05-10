@@ -9,11 +9,11 @@ Thank you for your interest in contributing to ryu_ldn_nx! This guide will help 
 
 ## Ways to Contribute
 
-- **Bug Reports** - Found an issue? Let us know!
-- **Feature Requests** - Have an idea? We'd love to hear it!
-- **Code** - Submit pull requests with fixes or features
-- **Documentation** - Help improve these docs
-- **Testing** - Test on different games and configurations
+- **Bug Reports** — Found an issue? Let us know!
+- **Feature Requests** — Have an idea? We'd love to hear it!
+- **Code** — Submit pull requests with fixes or features
+- **Documentation** — Help improve these docs
+- **Testing** — Test on different games and configurations
 
 ## Development Setup
 
@@ -21,7 +21,6 @@ Thank you for your interest in contributing to ryu_ldn_nx! This guide will help 
 
 - Docker and Docker Compose
 - Git
-- VS Code (recommended)
 
 ### Getting Started
 
@@ -40,58 +39,72 @@ Thank you for your interest in contributing to ryu_ldn_nx! This guide will help 
    docker compose run --rm test
    ```
 
+See [Building from Source](/ryu_ldn_nx/guides/building) for detailed build instructions.
+
 ## Code Structure
 
 ```
 ryu_ldn_nx/
-├── sysmodule/          # Main sysmodule code
+├── sysmodule/              # Main sysmodule code
 │   └── source/
-│       ├── config/     # Configuration parsing
-│       ├── network/    # Network client
-│       ├── protocol/   # RyuLdn protocol
-│       └── ldn/        # LDN MITM service
-├── overlay/            # Tesla overlay
-├── tests/              # Unit tests
-└── docs/               # This documentation
+│       ├── main.cpp        # Entry point, heap, new/delete, service registration
+│       ├── config/          # Fixed-buffer INI parser, ConfigManager, ConfigIpcService
+│       ├── network/         # TcpClient, Client, ConnectionState, ReconnectManager
+│       ├── protocol/        # RyuLdn wire format (types.hpp, ryu_protocol.hpp)
+│       ├── ldn/             # LDN MITM service, ICommunicationService, state machine
+│       ├── bsd/             # BSD MITM service, ProxySocket, ProxySocketManager
+│       ├── p2p/             # P2P proxy client/server, UPnP port mapper
+│       └── debug/           # File logger with idle-timeout close thread
+├── overlay/                # Tesla overlay (libultrahand)
+│   └── source/
+│       └── ryu_ldn_ipc.c   # IPC stubs for ryu:cfg service
+├── tests/                  # Host unit tests (one .cpp per suite)
+├── docs/                   # Astro + Starlight documentation site
+├── scripts/
+│   ├── builder/            # Build wrapper for parallel docker compose
+│   └── debugger/           # GDB presets and component scripts
+└── config/                 # Config templates and game whitelist
 ```
 
 ## Coding Standards
 
 ### C++ Style
 
-- Use C++20 features where appropriate
-- Follow existing code style
-- Use Doxygen comments for public APIs
-- Keep functions focused and small
+- C++17 features with Atmosphere conventions
+- 4-space indentation, opening braces on same line
+- Doxygen `/** */` doc comments on public API
+- `#pragma once` for all headers (no include guards)
 
 ### Naming Conventions
 
-- Classes: `PascalCase`
-- Functions: `PascalCase` (matching Atmosphere style)
+- Namespaces: `ams::mitm::ldn`, `ams::mitm::bsd`, `ryu_ldn::network`, `ryu_ldn::protocol`, `ryu_ldn::config`, `ryu_ldn::debug`, `ryu_ldn::ipc`
+- Classes and functions: `PascalCase` (matching Atmosphere style)
 - Variables: `snake_case`
 - Member variables: `m_snake_case`
-- Constants: `UPPER_SNAKE_CASE`
+- Constants: `UPPER_SNAKE_CASE` or `constexpr`
 
-### Example
+### Result Patterns
 
-```cpp
-/**
- * @brief Process incoming network data
- *
- * @param data Raw data buffer
- * @param size Size in bytes
- * @return Result Success or error code
- */
-Result NetworkClient::ProcessData(const u8* data, size_t size) {
-    if (data == nullptr || size == 0) {
-        R_THROW(ResultInvalidArgument());
-    }
+- Use `ams::Result` (Stratosphere Horizon result codes) in sysmodule code
+- Test code uses simple `enum class ...Result` with `Success/...Error`
 
-    // Process the data...
+### Memory Constraints
 
-    R_SUCCEED();
-}
-```
+The sysmodule runs on Switch hardware with aggressive constraints:
+
+- **384 KB shared heap** — no `std::vector`/`std::deque`/`new` in hot paths
+- Use fixed buffers, `constinit` statics, stack-allocated work areas
+- `new`/`delete` route to the expanded heap — do not grow buffers without proof it's needed
+
+### Logging
+
+Use `LOG_ERROR`, `LOG_WARN`, `LOG_INFO`, `LOG_VERBOSE` macros from `debug/log.hpp`.
+
+### Platform Guards
+
+- `#ifdef __SWITCH__` for Switch-specific code
+- Test builds use `-DTEST_BUILD` and compile with host `g++`
+- IDE errors for `<stratosphere.hpp>` and libnx are expected — they compile fine in Docker
 
 ## Testing
 
@@ -101,22 +114,30 @@ Result NetworkClient::ProcessData(const u8* data, size_t size) {
 docker compose run --rm test
 ```
 
+### Per-Suite Targets
+
+```bash
+cd tests && make test-ldn-state-machine
+# protocol, config, log, socket, tcp-client, connection-state,
+# reconnect, client, ldn-types, ldn-proxy, ldn-error, overlay,
+# ipc-config, config-ipc-service, shared-state, packet-dispatcher,
+# session-handler, proxy-handler, handler-integration, upnp,
+# p2p-proxy, p2p-client, p2p-integration, p2p-create-network
+```
+
 ### Writing Tests
 
-Tests use a simple assertion framework. Add tests to `tests/` directory:
+Tests use a lightweight custom framework with auto-registration:
 
 ```cpp
-void test_my_feature() {
-    // Arrange
+TEST(my_feature) {
     MyClass instance;
-
-    // Act
     auto result = instance.DoSomething();
-
-    // Assert
     ASSERT_TRUE(result == expected);
 }
 ```
+
+`constinit` and `static_assert` in `types.hpp` are verified at compile time in both test and sysmodule builds.
 
 ## Pull Request Process
 
@@ -136,9 +157,9 @@ void test_my_feature() {
    docker compose run --rm build
    ```
 
-4. **Commit with sign-off**
+4. **Commit with DCO sign-off**
    ```bash
-   git commit -s -m "Add my feature"
+   git commit -s -m "feat: add my feature"
    ```
 
 5. **Push and create PR**
@@ -146,28 +167,24 @@ void test_my_feature() {
    git push origin feature/my-feature
    ```
 
-6. **Describe your changes**
-   - What does this PR do?
-   - How was it tested?
-   - Any breaking changes?
-
 ## DCO Sign-Off
 
-We require a Developer Certificate of Origin (DCO) sign-off on commits.
-This certifies that you wrote or have the right to submit the code.
+All commits must be DCO-signed. Use `git commit -s` so the `Signed-off-by:` trail comes from your git config automatically.
 
-Add `-s` to your commit command:
 ```bash
 git commit -s -m "Your commit message"
 ```
 
-This adds a line like:
-```
-Signed-off-by: Your Name <your.email@example.com>
-```
+**Rules:**
+- Always use `git commit -s` — never hardcode a developer's name or email
+- Never add promotional or AI-attribution lines
+- PR checks enforce DCO compliance
+
+Conventional commits format is preferred (`feat:`, `fix:`, `docs:`, `refactor:`, etc.).
 
 ## Getting Help
 
 - Open an issue for questions
 - Check existing issues and PRs
 - Read the [Architecture](/ryu_ldn_nx/guides/architecture) guide
+- See [Protocol Reference](/ryu_ldn_nx/reference/protocol) for wire format details

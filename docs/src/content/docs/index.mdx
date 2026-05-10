@@ -5,14 +5,16 @@ description: Nintendo Switch LDN sysmodule for online local multiplayer
 
 # ryu_ldn_nx
 
-**ryu_ldn_nx** is a Nintendo Switch sysmodule that enables online local multiplayer (LDN) gaming by connecting to Ryujinx LDN servers. Play "local wireless" games like Mario Kart 8 with friends anywhere in the world!
+**ryu_ldn_nx** is a Nintendo Switch sysmodule that enables online local multiplayer (LDN) gaming by connecting to Ryujinx LDN servers over TCP. Play "local wireless" games like Mario Kart 8 with friends anywhere in the world!
 
 ## Features
 
-- **Easy Installation** - Just extract to your SD card and reboot
-- **Transparent Operation** - Games work without modification
-- **Tesla Overlay** - Monitor connection status and configure settings
-- **Auto Reconnect** - Handles network interruptions gracefully
+- **Easy Installation** — Just extract to your SD card and reboot
+- **Transparent Operation** — Games work without modification
+- **PIA Mesh Compatibility** — Broadcast delivery ensures PIA mesh discovery works correctly
+- **Tesla Overlay** — Monitor connection status and configure settings in-game
+- **Auto Reconnect** — Fast first retry (200ms) then exponential backoff with jitter
+- **Low Latency** — Optimized for real-time gameplay with optional P2P mode
 
 ## Supported Games
 
@@ -35,11 +37,16 @@ Works with games that use Nintendo's LDN service:
 
 ## Next Steps
 
-- [Installation Guide](/guides/installation/) - Step-by-step installation instructions
-- [Configuration](/guides/configuration/) - Customize server and settings
-- [Using the Overlay](/guides/overlay/) - Monitor your connection
-- [Troubleshooting](/guides/troubleshooting/) - Common issues and solutions
-- [Contributing](/guides/contributing/) - Help improve ryu_ldn_nx
+- [Introduction](/ryu_ldn_nx/guides/introduction) — What is ryu_ldn_nx and how it works
+- [Architecture](/ryu_ldn_nx/guides/architecture) — Technical deep dive
+- [Installation](/ryu_ldn_nx/guides/installation) — Step-by-step installation
+- [Configuration](/ryu_ldn_nx/guides/configuration) — Customize server and settings
+- [Using the Overlay](/ryu_ldn_nx/guides/overlay) — Monitor your connection
+- [Troubleshooting](/ryu_ldn_nx/guides/troubleshooting) — Common issues and solutions
+- [Protocol Reference](/ryu_ldn_nx/reference/protocol) — Wire format details
+- [IPC Commands](/ryu_ldn_nx/reference/ipc-commands) — ryu:cfg service reference
+- [Building from Source](/ryu_ldn_nx/guides/building) — Compile it yourself
+- [Contributing](/ryu_ldn_nx/guides/contributing) — Help improve ryu_ldn_nx
 
 ## Links
 

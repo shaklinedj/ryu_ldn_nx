@@ -5,26 +5,70 @@ description: API documentation for ryu_ldn_nx
 
 # API Reference
 
-This section contains the API documentation generated from the source code.
+This section contains the API documentation for ryu_ldn_nx modules.
 
-## Modules
+## Protocol
 
-### Protocol
-- [RyuProtocol](/ryu_ldn_nx/api/protocol) - Protocol encoder/decoder
-- [PacketBuffer](/ryu_ldn_nx/api/packet-buffer) - Packet buffering utilities
-- [Types](/ryu_ldn_nx/api/types) - Protocol types and structures
+Wire format types and encoding/decoding for the RyuLdn TCP protocol.
 
-### Network
-- [NetworkClient](/ryu_ldn_nx/api/network-client) - Main network client
-- [TcpClient](/ryu_ldn_nx/api/tcp-client) - TCP socket wrapper
-- [ConnectionState](/ryu_ldn_nx/api/connection-state) - Connection state machine
-- [ReconnectManager](/ryu_ldn_nx/api/reconnect) - Automatic reconnection
+- **[Protocol Reference](/ryu_ldn_nx/reference/protocol)** — Packet types, structures, byte order, and signaling semantics
 
-### LDN Service
-- [LdnMitMService](/ryu_ldn_nx/api/ldn-mitm-service) - MITM service implementation
-- [LdnICommunication](/ryu_ldn_nx/api/ldn-icommunication) - IPC command handler
-- [LdnStateMachine](/ryu_ldn_nx/api/ldn-state-machine) - LDN state management
-- [LdnConfigService](/ryu_ldn_nx/api/ldn-config-service) - Overlay configuration IPC
+## IPC Services
 
-### Config
-- [Config](/ryu_ldn_nx/api/config) - Configuration parser
+IPC command interfaces exposed by the sysmodule.
+
+- **[IPC Commands](/ryu_ldn_nx/reference/ipc-commands)** — Full reference for `ldn:u` MITM commands, `ryu:cfg` config service commands (0–30), and data structures
+
+## Key Source Modules
+
+### Network (`sysmodule/source/network/`)
+
+| Module | Description |
+|--------|-------------|
+| TcpClient | BSD socket wrapper with TCP keepalive and graceful shutdown |
+| Client | High-level RyuLdn protocol client |
+| ConnectionState | State machine: Disconnected → Connecting → Connected → Ready |
+| ReconnectManager | Exponential backoff with fast first retry (200ms) and jitter |
+
+### LDN (`sysmodule/source/ldn/`)
+
+| Module | Description |
+|--------|-------------|
+| ICommunicationService | Main LDN MITM implementation (CreateNetwork, Scan, Connect, etc.) |
+| LdnStateMachine | CommState transitions (None → Initialized → AccessPoint/Station → Created/Connected) |
+| LdnPacketDispatcher | Routes incoming packets to appropriate handlers |
+| LdnSessionHandler | Session lifecycle management |
+| LdnProxyHandler | Proxy data routing via ProxyData/ProxyConfig |
+| LdnSharedState | Shared state between MITM and config service |
+| LdnNodeMapper | Maps between node IDs and IP addresses |
+
+### BSD Proxy (`sysmodule/source/bsd/`)
+
+| Module | Description |
+|--------|-------------|
+| ProxySocket | Intercepted BSD socket (bind/connect/sendto/recvfrom) |
+| ProxySocketManager | Socket registry, port allocation, broadcast fan-out routing |
+| EphemeralPortPool | Dynamic port allocation (49152–65535) |
+
+### P2P (`sysmodule/source/p2p/`)
+
+| Module | Description |
+|--------|-------------|
+| P2pProxyServer | Listens for incoming P2P connections |
+| P2pProxyClient | Connects to peer proxy servers |
+| UpnpPortMapper | UPnP port forward discovery and mapping |
+
+### Config (`sysmodule/source/config/`)
+
+| Module | Description |
+|--------|-------------|
+| ConfigManager | Fixed-buffer INI parser with default-on-failure semantics |
+| ConfigIpcService | ryu:cfg IPC service (31 commands, 0–30) |
+
+### Protocol (`sysmodule/source/protocol/`)
+
+| Module | Description |
+|--------|-------------|
+| types.hpp | All wire format structures with `static_assert` size checks |
+| ryu_protocol.hpp | Packet encoding/decoding functions |
+| packet_buffer.hpp | TCP stream reassembly and buffering |
