@@ -1,84 +1,72 @@
-; ryu_ldn_nx Configuration File
-; Copy this file to config.ini to use custom settings
-; All values shown are defaults - uncomment and modify as needed
-
-;------------------------------------------------------------------------------
-; SERVER SETTINGS
-; Configure connection to the ryu_ldn server
-;------------------------------------------------------------------------------
+; ryu_ldn_nx Configuration
+; Auto-generated on first boot
+; Edit this file to customize settings
+; Server Local : 192.168.1.186 / 82.67.118.146
+; RyuLDN Officiel : 150.230.119.252
 [server]
 ; Server hostname or IP address
-; Default: ldn.ryujinx.app (official Ryujinx LDN server)
-;host = ldn.ryujinx.app
-
+host = 150.230.119.252
 ; Server port
-; Default: 30456
-;port = 30456
+port = 30456
+; Use TLS encryption (0/1)
+use_tls = 0
 
-; Use TLS/SSL for server connection (recommended)
-; 0 = disabled, 1 = enabled
-;use_tls = 1
-
-;------------------------------------------------------------------------------
-; NETWORK SETTINGS
-; Configure network behavior and timeouts
-;------------------------------------------------------------------------------
 [network]
 ; Connection timeout in milliseconds
-; How long to wait when connecting to server
-; Default: 5000 (5 seconds)
-;connect_timeout = 5000
-
+connect_timeout = 5000
 ; Ping interval in milliseconds
-; How often to send keepalive packets to maintain connection
-; Default: 10000 (10 seconds)
-;ping_interval = 10000
-
+ping_interval = 10000
 ; Reconnect delay in milliseconds
-; How long to wait before attempting reconnection after disconnect
-; Default: 3000 (3 seconds)
-;reconnect_delay = 3000
+reconnect_delay = 3000
+; Max reconnect attempts (0 = infinite)
+max_reconnect_attempts = 5
 
-; Maximum reconnection attempts before giving up
-; 0 = infinite retries
-; Default: 5
-;max_reconnect_attempts = 5
-
-;------------------------------------------------------------------------------
-; LDN SETTINGS
-; Configure Local Wireless emulation behavior
-;------------------------------------------------------------------------------
 [ldn]
-; Enable ryu_ldn_nx functionality
-; 0 = disabled (use normal LDN), 1 = enabled (route through server)
-; Default: 1
-;enabled = 1
+; Enable LDN emulation (0/1)
+enabled = 1
+; Room passphrase (empty = public)
+passphrase =
+; Network interface (empty = auto)
+interface =
+; Disable P2P proxy (0/1) - like Ryujinx MultiplayerDisableP2p
+disable_p2p = 1
 
-; Passphrase for private rooms (optional)
-; Leave empty for public matchmaking
-; Max 64 characters
-;passphrase =
-
-; Preferred network interface
-; Leave empty for automatic selection
-;interface =
-
-;------------------------------------------------------------------------------
-; DEBUG SETTINGS
-; For development and troubleshooting
-;------------------------------------------------------------------------------
 [debug]
-; Enable debug logging
-; 0 = disabled, 1 = enabled
-; Default: 0
-;enabled = 0
+; Enable debug logging (0/1)
+enabled = 1
+; Log level (0=errors, 1=warnings, 2=info, 3=verbose)
+level = 2
+; Log to file (0/1)
+log_to_file = 1
 
-; Debug log level (when debug is enabled)
-; 0 = errors only, 1 = warnings, 2 = info, 3 = verbose
-; Default: 1
-;level = 1
+[perf]
+; Performance optimizations — flip individually if one regresses on hardware.
 
-; Log to file (in addition to console)
-; 0 = disabled, 1 = enabled
-; Log file location: /config/ryu_ldn_nx/ryu_ldn_nx.log
-;log_to_file = 0
+; Step 1: bump the master TCP socket OS-level buffers (SO_RCVBUF/SO_SNDBUF)
+; so the async server's bursts don't backpressure the kernel.
+enable_larger_socket_buffers = 1
+; Buffer sizes in KB (kernel may round)
+socket_recv_buffer_kb = 64
+socket_send_buffer_kb = 64
+
+; Step 2: raise the LDN background thread priority. Default of 20 placed
+; the drain thread far behind the IPC threads (priority 6). 8 puts it just
+; below them. Lower number = higher priority on Switch.
+enable_bg_thread_high_priority = 1
+bg_thread_priority = 8
+
+; Step 3: tighten the drain loop. Worst-case latency between a packet
+; arriving on the kernel and being routed drops from ~40 ms to ~10 ms.
+enable_tight_drain_loop = 1
+recv_timeout_ms = 5
+bg_thread_sleep_ms = 5
+
+; Step 4 (not yet wired — keep at 0 for now): release ProxySocketManager
+; m_mutex before per-socket IncomingData. Requires unique_ptr -> shared_ptr
+; migration to be safe.
+enable_manager_mutex_release = 0
+
+; Step 5 (not yet wired — keep at 0 for now): asynchronous send queue.
+; BSD MITM enqueues sends, a dedicated worker thread drains and calls
+; send_all so callers never block on m_send_mutex.
+enable_async_send_queue = 0

@@ -124,22 +124,40 @@ export APP_JSON := $(TOPDIR)/res/app.json
 TITLE_ID	:=	4200000000000010
 
 #---------------------------------------------------------------------------------
+# OUTPUT_DIR: complete SD card image at project root
+#---------------------------------------------------------------------------------
+OUTPUT_DIR	:=	$(CURDIR)/../output
+
+#---------------------------------------------------------------------------------
 all: $(BUILD)
 
 #---------------------------------------------------------------------------------
-# dist: create SD card structure ZIP
+# dist: create complete SD card structure + ZIP
+# Produces output/ with sysmodule, overlay, config, gamelist
 #---------------------------------------------------------------------------------
 dist: all
 	@echo "Creating SD card structure..."
-	@rm -rf dist
-	@mkdir -p dist/atmosphere/contents/$(TITLE_ID)/flags
-	@cp $(TARGET).nsp dist/atmosphere/contents/$(TITLE_ID)/exefs.nsp 2>/dev/null || true
-	@cp $(TARGET).npdm dist/atmosphere/contents/$(TITLE_ID)/main.npdm 2>/dev/null || true
-	@cp res/toolbox.json dist/atmosphere/contents/$(TITLE_ID)/ 2>/dev/null || true
-	@touch dist/atmosphere/contents/$(TITLE_ID)/flags/boot2.flag
+	@rm -rf $(OUTPUT_DIR)
+	@mkdir -p $(OUTPUT_DIR)/atmosphere/contents/$(TITLE_ID)/flags
+	@mkdir -p $(OUTPUT_DIR)/switch/.overlays
+	@mkdir -p $(OUTPUT_DIR)/config/ryu_ldn_nx
+	@cp $(TARGET).nsp $(OUTPUT_DIR)/atmosphere/contents/$(TITLE_ID)/exefs.nsp
+	@cp $(TARGET).npdm $(OUTPUT_DIR)/atmosphere/contents/$(TITLE_ID)/main.npdm
+	@cp res/toolbox.json $(OUTPUT_DIR)/atmosphere/contents/$(TITLE_ID)/
+	@touch $(OUTPUT_DIR)/atmosphere/contents/$(TITLE_ID)/flags/boot2.flag
+	@if [ -f $(CURDIR)/../overlay/ryu_ldn_nx_overlay.ovl ]; then \
+		cp $(CURDIR)/../overlay/ryu_ldn_nx_overlay.ovl $(OUTPUT_DIR)/switch/.overlays/; \
+		echo "Included overlay"; \
+	else \
+		echo "WARNING: overlay not found, build overlay first"; \
+	fi
+	@cp $(CURDIR)/../config/ryu_ldn_nx/config.ini.example $(OUTPUT_DIR)/config/ryu_ldn_nx/config.ini.example
+	@cp $(CURDIR)/../config/ryu_ldn_nx/gamelist.txt $(OUTPUT_DIR)/config/ryu_ldn_nx/
+	@echo "Included gamelist.txt and config.ini.example"
 	@echo "Creating ZIP..."
-	@cd dist && zip -r ../$(TARGET)-sysmodule.zip .
-	@echo "Created $(TARGET)-sysmodule.zip"
+	@cd $(OUTPUT_DIR) && zip -r ../$(TARGET)-release.zip .
+	@echo "Created $(TARGET)-release.zip"
+	@echo "SD card structure in output/"
 
 #---------------------------------------------------------------------------------
 rebuild: clean all
@@ -151,7 +169,7 @@ $(BUILD):
 #---------------------------------------------------------------------------------
 clean:
 	@echo clean ...
-	@rm -fr $(BUILD) $(TARGET).kip $(TARGET).elf $(TARGET).nso $(TARGET).npdm $(TARGET).nsp dist $(TARGET)-sysmodule.zip
+	@rm -fr $(BUILD) $(TARGET).kip $(TARGET).elf $(TARGET).nso $(TARGET).npdm $(TARGET).nsp $(OUTPUT_DIR) $(TARGET)-release.zip
 
 #---------------------------------------------------------------------------------
 else

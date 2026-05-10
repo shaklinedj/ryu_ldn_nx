@@ -1,27 +1,50 @@
 services:
-  # Build libstratosphere library (required for sysmodule)
-  libstratosphere:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    volumes:
-      - .:/workspace
-    working_dir: /workspace/sysmodule/Atmosphere-libs/libstratosphere
-    entrypoint: ["/workspace/scripts/builder/build-wrapper.sh", "libstratosphere", ".", "--lock", ".lock-libstratosphere-build"]
-    command: ["nx_release"]
-
-  # Build sysmodule (requires libstratosphere)
+  # Build everything + package into output/ and ZIP
+  # Usage: docker compose run --rm build
   build:
     build:
       context: .
       dockerfile: Dockerfile
     volumes:
       - .:/workspace
-    working_dir: /workspace/sysmodule
-    entrypoint: ["/workspace/scripts/builder/build-wrapper.sh", "build", "--lock", ".lock-libstratosphere-build", "--lock", ".lock-sysmodule-build"]
-    command: ["all"]
-    depends_on:
-      - libstratosphere
+    working_dir: /workspace
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        echo "[build] 🔨 Building libstratosphere..."
+        cd /workspace/sysmodule/Atmosphere-libs/libstratosphere && make -j4 nx_release
+
+        echo "[build] 🔨 Building sysmodule..."
+        cd /workspace/sysmodule && make -j4 all
+
+        echo "[build] 🔨 Building overlay..."
+        cd /workspace/overlay && make -j4 all
+
+        echo "[build] 📦 Packaging SD card structure..."
+        cd /workspace/sysmodule && make dist
+
+        echo "[build] ✅ Done — output/ and ryu_ldn_nx-release.zip ready"
+
+  # Clean all build artifacts + output
+  # Usage: docker compose run --rm clean
+  clean:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - .:/workspace
+    working_dir: /workspace
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "[clean] 🧹 Cleaning sysmodule..."
+        cd /workspace/sysmodule && make clean 2>/dev/null || true
+        echo "[clean] 🧹 Cleaning overlay..."
+        cd /workspace/overlay && make clean 2>/dev/null || true
+        echo "[clean] 🧹 Removing output..."
+        rm -rf /workspace/output /workspace/ryu_ldn_nx-release.zip
+        echo "[clean] ✅ Done"
 
   # Run tests (host binary with g++)
   test:
@@ -32,40 +55,6 @@ services:
       - .:/workspace
     working_dir: /workspace/tests
     command: make test
-
-  # Build Tesla overlay
-  overlay:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    volumes:
-      - .:/workspace
-    working_dir: /workspace/overlay
-    entrypoint: ["/workspace/scripts/builder/build-wrapper.sh", "overlay", ".", "--lock", ".lock-overlay-build"]
-    command: []
-
-  # Clean sysmodule build artifacts
-  clean:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    volumes:
-      - .:/workspace
-    working_dir: /workspace/sysmodule
-    command: make clean
-
-  # Build all targets
-  all:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    volumes:
-      - .:/workspace
-    working_dir: /workspace
-    command: ["/bin/sh", "-c", "sleep 2; echo '[all] ⏳ Waiting for all builds to complete...'; while ls /workspace/.lock-* >/dev/null 2>&1; do sleep 1; done; echo '[all] ✅ All builds complete'"]
-    depends_on:
-      - build
-      - overlay
 
   # GDB debugger for Switch (interactive)
   # Usage: docker compose run --rm debugger <SWITCH_IP> [PROCESS_ID]
@@ -92,4 +81,3 @@ services:
     stdin_open: true
     tty: true
     entrypoint: ["/bin/bash"]
-    
