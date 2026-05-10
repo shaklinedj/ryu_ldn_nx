@@ -33,16 +33,10 @@ cd ryu_ldn_nx
 # Build sysmodule + overlay + dist ZIP + output/ directory
 docker compose run --rm build
 
-# Build overlay only
-docker compose run --rm overlay
-
-# Build both in parallel (with file-lock coordination)
-docker compose run --rm all
-
 # Run host unit tests
 docker compose run --rm test
 
-# Clean sysmodule artifacts
+# Clean all build artifacts and output/
 docker compose run --rm clean
 ```
 
@@ -154,7 +148,7 @@ This produces the correct directory structure with all required files including 
 Interactive GDB against a running Switch:
 
 ```bash
-docker-compose run --rm debugger <SWITCH_IP> [PID]
+docker compose run --rm debugger <SWITCH_IP> [PID]
 ```
 
 GDB presets and component-specific debug scripts live in `scripts/debugger/`.

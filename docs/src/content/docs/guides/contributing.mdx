@@ -33,14 +33,11 @@ Thank you for your interest in contributing to ryu_ldn_nx! This guide will help 
 
 2. **Build using Docker**
    ```bash
-   # Build sysmodule
-   docker-compose run --rm build
+   # Build sysmodule + overlay + dist ZIP
+   docker compose run --rm build
 
    # Run tests
-   docker-compose run --rm test
-
-   # Build overlay
-   docker-compose run --rm overlay
+   docker compose run --rm test
    ```
 
 ## Code Structure
@@ -101,7 +98,7 @@ Result NetworkClient::ProcessData(const u8* data, size_t size) {
 ### Running Tests
 
 ```bash
-docker-compose run --rm test
+docker compose run --rm test
 ```
 
 ### Writing Tests
@@ -135,8 +132,8 @@ void test_my_feature() {
 
 3. **Test locally**
    ```bash
-   docker-compose run --rm test
-   docker-compose run --rm build
+   docker compose run --rm test
+   docker compose run --rm build
    ```
 
 4. **Commit with sign-off**

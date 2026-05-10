@@ -16,23 +16,17 @@ All three services share a 384 KB expanded heap (`g_heap_memory`). The `new`/`de
 
 ## Build Commands
 
-All cross-compilation runs inside Docker (`devkitpro/devkita64`). Use docker-compose, not bare `make` on the host.
+All cross-compilation runs inside Docker (`devkitpro/devkita64`). Use docker compose, not bare `make` on the host.
 
 ```bash
-# Sysmodule (.nsp) — builds libstratosphere first automatically
-docker-compose run --rm build
-
-# Tesla overlay (.ovl)
-docker-compose run --rm overlay
-
-# Both, in parallel with file-lock coordination
-docker-compose run --rm all
+# Sysmodule + overlay + dist ZIP (single command)
+docker compose run --rm build
 
 # Host unit tests (g++, not cross-compiled; uses -DTEST_BUILD)
-docker-compose run --rm test
+docker compose run --rm test
 
-# Clean sysmodule artifacts only
-docker-compose run --rm clean
+# Clean all build artifacts and output/
+docker compose run --rm clean
 ```
 
 ### Per-suite test targets
@@ -59,7 +53,7 @@ Config file (`config.ini`) is NOT included in dist because `ensure_config_exists
 ### Debugging
 
 ```bash
-docker-compose run --rm debugger <SWITCH_IP> [PID]   # interactive GDB session
+docker compose run --rm debugger <SWITCH_IP> [PID]   # interactive GDB session
 ```
 
 GDB presets and component-specific debug scripts live in `scripts/debugger/`.
@@ -223,9 +217,9 @@ The `bsd:s` service type is used instead of `bsd:u` because UPnP's `upnpDiscover
 ## Build System Details
 
 - The sysmodule Makefile inherits from `Atmosphere-libs/config/templates/stratosphere.mk` and produces `.nsp`, `.nso`, `.npdm`, `.elf` outputs.
-- `libstratosphere` is built as a dependency before the sysmodule (handled by `docker-compose` service `libstratosphere`).
+- `libstratosphere` is built as a dependency before the sysmodule (handled by the `build` docker compose service).
 - The overlay Makefile uses `libultrahand` (submodule in `overlay/libultrahand/`) and produces a `.ovl` Tesla overlay.
-- Build wrapper (`scripts/builder/build-wrapper.sh`) handles file-lock coordination between parallel `docker-compose` services, with logs in `build-logs/`.
+- Build wrapper (`scripts/builder/build-wrapper.sh`) handles file-lock coordination with logs in `build-logs/`.
 - CI: `.github/workflows/build.yml` runs tests → builds sysmodule → builds overlay → packages. `.github/workflows/release.yml` additionally downloads game whitelist from the LDN server repo and creates a GitHub release with changelog.
 
 ## Connection Resilience
@@ -263,7 +257,7 @@ The host IDE will show errors for `<stratosphere.hpp>`, libnx APIs, and Switch-s
 
 - Log file on Switch: `config/ryu_ldn_nx/ryu_ldn_nx.log` (on SD card when `log_to_file=1`).
 - Read deltas per test run, not the full file.
-- Interactive GDB: `docker-compose run --rm debugger <SWITCH_IP> [PID]`
+- Interactive GDB: `docker compose run --rm debugger <SWITCH_IP> [PID]`
 - GDB component scripts in `scripts/debugger/components/` target specific subsystems: `ldn/`, `network/`, `config/`, `p2p/`, `bsd/`, `debug/`.
 - Presets in `scripts/debugger/presets/`: `minimal.gdb`, `crash-analysis.gdb`, `ldn-focus.gdb`, `network-focus.gdb`.
 

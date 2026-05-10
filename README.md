@@ -120,13 +120,10 @@ cd ryu_ldn_nx
 # Build everything (sysmodule + overlay + dist ZIP)
 docker compose run --rm build
 
-# Build overlay only
-docker compose run --rm overlay
-
 # Run host unit tests
 docker compose run --rm test
 
-# Clean build artifacts
+# Clean build artifacts and output/
 docker compose run --rm clean
 
 # Package for distribution

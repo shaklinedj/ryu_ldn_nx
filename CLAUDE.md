@@ -16,16 +16,10 @@ All builds run inside the devkitA64 Docker container defined in [Dockerfile](Doc
 # Sysmodule + overlay + dist ZIP (single command)
 docker compose run --rm build
 
-# Tesla overlay (.ovl) only
-docker compose run --rm overlay
-
-# Both in parallel
-docker compose run --rm all
-
 # Host unit tests (g++, not cross-compiled)
 docker compose run --rm test
 
-# Clean sysmodule artifacts
+# Clean all build artifacts and output/
 docker compose run --rm clean
 
 # Interactive GDB against a running Switch
