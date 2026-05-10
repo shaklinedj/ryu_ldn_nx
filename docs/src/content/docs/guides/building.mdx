@@ -19,7 +19,7 @@ This guide explains how to build ryu_ldn_nx from source.
 - devkitPro with devkitA64
 - libnx
 - Atmosphere-libs (submodule)
-- libtesla (for overlay)
+- libultrahand (submodule, for overlay)
 
 ## Docker Build
 
@@ -30,34 +30,77 @@ The easiest way to build is using Docker:
 git clone --recursive https://github.com/Ethiquema/ryu_ldn_nx.git
 cd ryu_ldn_nx
 
-# Build sysmodule
-docker-compose run --rm build
+# Build sysmodule + overlay + dist ZIP + output/ directory
+docker compose run --rm build
 
-# Build overlay
-docker-compose run --rm overlay
+# Build overlay only
+docker compose run --rm overlay
 
-# Run tests
-docker-compose run --rm test
+# Build both in parallel (with file-lock coordination)
+docker compose run --rm all
+
+# Run host unit tests
+docker compose run --rm test
+
+# Clean sysmodule artifacts
+docker compose run --rm clean
+```
+
+### Per-Suite Test Targets
+
+Run individual test suites:
+
+```bash
+cd tests && make test-ldn-state-machine
+# Available: protocol, config, config-manager, log, socket,
+# tcp-client, connection-state, reconnect, client, ldn-types,
+# ldn-state-machine, ldn-proxy, ldn-error, ldn-integration,
+# overlay, ipc-config, config-ipc-service, shared-state,
+# packet-dispatcher, session-handler, proxy-handler,
+# handler-integration, upnp, p2p-proxy, p2p-client,
+# p2p-integration, p2p-create-network
+
+# Coverage report
+make COVERAGE=1 coverage
 ```
 
 ### Build Outputs
 
 After building:
 
-- Sysmodule: `sysmodule/ryu_ldn_nx.nsp`
-- Overlay: `overlay/ryu_ldn_nx_overlay.ovl`
-- Debug symbols: `sysmodule/ryu_ldn_nx.elf`
+| Output | Path | Description |
+|--------|------|-------------|
+| Sysmodule (.nsp) | `sysmodule/ryu_ldn_nx.nsp` | Main sysmodule binary |
+| Overlay (.ovl) | `overlay/ryu_ldn_nx_overlay.ovl` | Tesla overlay |
+| Debug symbols | `sysmodule/ryu_ldn_nx.elf` | Debug ELF |
+| Dist package | `output/` | SD card directory structure |
+| Release ZIP | `sysmodule/ryu_ldn_nx-release.zip` | Release package |
+
+The `output/` directory contains the full SD card layout:
+
+```
+output/
+├── atmosphere/contents/4200000000000010/
+│   ├── exefs.nsp
+│   ├── main.npdm
+│   ├── toolbox.json
+│   └── flags/boot2.flag
+├── config/ryu_ldn_nx/
+│   ├── config.ini.example
+│   └── gamelist.txt
+└── switch/.overlays/
+    └── ryu_ldn_nx_overlay.ovl
+```
 
 ## Native Build
 
-If you prefer building natively:
+If you prefer building natively (requires devkitPro toolchain):
 
 ### 1. Install devkitPro
 
 Follow the [devkitPro getting started guide](https://devkitpro.org/wiki/Getting_Started).
 
 ```bash
-# Install required packages
 dkp-pacman -S switch-dev libnx
 ```
 
@@ -77,37 +120,44 @@ make -j$(nproc)
 
 ### 4. Build Overlay
 
-```bash
-# Install libtesla
-git clone https://github.com/WerWolv/libtesla.git /opt/libtesla
+The overlay uses **libultrahand** (included as a submodule in `overlay/libultrahand/`):
 
+```bash
 cd overlay
-make LIBTESLA=/opt/libtesla
+make -j$(nproc)
 ```
 
+### 5. Distribution Package
+
+```bash
+cd sysmodule && make dist
+```
+
+This produces the `output/` directory and `ryu_ldn_nx-release.zip` with the correct SD card layout. The config file is **not** included in dist because `ensure_config_exists()` in `config.cpp` auto-creates it on first boot.
 
 ## Creating a Release Package
 
-To create a release-ready ZIP:
+The recommended way is using the dist target:
 
 ```bash
-# Build everything
-docker-compose run --rm build
-docker-compose run --rm overlay
+# Build everything + dist
+docker compose run --rm build    # includes dist
 
-# Create package structure
-mkdir -p release/atmosphere/contents/4200000000000010
-mkdir -p release/switch/.overlays
-
-# Copy files
-cp sysmodule/ryu_ldn_nx.nsp release/atmosphere/contents/4200000000000010/exefs.nsp
-cp sysmodule/ryu_ldn_nx.npdm release/atmosphere/contents/4200000000000010/main.npdm
-cp sysmodule/res/*.json release/atmosphere/contents/4200000000000010/
-cp overlay/ryu_ldn_nx_overlay.ovl release/switch/.overlays/
-
-# Create ZIP (config is generated on first boot)
-cd release && zip -r ../ryu_ldn_nx.zip .
+# Or natively:
+cd sysmodule && make dist
 ```
+
+This produces the correct directory structure with all required files including `boot2.flag` and `toolbox.json`.
+
+## Debugging
+
+Interactive GDB against a running Switch:
+
+```bash
+docker-compose run --rm debugger <SWITCH_IP> [PID]
+```
+
+GDB presets and component-specific debug scripts live in `scripts/debugger/`.
 
 ## Troubleshooting Build Issues
 
@@ -131,9 +181,10 @@ cd sysmodule/Atmosphere-libs
 git checkout <required-version>
 ```
 
-### libtesla not found
+### libultrahand not found
 
-Set the LIBTESLA environment variable:
+The overlay uses `libultrahand` as a submodule in `overlay/libultrahand/`. Make sure submodules are initialized:
+
 ```bash
-export LIBTESLA=/path/to/libtesla
+git submodule update --init --recursive
 ```
