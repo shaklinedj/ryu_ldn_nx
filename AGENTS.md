@@ -183,7 +183,10 @@ The `bsd:s` service type is used instead of `bsd:u` because UPnP's `upnpDiscover
 
 All commits must be DCO-signed (`git commit -s`). The project enforces this via `CONTRIBUTING.md` and PR checks. Conventional commits format is preferred.
 
-**NEVER add promotional or attribution lines to commit messages** (no "Generated with Crush", "Assisted-by: AI", "Co-authored-by: AI", or similar). Only the author's own `Signed-off-by:` trail.
+**Signed-off-by rules:**
+- Always use `git commit -s` so the `Signed-off-by:` trail comes from the author's git config (`user.name` / `user.email`).
+- **NEVER hardcode a developer's name or email** in the commit message. The `-s` flag pulls it from git config automatically.
+- **NEVER add promotional or attribution lines** (no "Generated with Crush", "Assisted-by: AI", "Co-authored-by: AI", or similar).
 
 ## IDE Noise
 
