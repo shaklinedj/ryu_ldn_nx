@@ -2049,9 +2049,23 @@ void ICommunicationService::HandleServerPacket(ryu_ldn::protocol::PacketId id, c
             break;
     }
 
-    // Signal that we received a response (for WaitForResponse)
-    m_last_response_id = id;
-    m_response_event.Signal();
+    // Only signal m_response_event for packets that are responses to
+    // explicit requests (Connected, ScanReply, ScanReplyEnd, RejectReply,
+    // ProxyConnectReply, NetworkError). Push/async packets (ProxyConfig,
+    // ProxyData, ExternalProxy, SyncNetwork, Ping) arrive unsolicited and
+    // should not wake WaitForResponse — doing so causes spurious wake-ups
+    // that can lead to false timeout errors when the expected response
+    // arrives shortly after an async packet.
+    const bool is_response = (id == ryu_ldn::protocol::PacketId::Connected ||
+                               id == ryu_ldn::protocol::PacketId::ScanReply ||
+                               id == ryu_ldn::protocol::PacketId::ScanReplyEnd ||
+                               id == ryu_ldn::protocol::PacketId::RejectReply ||
+                               id == ryu_ldn::protocol::PacketId::ProxyConnectReply ||
+                               id == ryu_ldn::protocol::PacketId::NetworkError);
+    if (is_response) {
+        m_last_response_id = id;
+        m_response_event.Signal();
+    }
 }
 
 bool ICommunicationService::WaitForResponse(ryu_ldn::protocol::PacketId expected_id, uint64_t timeout_ms) {
@@ -2130,21 +2144,15 @@ bool ICommunicationService::WaitForResponse(ryu_ldn::protocol::PacketId expected
                 break;
             }
 
-            // These packets can arrive during WaitForResponse without being the
-            // expected reply — they're handled by HandleServerPacket on the
-            // receive thread.  Don't warn for them.
-            if (last_id != ryu_ldn::protocol::PacketId::ProxyData &&
-                last_id != ryu_ldn::protocol::PacketId::ProxyConfig &&
-                last_id != ryu_ldn::protocol::PacketId::ProxyConnect &&
-                last_id != ryu_ldn::protocol::PacketId::ExternalProxy &&
-                last_id != ryu_ldn::protocol::PacketId::SyncNetwork &&
-                last_id != ryu_ldn::protocol::PacketId::Ping) {
-                LOG_WARN("Received unexpected response: expected=%u, got=%u",
-                         static_cast<unsigned>(expected_id), static_cast<unsigned>(last_id));
+            // Only response-type packets signal m_response_event now.
+            // ScanReply/ScanReplyEnd can arrive during WaitForResponse for Connected
+            // (server sends scan results while we wait for a response to CreateNetwork).
+            // Don't warn for these — they're legitimate interleaved responses.
+            if (last_id == ryu_ldn::protocol::PacketId::ScanReply ||
+                last_id == ryu_ldn::protocol::PacketId::ScanReplyEnd) {
+                // Expected interleaved responses — continue waiting
+                continue;
             }
-
-            // Recalculate remaining timeout and continue waiting
-            continue;
         }
 
         if (signaled == std::addressof(error_holder)) {

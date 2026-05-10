@@ -478,6 +478,26 @@ SocketResult Socket::connect(const char* host, uint16_t port, uint32_t timeout_m
         set_non_blocking(false);
     }
 
+    // Enable TCP keepalive to detect dead connections on unstable networks.
+    // This is purely a transport-level mechanism — no RyuLDN protocol changes.
+    // After 30s idle, send a probe every 10s; after 5 failed probes, close.
+    int keepalive = 1;
+    if (setsockopt(m_fd, SOL_SOCKET, SO_KEEPALIVE, &keepalive, sizeof(keepalive)) < 0) {
+        LOG_WARN("Socket::connect: SO_KEEPALIVE failed: %d (%s)", errno, strerror(errno));
+        // Non-fatal — continue without keepalive
+    } else {
+#ifdef __SWITCH__
+        // Switch/libnx uses TCP_KEEPIDLE, TCP_KEEPINTVL, TCP_KEEPCNT
+        // (same constants as Linux, available via <netinet/tcp.h>)
+        int idle = 30;   // seconds before first probe
+        int intvl = 10;  // seconds between probes
+        int cnt = 5;     // number of failed probes before close
+        setsockopt(m_fd, IPPROTO_TCP, TCP_KEEPIDLE, &idle, sizeof(idle));
+        setsockopt(m_fd, IPPROTO_TCP, TCP_KEEPINTVL, &intvl, sizeof(intvl));
+        setsockopt(m_fd, IPPROTO_TCP, TCP_KEEPCNT, &cnt, sizeof(cnt));
+#endif
+    }
+
     m_connected = true;
     LOG_INFO("Socket::connect: connected to %s:%u successfully", host, port);
     return SocketResult::Success;
@@ -674,6 +694,13 @@ SocketResult Socket::recv(uint8_t* buffer, size_t buffer_size, size_t& received,
  */
 void Socket::close() {
     if (m_fd >= 0) {
+        // Graceful shutdown: send FIN before close so the remote end
+        // sees a clean disconnect rather than a RST. On unstable WiFi
+        // this prevents the server from interpreting the close as an
+        // abnormal connection loss.
+        if (m_connected) {
+            ::shutdown(m_fd, SHUT_WR);
+        }
         ::close(m_fd);
         m_fd = -1;
     }

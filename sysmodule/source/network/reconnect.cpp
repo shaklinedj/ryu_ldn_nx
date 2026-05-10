@@ -105,11 +105,20 @@ ReconnectManager::ReconnectManager(const ReconnectConfig& config)
  * delay is set to initial_delay_ms.
  */
 void ReconnectManager::calculate_delay() {
-    // Start with initial delay
+    // Fast retries: use fixed short delay for the first few attempts
+    // before switching to exponential backoff. On brief network blips
+    // (WiFi reassociation, DNS timeout), the first retry often succeeds.
+    if (m_retry_count < m_config.fast_retries) {
+        m_current_delay_ms = m_config.fast_delay_ms;
+        return;
+    }
+
+    // Start with initial delay for the first exponential step
     m_current_delay_ms = m_config.initial_delay_ms;
 
-    // Apply exponential growth for each retry
-    for (uint32_t i = 0; i < m_retry_count; ++i) {
+    // Apply exponential growth for each retry beyond fast retries
+    uint32_t exponential_count = m_retry_count - m_config.fast_retries;
+    for (uint32_t i = 0; i < exponential_count; ++i) {
         // Check for potential overflow before multiplying
         // max_delay / (multiplier/100) gives us the safe threshold
         uint32_t safe_threshold = (m_config.max_delay_ms * 100) /

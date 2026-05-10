@@ -117,6 +117,23 @@ struct ReconnectConfig {
     uint16_t max_retries;
 
     /**
+     * @brief Number of fast retries before exponential backoff begins
+     *
+     * On brief network blips (WiFi reassociation, DNS timeout), the first
+     * retry often succeeds. Use a short fixed delay for these initial
+     * attempts to recover quickly from transient failures.
+     */
+    uint8_t fast_retries;
+
+    /**
+     * @brief Delay for fast retries (milliseconds)
+     *
+     * Used for the first `fast_retries` attempts before switching
+     * to exponential backoff.
+     */
+    uint32_t fast_delay_ms;
+
+    /**
      * @brief Default constructor with sensible defaults
      *
      * Initializes with:
@@ -125,6 +142,7 @@ struct ReconnectConfig {
      * - 2x multiplier
      * - 10% jitter
      * - Infinite retries
+     * - 1 fast retry at 200ms
      */
     ReconnectConfig()
         : initial_delay_ms(1000)
@@ -132,6 +150,8 @@ struct ReconnectConfig {
         , multiplier_percent(200)
         , jitter_percent(10)
         , max_retries(0)
+        , fast_retries(1)
+        , fast_delay_ms(200)
     {}
 };
 

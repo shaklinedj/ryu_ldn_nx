@@ -1136,7 +1136,12 @@ void RyuLdnClient::generate_mac_address() {
 void RyuLdnClient::start_backoff() {
     m_backoff_start_time_ms = 0;  // Set to 0 so is_backoff_expired() captures
                                   // current time on first check (see below)
-    m_current_backoff_delay_ms = m_reconnect_manager.get_next_delay_ms();
+    // Use jitter to prevent thundering herd when multiple clients reconnect
+    // simultaneously (e.g., after a server restart).
+    // Combine retry count and a simple counter for seed diversity.
+    static uint32_t backoff_counter = 0;
+    uint32_t seed = (m_reconnect_manager.get_retry_count() + 1) * 2654435761u + (++backoff_counter * 40503u);
+    m_current_backoff_delay_ms = m_reconnect_manager.get_next_delay_ms_with_jitter(seed);
     LOG_INFO("start_backoff: delay=%u ms, retry=%u",
              m_current_backoff_delay_ms, m_reconnect_manager.get_retry_count());
 }

@@ -545,7 +545,7 @@ private:
     ~ProxySocketManager() = default;
 
     /**
-     * @brief Find a socket matching the given destination
+     * @brief Find a socket matching the given destination (first match)
      *
      * @param dest_ip Destination IP (host byte order)
      * @param dest_port Destination port (host byte order)
@@ -556,6 +556,25 @@ private:
      */
     ProxySocket* FindSocketByDestination(uint32_t dest_ip, uint16_t dest_port,
                                           ryu_ldn::bsd::ProtocolType protocol);
+
+    /**
+     * @brief Find all sockets matching the given destination
+     *
+     * For broadcast/multicast packets, multiple sockets may match.
+     * PIA mesh discovery relies on broadcast UDP reaching all
+     * listening sockets on the same port.
+     *
+     * @param dest_ip Destination IP (host byte order)
+     * @param dest_port Destination port (host byte order)
+     * @param protocol Protocol type
+     * @param out_sockets Output vector to populate with matching sockets
+     * @return Number of matching sockets found
+     *
+     * @note Caller must hold m_mutex
+     */
+    size_t FindAllSocketsByDestination(uint32_t dest_ip, uint16_t dest_port,
+                                        ryu_ldn::bsd::ProtocolType protocol,
+                                        ProxySocket* out_sockets[], size_t max_sockets);
 
     /**
      * @brief Mutex for thread safety

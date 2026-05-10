@@ -347,9 +347,15 @@ bool ProxySocketManager::RouteIncomingData(uint32_t source_ip, uint16_t source_p
                                             const void* data, size_t data_len) {
     std::scoped_lock lock(m_mutex);
 
-    // Find socket matching destination
-    ProxySocket* socket = FindSocketByDestination(dest_ip, dest_port, protocol);
-    if (socket == nullptr) {
+    // For broadcast/multicast packets, deliver to ALL matching sockets.
+    // PIA mesh discovery relies on broadcast UDP reaching every listener
+    // on the same port. For unicast, only one socket matches.
+    constexpr size_t kMaxSockets = 8;
+    ProxySocket* targets[kMaxSockets];
+    size_t match_count = FindAllSocketsByDestination(dest_ip, dest_port, protocol,
+                                                      targets, kMaxSockets);
+
+    if (match_count == 0) {
         // No matching socket — buffer into fixed-size ring for post-bind delivery.
         if (m_pending_count >= MaxPendingPackets) {
             // Drop oldest
@@ -389,8 +395,10 @@ bool ProxySocketManager::RouteIncomingData(uint32_t source_ip, uint16_t source_p
     from_addr.sin_port = __builtin_bswap16(source_port);
     from_addr.sin_addr = __builtin_bswap32(source_ip);  // Convert Ryujinx format to network byte order
 
-    // Queue data to socket
-    socket->IncomingData(data, data_len, from_addr);
+    // Deliver to all matching sockets (critical for broadcast UDP)
+    for (size_t i = 0; i < match_count; i++) {
+        targets[i]->IncomingData(data, data_len, from_addr);
+    }
 
     return true;
 }
@@ -458,6 +466,55 @@ ProxySocket* ProxySocketManager::FindSocketByDestination(uint32_t dest_ip, uint1
     }
 
     return nullptr;
+}
+
+size_t ProxySocketManager::FindAllSocketsByDestination(uint32_t dest_ip, uint16_t dest_port,
+                                                          ryu_ldn::bsd::ProtocolType protocol,
+                                                          ProxySocket* out_sockets[], size_t max_sockets) {
+    // Caller must hold m_mutex
+
+    bool is_broadcast = ((dest_ip & 0x000000FF) == 0x000000FF) ||
+                        ((dest_ip & 0x0000FFFF) == 0x0000FFFF);
+
+    size_t count = 0;
+
+    for (auto& [fd, socket] : m_sockets) {
+        if (socket == nullptr) {
+            continue;
+        }
+        if (count >= max_sockets) {
+            break;
+        }
+
+        if (socket->GetProtocol() != protocol) {
+            continue;
+        }
+
+        const auto& local_addr = socket->GetLocalAddr();
+
+        if (local_addr.GetPort() != dest_port) {
+            continue;
+        }
+
+        uint32_t local_ip = local_addr.sin_addr;
+
+        if (local_ip == 0) {
+            out_sockets[count++] = socket.get();
+            continue;
+        }
+        if (local_ip == dest_ip) {
+            out_sockets[count++] = socket.get();
+            continue;
+        }
+        if (is_broadcast) {
+            if ((local_ip & 0xFFFF0000) == (dest_ip & 0xFFFF0000)) {
+                out_sockets[count++] = socket.get();
+                continue;
+            }
+        }
+    }
+
+    return count;
 }
 
 // =============================================================================
