@@ -1,72 +1,54 @@
 ; ryu_ldn_nx Configuration
 ; Auto-generated on first boot
 ; Edit this file to customize settings
-; Server Local : 192.168.1.186 / 82.67.118.146
-; RyuLDN Officiel : 150.230.119.252
+
 [server]
 ; Server hostname or IP address
 host = 150.230.119.252
 ; Server port
 port = 30456
-; Use TLS encryption (0/1)
+; Use TLS encryption (0/1) — NOT IMPLEMENTED: always plain TCP regardless of this setting
 use_tls = 0
 
 [network]
 ; Connection timeout in milliseconds
 connect_timeout = 5000
-; Ping interval in milliseconds
+; Ping interval in milliseconds (parsed but not used — server drives pings)
 ping_interval = 10000
-; Reconnect delay in milliseconds
+; Initial reconnect delay in milliseconds (fast retry of 200ms applies first attempt)
 reconnect_delay = 3000
-; Max reconnect attempts (0 = infinite)
+; Max reconnect attempts (0 = disable auto-reconnect, not infinite)
 max_reconnect_attempts = 5
 
 [ldn]
-; Enable LDN emulation (0/1)
+; Enable LDN emulation (0/1/true/false/yes/no)
 enabled = 1
 ; Room passphrase (empty = public)
 passphrase =
 ; Network interface (empty = auto)
 interface =
-; Disable P2P proxy (0/1) - like Ryujinx MultiplayerDisableP2p
+; Disable P2P proxy (0/1/true/false/yes/no)
 disable_p2p = 1
 
 [debug]
-; Enable debug logging (0/1)
-enabled = 1
+; Enable debug logging (0/1/true/false/yes/no)
+enabled = 0
 ; Log level (0=errors, 1=warnings, 2=info, 3=verbose)
-level = 2
-; Log to file (0/1)
-log_to_file = 1
+level = 1
+; Log to file (0/1/true/false/yes/no)
+log_to_file = 0
 
 [perf]
-; Performance optimizations — flip individually if one regresses on hardware.
+; NOT YET WIRED — these settings are parsed but not consumed by the runtime.
+; They have no effect. Kept for future implementation.
 
-; Step 1: bump the master TCP socket OS-level buffers (SO_RCVBUF/SO_SNDBUF)
-; so the async server's bursts don't backpressure the kernel.
-enable_larger_socket_buffers = 1
-; Buffer sizes in KB (kernel may round)
-socket_recv_buffer_kb = 64
-socket_send_buffer_kb = 64
-
-; Step 2: raise the LDN background thread priority. Default of 20 placed
-; the drain thread far behind the IPC threads (priority 6). 8 puts it just
-; below them. Lower number = higher priority on Switch.
-enable_bg_thread_high_priority = 1
-bg_thread_priority = 8
-
-; Step 3: tighten the drain loop. Worst-case latency between a packet
-; arriving on the kernel and being routed drops from ~40 ms to ~10 ms.
-enable_tight_drain_loop = 1
-recv_timeout_ms = 5
-bg_thread_sleep_ms = 5
-
-; Step 4 (not yet wired — keep at 0 for now): release ProxySocketManager
-; m_mutex before per-socket IncomingData. Requires unique_ptr -> shared_ptr
-; migration to be safe.
-enable_manager_mutex_release = 0
-
-; Step 5 (not yet wired — keep at 0 for now): asynchronous send queue.
-; BSD MITM enqueues sends, a dedicated worker thread drains and calls
-; send_all so callers never block on m_send_mutex.
-enable_async_send_queue = 0
+; enable_larger_socket_buffers = 0
+; socket_recv_buffer_kb = 64
+; socket_send_buffer_kb = 64
+; enable_bg_thread_high_priority = 0
+; bg_thread_priority = 8
+; enable_tight_drain_loop = 0
+; recv_timeout_ms = 20
+; bg_thread_sleep_ms = 10
+; enable_manager_mutex_release = 0
+; enable_async_send_queue = 0

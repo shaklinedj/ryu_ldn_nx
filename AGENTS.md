@@ -162,7 +162,7 @@ The sysmodule runs on Switch hardware with aggressive constraints:
 
 - **Heap**: 384 KB expanded heap (`g_heap_memory` in `main.cpp:143`). Previously 96 KB, saturated under real gameplay traffic causing DABRT 0x101 on allocation failure.
 - **Malloc buffer**: 1 MB (`MallocBufferSize`) for the TLS heap central. Minimum for `TlsHeapCentral` to initialize properly.
-- **Thread stacks**: MITM threads use 32 KB (`0x8000`). Config thread: 8 KB (`0x2000`). Log thread: 4 KB (`0x1000`). Receive thread: 16 KB (`0x4000`). P2P connect thread: 16 KB (`0x4000`). Total: ~76 KB in thread stacks alone.
+- **Thread stacks**: 2×32 KB (MITM server threads), 16 KB (receive), 8 KB (config), 16 KB (P2P connect), 4 KB (log). Total: ~108 KB in thread stacks alone.
 - **BSD sessions**: 14 (`ConcurrencyLimitMax` in libstratosphere). The default of 3 saturated with P2P loopback sessions.
 - **Total sysmodule budget**: ~10 MB across all Switch sysmodules — don't grow buffers without proof it's needed.
 - Use fixed buffers, `constinit` statics, and stack-allocated work areas. Avoid `std::vector`/`std::deque`/`new` in hot paths.

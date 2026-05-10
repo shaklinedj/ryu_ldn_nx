@@ -30,8 +30,8 @@ If the file doesn't exist, the sysmodule creates it automatically with default v
 host = ldn.ryujinx.app
 ; Server port
 port = 30456
-; Use TLS encryption (0/1)
-use_tls = 1
+; Use TLS encryption (0/1) — NOT IMPLEMENTED: no TLS code exists, always plain TCP
+use_tls = 0
 
 [network]
 ; Connection timeout in milliseconds
@@ -40,25 +40,25 @@ connect_timeout = 5000
 ping_interval = 10000
 ; Reconnect delay in milliseconds
 reconnect_delay = 3000
-; Max reconnect attempts (0 = infinite)
+; Max reconnect attempts (0 = disable auto-reconnect, not infinite)
 max_reconnect_attempts = 5
 
 [ldn]
-; Enable LDN emulation (0/1)
+; Enable LDN emulation (0/1/true/false/yes/no)
 enabled = 1
 ; Room passphrase (empty = public)
 passphrase =
-; Network interface (empty = auto)
+; Network interface (empty = auto) — NOT YET WIRED: always auto-detects
 interface =
-; Disable P2P proxy (0/1) — like Ryujinx MultiplayerDisableP2p
+; Disable P2P proxy (0/1/true/false/yes/no)
 disable_p2p = 0
 
 [debug]
-; Enable debug logging (0/1)
+; Enable debug logging (0/1/true/false/yes/no)
 enabled = 0
 ; Log level (0=errors, 1=warnings, 2=info, 3=verbose)
 level = 1
-; Log to file (0/1)
+; Log to file (0/1/true/false/yes/no)
 log_to_file = 0
 
 [perf]
@@ -85,6 +85,15 @@ enable_manager_mutex_release = 0
 enable_async_send_queue = 0
 ```
 
+## Boolean Values
+
+Boolean config keys accept more than just `0` and `1`. The parser checks only the **first character** of the value:
+
+- **`false`**: `0`, `f`, `F`, `n`, `N` (and any string starting with these, e.g. `false`, `False`, `no`, `No`)
+- **`true`**: Anything else (`1`, `true`, `yes`, `y`, etc.)
+
+This means `true`, `True`, `yes`, `Yes`, `1` all evaluate to **true**, while `false`, `False`, `no`, `No`, `0` evaluate to **false**. Be careful — invalid values like `2` or `hello` also evaluate to **true**.
+
 ## Sections
 
 ### `[server]` — Server Connection
@@ -93,7 +102,7 @@ enable_async_send_queue = 0
 |--------|---------|-------------|
 | `host` | `ldn.ryujinx.app` | Server hostname or IP address |
 | `port` | `30456` | Server port number |
-| `use_tls` | `1` | Enable TLS encryption (0=off, 1=on) |
+| `use_tls` | `true` | ⚠️ **Not implemented** — no TLS code exists, always plain TCP regardless of this setting |
 
 To use a different LDN server:
 
@@ -134,7 +143,7 @@ The reconnect system uses a **fast first retry** (200ms for the first attempt on
 |--------|---------|-------------|
 | `enabled` | `1` | Enable/disable LDN emulation |
 | `passphrase` | _(empty)_ | Room passphrase for private rooms (empty = public) |
-| `interface` | _(empty)_ | Preferred network interface (empty = auto-detect) |
+| `interface` | _(empty)_ | ⚠️ Parsed but **not used** — always auto-detects network interface |
 | `disable_p2p` | `0` | Disable P2P proxy (0=enable P2P, 1=relay only) |
 
 Setting `disable_p2p = 1` forces relay mode through the server. This is more reliable for most setups but adds server load. Enable P2P (`disable_p2p = 0`) if UPnP port mapping works on your network — it allows direct peer connections and reduces latency.

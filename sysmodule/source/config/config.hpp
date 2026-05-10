@@ -140,7 +140,7 @@ constexpr uint32_t DEFAULT_PING_INTERVAL_MS = 10000;
 /** @brief Default initial reconnect delay (3 seconds) */
 constexpr uint32_t DEFAULT_RECONNECT_DELAY_MS = 3000;
 
-/** @brief Default maximum reconnection attempts (0 = infinite) */
+/** @brief Default maximum reconnection attempts (0 = disable auto-reconnect) */
 constexpr uint32_t DEFAULT_MAX_RECONNECT_ATTEMPTS = 5;
 
 // -----------------------------------------------------------------------------
@@ -217,7 +217,7 @@ struct NetworkConfig {
     uint32_t connect_timeout_ms;       ///< TCP connection timeout
     uint32_t ping_interval_ms;         ///< Keepalive ping interval
     uint32_t reconnect_delay_ms;       ///< Initial reconnect delay
-    uint32_t max_reconnect_attempts;   ///< Max reconnect attempts (0 = infinite)
+    uint32_t max_reconnect_attempts;   ///< Max reconnect attempts (0 = disable auto-reconnect)
 };
 
 /**
@@ -298,9 +298,20 @@ struct Config {
  * - network.max_reconnect_attempts: 5
  * - ldn.enabled: true
  * - ldn.passphrase: "" (empty)
+ * - ldn.interface_name: "" (empty = auto-detect)
+ * - ldn.disable_p2p: false
  * - debug.enabled: false
  * - debug.level: 1 (warnings)
  * - debug.log_to_file: false
+ *
+ * ## Not Yet Wired
+ * - server.use_tls: parsed and stored but not consumed (no TLS implementation)
+ * - network.ping_interval_ms: parsed and stored but forced to 0 in client (server drives pings)
+ * - ldn.interface_name: parsed and stored but not consumed (always uses auto-detect)
+ * - [perf] section: parsed but entirely ignored (no PerfConfig struct, no runtime consumption)
+ *
+ * ## Bool Parsing
+ * Accepts: 0, f, F, n, N → false; anything else → true (1, true, yes, etc.)
  */
 Config get_default_config();
 

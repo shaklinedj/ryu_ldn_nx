@@ -178,49 +178,34 @@ enum class PacketId : uint8_t {
 // =============================================================================
 
 /**
- * @brief LDN Protocol Header - 10 bytes (0x0A)
+ * @brief Network packet header - 12 bytes (matches C# layout)
  *
  * Every packet in the RyuLdn protocol starts with this header.
  * The header contains identification, versioning, and size information.
  *
- * ## Wire Format (standard Ryujinx server format)
+ * ## Wire Format (C# StructLayout without Pack=1)
  * ```
  * Offset  Size  Field       Description
  * 0x00    4     magic       Protocol magic (0x4E444C52 = "RLDN")
  * 0x04    1     type        Packet type (PacketId enum)
  * 0x05    1     version     Protocol version (must be 1)
- * 0x06    4     data_size   Payload size in bytes (signed for compatibility)
+ * 0x06    2     reserved    Padding to align data_size on 4-byte boundary
+ * 0x08    4     data_size   Payload size in bytes (signed for compatibility)
  * ```
  *
- * IMPORTANT: This struct MUST use __attribute__((packed)) to prevent the
- * compiler from adding padding before data_size. Without packed, C++ would
- * add 2 bytes of padding to align data_size on a 4-byte boundary.
+ * The C# server uses [StructLayout(LayoutKind.Sequential, Size = 0xA)]
+ * WITHOUT Pack=1. The Size=0xA only affects marshaling, not the internal
+ * layout. When C# uses MemoryMarshal.Read<LdnHeader>(), it reads DataSize
+ * from offset 8 (4-byte aligned), making the header 12 bytes on the wire.
+ *
+ * We use __attribute__((packed)) with an explicit `reserved` field at offset
+ * 0x06 to match this layout, plus a static_assert for 12 bytes.
  *
  * ## Validation
  * When receiving a packet, validate:
  * 1. magic == PROTOCOL_MAGIC
  * 2. version == PROTOCOL_VERSION
  * 3. data_size >= 0 && data_size <= MAX_PACKET_SIZE
- */
-/**
- * @brief Network packet header - 12 bytes (matches C# layout)
- *
- * IMPORTANT: The C# server uses [StructLayout(LayoutKind.Sequential, Size = 0xA)]
- * WITHOUT Pack=1. This means the C# runtime aligns DataSize (int32) on a 4-byte
- * boundary, placing it at offset 8, not offset 6.
- *
- * C# actual layout (without Pack=1):
- * - Offset 0-3:  Magic (uint)
- * - Offset 4:    Type (byte)
- * - Offset 5:    Version (byte)
- * - Offset 6-7:  Padding (implicit, for int32 alignment)
- * - Offset 8-11: DataSize (int)
- *
- * The Size=0xA in C# only affects marshaling/array copy sizes, NOT the internal
- * struct layout. When C# uses MemoryMarshal.Read<LdnHeader>(), it reads DataSize
- * from offset 8.
- *
- * We must match this layout for compatibility.
  */
 struct __attribute__((packed)) LdnHeader {
     uint32_t magic;      ///< Offset 0: Must be PROTOCOL_MAGIC (0x4E444C52 = "RLDN")

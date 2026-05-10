@@ -103,16 +103,16 @@ This prevents spurious wake-ups when `ProxyConfig` arrives before `Connected`. A
 
 ## Connection Resilience
 
-- **Fast first retry**: 200ms delay on first failure, then exponential backoff (1s initial, 2x multiplier, 30s cap)
+- **Fast first retry**: 200ms delay on first failure, then exponential backoff (3s initial from config, 2x multiplier, 30s cap)
 - **Jitter**: ±10% randomization to prevent thundering herd
 - **TCP keepalive**: 30s idle / 10s interval / 5 probes (Switch only)
 - **Graceful disconnect**: `shutdown(SHUT_WR)` before `close()`
-- **Auto-reconnect**: Unlimited retries via `ConnectionStateMachine`
+- **Auto-reconnect**: Configurable via `max_reconnect_attempts`; `0` disables auto-reconnect entirely
 
 ## Threading Model
 
 ```
-MITM Server Thread         Receive Thread (16KB)       Config Thread (8KB)
+MITM Server Thread (2×32KB)    Receive Thread (16KB)       Config Thread (8KB)
   │                            │                           │
   ├── ldn:u IPC requests      ├── TcpClient.recv()        ├── ryu:cfg IPC requests
   ├── CreateNetwork/Connect    ├── HandleServerPacket()    ├── Status queries
@@ -130,6 +130,6 @@ State transitions are signaled cross-thread via `os::Event` (AutoClear for respo
 
 - **Heap**: 384 KB expanded heap
 - **Malloc buffer**: 1 MB for TLS heap central
-- **Thread stacks**: 32 KB (MITM), 16 KB (receive), 8 KB (config), 16 KB (P2P connect), 4 KB (log). Total: ~76 KB
+- **Thread stacks**: 2×32 KB (MITM), 16 KB (receive), 8 KB (config), 16 KB (P2P connect), 4 KB (log). Total: ~108 KB
 - **BSD sessions**: 14 concurrency limit
 - **Total sysmodule budget**: ~10 MB across all Switch sysmodules

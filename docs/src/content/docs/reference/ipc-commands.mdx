@@ -110,17 +110,41 @@ The standalone `ryu:cfg` IPC service is available directly via `smGetService("ry
 
 ### MITM Config Commands (65000+)
 
-The LDN MITM service also exposes a `LdnConfigService` via command 65000 on `ldn:u`. This service has additional commands not available in the standalone `ryu:cfg`:
+The LDN MITM service also exposes a `LdnConfigService` via command 65000 on `ldn:u`. This service mirrors the `ryu:cfg` commands at offset +65000 and adds extended commands 65011-65030:
 
 | Cmd | Name | Description |
 |-----|------|-------------|
 | 65000 | (get service) | Obtain LdnConfigService instance |
+| 65001 | GetHost | Get server hostname |
+| 65002 | SetHost | Set server hostname |
+| 65003 | GetPort | Get server port |
+| 65004 | SetPort | Set server port |
+| 65005 | GetUseTls | Get TLS setting (⚠️ not implemented — always plain TCP) |
+| 65006 | SetUseTls | Set TLS setting (⚠️ not implemented) |
+| 65007 | GetConnectTimeout | Get connect timeout in ms |
+| 65008 | SetConnectTimeout | Set connect timeout in ms |
+| 65009 | GetPingInterval | Get ping interval in ms (⚠️ parsed but not used) |
+| 65010 | SetPingInterval | Set ping interval in ms (⚠️ has no effect) |
+| 65011 | GetPassphrase | Get room passphrase |
+| 65012 | SetPassphrase | Set room passphrase |
+| 65013 | GetLdnEnabled | Get LDN enabled state |
+| 65014 | SetLdnEnabled | Set LDN enabled state |
+| 65015 | GetUseTls | Get TLS state (same as 65005) |
+| 65016 | SetUseTls | Set TLS state (same as 65006) |
+| 65017 | GetConnectTimeout | Get connect timeout (same as 65007) |
+| 65018 | SetConnectTimeout | Set connect timeout (same as 65008) |
+| 65019 | GetPingInterval | Get ping interval (same as 65009) |
+| 65020 | SetPingInterval | Set ping interval (same as 65010) |
 | 65021 | GetReconnectDelay | Get reconnect delay in ms |
 | 65022 | SetReconnectDelay | Set reconnect delay in ms |
 | 65023 | GetMaxReconnectAttempts | Get max reconnect attempts |
-| 65024 | SetMaxReconnectAttempts | Set max reconnect attempts |
-
-Plus all commands 65001–65010 (matching `ryu:cfg` commands 0–9 with different IDs).
+| 65024 | SetMaxReconnectAttempts | Set max reconnect attempts (0 = disable auto-reconnect) |
+| 65025 | GetDebugLevel | Get debug log level |
+| 65026 | SetDebugLevel | Set debug log level |
+| 65027 | GetLogToFile | Get log-to-file state |
+| 65028 | SetLogToFile | Set log-to-file state |
+| 65029 | SaveConfig | Save current config to file |
+| 65030 | ReloadConfig | Reload config from file |
 
 ## Data Structures
 

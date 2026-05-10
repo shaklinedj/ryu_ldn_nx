@@ -363,10 +363,183 @@ Every struct has a `static_assert` for its expected size. If a `static_assert` f
 
 ## Enums Reference
 
-| Enum | Values |
-|------|--------|
-| `AcceptPolicy` | `AcceptAll=0`, `RejectAll=1`, `BlackList=2`, `WhiteList=3` |
-| `SecurityMode` | `Any=0`, `Product=1`, `Debug=2` |
-| `NetworkType` | `None=0`, `General=1`, `Ldn=2`, `All=3` |
-| `DisconnectReason` | `None=0`, `User=1`, `SystemRequest=2`, `DestroyedByHost=3`, `DestroyedByAdmin=4`, `Rejected=5`, `SignalLost=6` |
-| `ProtocolType` | `Tcp=6`, `Udp=17` (most common for PIA traffic) |
+|| Enum | Underlying | Values |
+||------|------------|--------|
+|| `AcceptPolicy` | `uint8_t` | `AcceptAll=0`, `RejectAll=1`, `BlackList=2`, `WhiteList=3` |
+|| `SecurityMode` | `uint16_t` | `Any=0`, `Product=1`, `Debug=2` |
+|| `NetworkType` | `uint8_t` | `None=0`, `General=1`, `Ldn=2`, `All=3` |
+|| `DisconnectReason` | `uint32_t` | `None=0`, `User=1`, `SystemRequest=2`, `DestroyedByHost=3`, `DestroyedByAdmin=4`, `Rejected=5`, `SignalLost=6` |
+|| `NetworkErrorCode` | `uint32_t` | `None=0`, `VersionMismatch=1`, `InvalidMagic=2`, `InvalidSessionId=3`, `HandshakeTimeout=4`, `AlreadyInitialized=5`, `SessionNotFound=100`, `SessionFull=101`, `SessionClosed=102`, `NotInSession=103`, `AlreadyInSession=104`, `NetworkNotFound=200`, `NetworkFull=201`, `ConnectionRejected=202`, `AuthenticationFailed=203`, `InvalidRequest=204`, `InternalError=900`, `ServiceUnavailable=901` |
+|| `ProtocolType` | `int32_t` | See full table below |
+
+### ProtocolType (full enum)
+
+Maps to `System.Net.Sockets.ProtocolType`. Only `Tcp` (6) and `Udp` (17) are used in practice for PIA traffic.
+
+|| Value | Name | Notes |
+||-------|------|-------|
+|| -1 | `Unknown` | |
+|| 0 | `Unspecified` / `IP` | Same value |
+|| 1 | `Icmp` | |
+|| 2 | `Igmp` | |
+|| 3 | `Ggp` | |
+|| 4 | `IPv4` | |
+|| 6 | `Tcp` | **Used for PIA TCP** |
+|| 12 | `Pup` | |
+|| 17 | `Udp` | **Used for PIA UDP/broadcast** |
+|| 22 | `Idp` | |
+|| 41 | `IPv6` | |
+|| 43 | `IPv6RoutingHeader` | |
+|| 44 | `IPv6FragmentHeader` | |
+|| 50 | `IPSecEncapsulatingSecurityPayload` | |
+|| 51 | `IPSecAuthenticationHeader` | |
+|| 58 | `IcmpV6` | |
+|| 59 | `IPv6NoNextHeader` | |
+|| 60 | `IPv6DestinationOptions` | |
+|| 77 | `ND` | |
+|| 255 | `Raw` | |
+|| 1000 | `Ipx` | |
+|| 1256 | `Spx` | |
+|| 1257 | `SpxII` | |
+
+### NetworkType size mismatch
+
+`NetworkType` is `uint8_t` in the C++ enum but `ScanFilterFull.network_type` is `uint32_t`. This mirrors the C# server where `ScanFilter` uses `uint` for `NetworkType`. Wire format is always 4 bytes for the `network_type` field.
+
+## Additional Structures
+
+### SecurityConfig (0x44 bytes = 68 bytes)
+
+```cpp
+struct __attribute__((packed)) SecurityConfig {
+    uint16_t security_mode;     // SecurityMode enum
+    uint16_t passphrase_size;   // Length of passphrase (0-64)
+    uint8_t  passphrase[64];    // Passphrase data (null-padded)
+};
+```
+
+### SecurityParameter (0x20 bytes = 32 bytes)
+
+Random security data for private rooms. Used in `CreateAccessPointPrivateRequest` and `ConnectPrivateRequest`.
+
+```cpp
+struct __attribute__((packed)) SecurityParameter {
+    uint8_t data[16];        // Random security data
+    uint8_t session_id[16];  // Session ID
+};
+```
+
+### UserConfig (0x30 bytes = 48 bytes)
+
+```cpp
+struct __attribute__((packed)) UserConfig {
+    char    user_name[33];   // Player name (UTF-8, null-terminated)
+    uint8_t unknown1[15];    // Unknown/reserved
+};
+```
+
+### NetworkConfig (0x20 bytes = 32 bytes)
+
+```cpp
+struct __attribute__((packed)) NetworkConfig {
+    IntentId intent_id;
+    uint16_t channel;
+    uint8_t  node_count_max;
+    uint8_t  reserved1;
+    uint16_t local_communication_version;
+    uint8_t  reserved2[10];
+};
+```
+
+### RyuNetworkConfig (0x28 bytes = 40 bytes)
+
+Extended configuration for Ryujinx-specific features.
+
+```cpp
+struct __attribute__((packed)) RyuNetworkConfig {
+    uint8_t  game_version[16];
+    uint8_t  private_ip[16];       // For external proxy LAN detection
+    uint32_t address_family;       // AddressFamily enum (2=IPv4, 23=IPv6)
+    uint16_t external_proxy_port;
+    uint16_t internal_proxy_port;
+};
+```
+
+### AddressEntry (0x0C bytes = 12 bytes)
+
+IP/MAC address pair for a node.
+
+```cpp
+struct __attribute__((packed)) AddressEntry {
+    uint32_t   ipv4_address;  // Node IPv4 address
+    MacAddress mac_address;    // Node MAC address
+    uint16_t   reserved;      // Reserved/padding
+};
+```
+
+### AddressList (0x60 bytes = 96 bytes)
+
+Array of 8 address entries for `CreateAccessPointPrivateRequest`.
+
+```cpp
+struct __attribute__((packed)) AddressList {
+    AddressEntry addresses[8];
+};
+```
+
+### ScanFilterFull (0x60 bytes = 96 bytes)
+
+Complete filter for network scanning. Note: `network_type` is `uint32_t` despite `NetworkType` being `uint8_t` — this matches the C# server's `ScanFilter` which uses `uint` for this field.
+
+```cpp
+struct __attribute__((packed)) ScanFilterFull {
+    NetworkId  network_id;      // 0x00: 32 bytes
+    uint32_t   network_type;    // 0x20: 4 bytes (uint32, not uint8!)
+    MacAddress mac_address;     // 0x24: 6 bytes
+    Ssid       ssid;            // 0x2A: 34 bytes
+    uint8_t    reserved[16];   // 0x4C: 16 bytes
+    uint32_t   flag;            // 0x5C: 4 bytes
+};
+```
+
+### ConnectPrivateRequest (0xBC bytes = 188 bytes)
+
+```cpp
+struct __attribute__((packed)) ConnectPrivateRequest {
+    SecurityConfig     security_config;             // 0x00: 0x44 bytes
+    SecurityParameter  security_parameter;          // 0x44: 0x20 bytes
+    UserConfig         user_config;                 // 0x64: 0x30 bytes
+    uint32_t           local_communication_version; // 0x94: 4 bytes
+    uint32_t           option_unknown;              // 0x98: 4 bytes
+    NetworkConfig      network_config;              // 0x9C: 0x20 bytes
+};
+```
+
+### ProxyConnectRequest (0x10 bytes = 16 bytes)
+
+```cpp
+struct __attribute__((packed)) ProxyConnectRequest {
+    ProxyInfo info;  // Connection addressing info
+};
+```
+
+### ProxyConnectResponse (0x10 bytes = 16 bytes)
+
+```cpp
+struct __attribute__((packed)) ProxyConnectResponse {
+    ProxyInfo info;  // Connection addressing info
+};
+```
+
+### ProxyDisconnectMessage (0x14 bytes = 20 bytes)
+
+```cpp
+struct __attribute__((packed)) ProxyDisconnectMessage {
+    ProxyInfo info;              // Connection that was closed
+    int32_t   disconnect_reason; // Reason for disconnection
+};
+```
+
+### ProxyInfo IP byte order
+
+`ProxyInfo.source_ipv4` and `ProxyInfo.dest_ipv4` use the same Ryujinx format as all other LDN IPs (big-endian as uint32). See [Byte Order & Padding](#byte-order--padding).

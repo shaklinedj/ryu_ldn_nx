@@ -35,10 +35,10 @@ Games use Nintendo's PIA library for peer-to-peer mesh networking on top of LDN.
 
 ### Connection Resilience
 
-- **Fast retry**: First reconnection attempt uses 200ms delay, then exponential backoff (1s → 30s cap)
+- **Fast retry**: First reconnection attempt uses 200ms delay, then exponential backoff (3s → 30s cap)
 - **TCP keepalive**: 30s idle / 10s interval / 5 probes — detects dead connections
 - **Graceful disconnect**: `shutdown(SHUT_WR)` before `close()` for clean TCP teardowns
-- **Auto-reconnect**: Unlimited retries with jitter to prevent thundering herd
+- **Auto-reconnect**: Configurable retries (`0` disables) with jitter to prevent thundering herd
 
 ## Features
 
@@ -71,14 +71,14 @@ Create `sdmc:/config/ryu_ldn_nx/config.ini` (or let the sysmodule auto-create it
 
 ```ini
 [server]
-host = ldn.ryujinx.app
+host = 150.230.119.252
 port = 30456
-use_tls = 0
+use_tls = 0                      ; NOT IMPLEMENTED — no TLS code exists
 
 [network]
 connect_timeout = 5000
-reconnect_delay = 1000
-max_reconnect_attempts = 0
+reconnect_delay = 3000
+max_reconnect_attempts = 5       ; 0 = disable auto-reconnect
 
 [ldn]
 enabled = 1
@@ -88,9 +88,6 @@ disable_p2p = 0
 enabled = 0
 level = 1
 log_to_file = 0
-
-[perf]
-idle_timeout = 6000
 ```
 
 All settings have sensible defaults and can be changed live via the Tesla overlay (`ryu:cfg` service).
