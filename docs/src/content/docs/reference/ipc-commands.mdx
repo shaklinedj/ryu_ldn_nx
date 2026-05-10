@@ -24,7 +24,7 @@ These are the standard Nintendo LDN IPC commands that ryu_ldn_nx intercepts:
 | 0 | GetState | Get current LDN state |
 | 100 | AttachStateChangeEvent | Get event handle for state changes |
 | 200 | GetNetworkInfo | Get current network information |
-| 201 | GetIpv4Address | Get local IPv4 address |
+| 201 | GetIpv4Address | Get local IPv4 address (Ryujinx format: big-endian uint32) |
 | 202 | GetDisconnectReason | Get reason for last disconnect |
 | 203 | GetSecurityParameter | Get security configuration |
 | 204 | GetNetworkConfig | Get network configuration |
@@ -42,25 +42,57 @@ These are the standard Nintendo LDN IPC commands that ryu_ldn_nx intercepts:
 | 600 | Scan | Scan for networks |
 | 601 | ScanPrivate | Scan for private networks |
 
-## Custom Config Commands
+**PIA note**: After `CreateNetwork`/`Connect`, games call `GetIpv4Address()` and `GetNetworkInfo()` separately. The game then matches the IP against `NetworkInfo.ldn.nodes[].ipv4_address` to find its own node index. If these mismatch, `FindLocalNodeId()` returns `0xFF` (not found) and the game destroys the network.
 
-ryu_ldn_nx adds custom IPC commands for overlay communication.
-These are obtained via command 65000 on the MITM service.
+## Custom Config Commands (ryu:cfg)
 
-### LdnConfigService
+ryu_ldn_nx adds a custom IPC service for overlay communication. Obtained via command 65000 on the MITM service.
+
+### Configuration Commands (0–22)
 
 | Cmd | Name | Parameters | Returns | Description |
 |-----|------|------------|---------|-------------|
-| 65001 | GetVersion | - | char[32] | Sysmodule version string |
-| 65002 | GetConnectionStatus | - | u32 | Server connection state |
-| 65003 | GetLdnState | - | u32 | Current LDN state |
-| 65004 | GetSessionInfo | - | SessionInfo | Current session information |
-| 65005 | GetServerAddress | - | ServerAddress | Configured server address |
-| 65006 | SetServerAddress | ServerAddress | - | Change server address |
-| 65007 | GetDebugEnabled | - | u32 | Debug logging state |
-| 65008 | SetDebugEnabled | u32 | - | Enable/disable debug |
-| 65009 | ForceReconnect | - | - | Force server reconnection |
-| 65010 | GetLastRtt | - | u32 | Last RTT in milliseconds |
+| 0 | GetVersion | - | char[32] | Sysmodule version string |
+| 1 | GetConnectionStatus | - | u32 | Server connection state |
+| 2 | GetPassphrase | - | char[64] | Current room passphrase |
+| 3 | SetPassphrase | char[64] | - | Set room passphrase |
+| 4 | GetServerAddress | - | ServerAddress | Configured server address |
+| 5 | SetServerAddress | ServerAddress | - | Change server address |
+| 6 | GetLdnEnabled | - | u32 | LDN emulation enabled flag |
+| 7 | SetLdnEnabled | u32 | - | Enable/disable LDN emulation |
+| 8 | GetUseTls | - | u32 | TLS enabled flag |
+| 9 | SetUseTls | u32 | - | Enable/disable TLS |
+| 10 | GetDebugEnabled | - | u32 | Debug logging flag |
+| 11 | SetDebugEnabled | u32 | - | Enable/disable debug logging |
+| 12 | GetDebugLevel | - | u32 | Log level (0-3) |
+| 13 | SetDebugLevel | u32 | - | Set log level |
+| 14 | GetLogToFile | - | u32 | File logging flag |
+| 15 | SetLogToFile | u32 | - | Enable/disable file logging |
+| 16 | SaveConfig | - | ConfigResult | Persist config to SD card |
+| 17 | ReloadConfig | - | ConfigResult | Reload config from SD card |
+| 18 | GetConnectTimeout | - | u32 | Connection timeout in ms |
+| 19 | SetConnectTimeout | u32 | - | Set connection timeout in ms |
+| 20 | GetPingInterval | - | u32 | Ping interval in ms |
+| 21 | SetPingInterval | u32 | - | Set ping interval in ms |
+| 22 | IsServiceActive | - | u32 | Service ping (returns 1 if active) |
+
+### Runtime State Commands (23–28)
+
+| Cmd | Name | Parameters | Returns | Description |
+|-----|------|------------|---------|-------------|
+| 23 | IsGameActive | - | u32 | Returns 1 if a game is using LDN |
+| 24 | GetLdnState | - | u32 | Current CommState enum value |
+| 25 | GetSessionInfo | - | SessionInfo | Current session information |
+| 26 | GetLastRtt | - | u32 | Last RTT in milliseconds |
+| 27 | ForceReconnect | - | - | Request MITM reconnection |
+| 28 | GetActiveProcessId | - | u64 | PID of active game |
+
+### P2P Proxy Commands (29–30)
+
+| Cmd | Name | Parameters | Returns | Description |
+|-----|------|------------|---------|-------------|
+| 29 | GetDisableP2p | - | u32 | Returns 1 if P2P proxy is disabled |
+| 30 | SetDisableP2p | u32 | - | Enable/disable P2P proxy (0=enable, 1=disable) |
 
 ## Data Structures
 
@@ -74,7 +106,7 @@ These are obtained via command 65000 on the MITM service.
 | 3 | Ready | Fully connected and operational |
 | 4 | Error | Connection error occurred |
 
-### LdnState (enum u32)
+### LdnState / CommState (enum u32)
 
 | Value | Name | Description |
 |-------|------|-------------|
@@ -105,6 +137,15 @@ These are obtained via command 65000 on the MITM service.
 | 0x40 | u16 | port | Server port |
 | 0x42 | u16 | padding | Reserved |
 
+### ConfigResult (enum u32)
+
+| Value | Name | Description |
+|-------|------|-------------|
+| 0 | Success | Operation completed successfully |
+| 1 | FileNotFound | Config file does not exist |
+| 2 | ParseError | Config file has syntax errors |
+| 3 | IoError | File I/O error |
+
 ## Usage Example (C)
 
 ```c
@@ -120,14 +161,18 @@ serviceDispatch(&ldnService, 65000,
 
 // Get version
 char version[32];
-serviceDispatchOut(&configService.s, 65001, version);
+serviceDispatchOut(&configService.s, 0, version);
 printf("Version: %s\n", version);
 
-// Get connection status
-u32 status;
-serviceDispatchOut(&configService.s, 65002, &status);
-printf("Status: %u\n", status);
+// Get LDN state
+u32 state;
+serviceDispatchOut(&configService.s, 24, &state);
+printf("State: %u\n", state);
 
 // Force reconnect
-serviceDispatch(&configService.s, 65009);
+serviceDispatch(&configService.s, 27);
+
+// Save config to SD card
+u32 result;
+serviceDispatchOut(&configService.s, 16, &result);
 ```

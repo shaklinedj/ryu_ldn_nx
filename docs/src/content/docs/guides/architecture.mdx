@@ -5,232 +5,127 @@ description: Technical architecture of ryu_ldn_nx
 
 # Architecture
 
-This document describes the technical architecture of ryu_ldn_nx.
+ryu_ldn_nx registers **three IPC services** simultaneously from `main.cpp`:
 
-## Overview
+## Service Overview
+
+| Service | Type | Role |
+|---------|------|------|
+| `ldn:u` | MITM | Intercepts Nintendo's LDN user service |
+| `bsd:u` | MITM | Intercepts BSD socket calls for LDN subnet traffic |
+| `ryu:cfg` | Custom | Tesla overlay config and status display |
+
+All three share a **384 KB expanded heap** (`g_heap_memory`). `new`/`delete` route to this heap via `lmem::ExpHeap`. Do not grow buffers casually.
+
+## Data Flow
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │                         Nintendo Switch                          │
-├──────────────────────────────────────────────────────────────────┤
 │                                                                  │
-│  ┌─────────────┐                    ┌──────────────────────┐     │
-│  │    Game     │◀──── IPC ───────▶│   ryu_ldn_nx         │     │
-│  │ (ldn:u API) │                    │   sysmodule          │     │
-│  └─────────────┘                    │                      │     │
-│                                     │  ┌────────────────┐  │     │
-│                                     │  │ LdnMitMService │  │     │
-│                                     │  │ (MITM ldn:u)   │  │     │
-│                                     │  └───────┬────────┘  │     │
-│                                     │          │           │     │
-│                                     │  ┌───────▼────────┐  │     │
-│                                     │  │ NetworkClient  │  │     │
-│                                     │  │ (TCP + RyuLdn) │  │     │
-│                                     │  └───────┬────────┘  │     │
-│                                     └──────────┼───────────┘     │
-│                                                │                 │
-│  ┌─────────────────┐                           │                 │
-│  │  Tesla Overlay  │◀──── IPC ────────────────┤                 │
-│  │ (status/config) │                           │                 │
-│  └─────────────────┘                           │                 │
-│                                                │                 │
-└────────────────────────────────────────────────┼─────────────────┘
-                                                 │
-                                                 ▼ TCP/IP
-                                     ┌───────────────────┐
-                                     │  Ryujinx LDN      │
-                                     │     Server        │
-                                     └───────────────────┘
+│  Game (ldn:u IPC)      Game (bsd:u IPC)           Tesla overlay│
+│       │                       │                            │    │
+│       ▼                       ▼                            ▼    │
+│  ICommunicationService   BsdMitmService           ConfigService │
+│       │                       │                                  │
+│       ▼                       ▼                                  │
+│  LdnStateMachine         ProxySocketManager ◀── ProxyData ──┐    │
+│  LdnPacketDispatcher            │                            │    │
+│  LdnSessionHandler             │                            │    │
+│       │                        │                            │    │
+│       ▼                        ▼                            │    │
+│  RyuLdnClient ◀── TCP ──▶ Ryujinx LDN Server ──────────────┘    │
+│       │                                                          │
+│       ▼                                                          │
+│  ConnectionState + ReconnectManager                             │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
-## Components
+## Component Details
 
-### Sysmodule
+### ICommunicationService (`ldn:u` MITM)
 
-The main component that runs in the background on the Switch.
+The core LDN service. Games call its IPC commands (`CreateNetwork`, `Scan`, `Connect`, etc.) which are translated to RyuLdn protocol messages over TCP.
 
-#### LdnMitMService
+Key files:
+- `sysmodule/source/ldn/ldn_icommunication.cpp` — main implementation (2100+ lines)
+- `sysmodule/source/ldn/ldn_state_machine.cpp` — state machine (CommState transitions)
+- `sysmodule/source/ldn/ldn_packet_dispatcher.cpp` — routes incoming packets to handlers
+- `sysmodule/source/ldn/ldn_session_handler.cpp` — session lifecycle management
+- `sysmodule/source/ldn/ldn_proxy_handler.cpp` — proxy data routing
 
-Atmosphere MITM service that intercepts `ldn:u` IPC calls:
+### BsdMitmService (`bsd:u` MITM)
 
-- Registers with Service Manager
-- Creates `LdnICommunication` sessions
-- Forwards non-LDN calls to original service
+Intercepts BSD socket calls. Sockets targeting the LDN subnet **10.114.x.x** become proxy sockets whose traffic is tunneled through `ProxyData` packets. This is how PIA mesh protocol traffic (UDP broadcasts, unicast game data) reaches other peers without pcap.
 
-```cpp
-// Key file: sysmodule/source/ldn/ldn_mitm_service.hpp
-class LdnMitMService {
-    Result CreateUserLocalCommunicationService(...);
-    static bool ShouldMitm(...);
-};
-```
+Key files:
+- `sysmodule/source/bsd/proxy_socket.cpp` — proxy socket implementation (bind, connect, sendto, recvfrom)
+- `sysmodule/source/bsd/proxy_socket_manager.cpp` — socket registry, port allocation, data routing
+- `sysmodule/source/bsd/ephemeral_port_pool.cpp` — dynamic port allocation (49152–65535)
 
-#### LdnICommunication
+### ConfigService (`ryu:cfg`)
 
-Handles individual game sessions:
+Custom IPC service for the Tesla overlay. Exposes real-time LDN status, connection info, and live configuration changes.
 
-- Manages LDN state machine
-- Converts LDN API to network operations
-- Routes game data through server
+Key files:
+- `sysmodule/source/config/config_ipc_service.cpp` — IPC command handlers
+- `sysmodule/source/ldn/ldn_shared_state.cpp` — shared state between MITM and config services
 
-```cpp
-// Key file: sysmodule/source/ldn/ldn_icommunication.hpp
-class LdnICommunication {
-    // Lifecycle
-    Result Initialize();
-    Result Finalize();
+## PIA Protocol and Game Data
 
-    // Host (Access Point)
-    Result OpenAccessPoint();
-    Result CreateNetwork();
+Games use Nintendo's PIA (Protocol Independent Application) library for mesh networking on top of LDN. After `CreateNetwork`/`Connect` establishes the LDN session:
 
-    // Client (Station)
-    Result OpenStation();
-    Result Scan();
-    Result Connect();
-};
-```
+1. Game calls `GetIpv4Address()` → gets virtual LDN IP (e.g., `10.114.0.1`)
+2. Game calls `GetNetworkInfo()` → gets `NetworkInfo` with all nodes' IPs/MACs
+3. Game identifies its own node by matching `GetIpv4Address()` result against `NetworkInfo.ldn.nodes[].ipv4Address`
+4. Game opens UDP sockets via `bsd:u` → MITM intercepts `bind`/`connect` to `10.114.x.x` → creates `ProxySocket`
+5. PIA sends broadcast UDP packets (mesh discovery) → `RouteIncomingData()` delivers to **all** matching sockets
+6. PIA sends unicast UDP/TCP packets → `ProxySocket` → `ProxyData` header → TCP tunnel → server → peer
 
-#### NetworkClient
+### Broadcast Delivery
 
-Manages TCP connection to the server:
+PIA mesh discovery relies on UDP broadcasts reaching **every** listening socket on the same port. `RouteIncomingData()` uses `FindAllSocketsByDestination()` to fan out broadcast packets to all matching proxy sockets. The previous single-delivery `FindSocketByDestination()` broke PIA's mesh protocol in games like Smash Bros.
 
-- Connection establishment
-- RyuLdn protocol encoding/decoding
-- Automatic reconnection
+### IP Address Convention
 
-```cpp
-// Key file: sysmodule/source/network/client.hpp
-class NetworkClient {
-    Result Connect();
-    Result SendPacket(RyuLdnPacket&);
-    void ProcessIncoming();
-};
-```
+All LDN IPs use **Ryujinx format** — big-endian read as `uint32` (e.g., `10.114.0.1` = `0x0A720001`). BSD `sockaddr_in.sin_addr` uses network byte order. Never double-convert.
 
-#### Protocol
+## Packet Signaling
 
-RyuLdn protocol implementation:
+`HandleServerPacket` signals `m_response_event` **only** for actual response packets that `WaitForResponse` expects:
 
-- Binary packet format
-- Game data proxy messages
-- Session management messages
+| Signals event | Packet types |
+|---|---|
+| Yes | `Connected`, `ScanReply`, `ScanReplyEnd`, `RejectReply`, `ProxyConnectReply`, `NetworkError` |
+| No | `ProxyConfig`, `ProxyData`, `ProxyConnect`, `ExternalProxy`, `SyncNetwork`, `Ping` |
 
-```cpp
-// Key file: sysmodule/source/protocol/ryu_protocol.hpp
-namespace ryu_ldn::protocol {
-    void encode_create_access_point(...);
-    void encode_scan(...);
-    void encode_proxy_data(...);
-}
-```
+This prevents spurious wake-ups when `ProxyConfig` arrives before `Connected`.
 
-### Tesla Overlay
+## Connection Resilience
 
-User interface component:
-
-- Displays connection status
-- Shows session information
-- Allows configuration changes
-
-```cpp
-// Key file: overlay/source/main.cpp
-class RyuLdnOverlay : public tsl::Overlay {
-    void initServices();
-    void exitServices();
-};
-```
-
-#### Overlay IPC
-
-Custom IPC service for overlay communication:
-
-- Commands 65001-65010 on ldn:u MITM
-- Read-only status queries
-- Configuration changes
-
-```cpp
-// Key file: sysmodule/source/ldn/ldn_config_service.hpp
-class LdnConfigService {
-    Result GetVersion(...);
-    Result GetConnectionStatus(...);
-    Result GetSessionInfo(...);
-    Result ForceReconnect();
-};
-```
-
-## Data Flow
-
-### Creating a Network (Host)
-
-```
-Game                    LdnICommunication           NetworkClient           Server
-  │                            │                           │                     │
-  │── Initialize() ──────────▶│                           │                     │
-  │                            │                           │                     │
-  │── OpenAccessPoint() ─────▶│── Connect() ────────────▶│── TCP Connect ────▶│
-  │                            │                           │◀── Connected ──────│
-  │                            │                           │                     │
-  │── CreateNetwork(cfg) ────▶│── SendCreateAP() ───────▶│── CreateAP msg ───▶│
-  │                            │                           │◀── CreateAP OK ────│
-  │◀── Success ───────────────│                           │                     │
-  │                            │                           │                     │
-```
-
-### Joining a Network (Client)
-
-```
-Game                    LdnICommunication           NetworkClient           Server
-  │                            │                           │                     │
-  │── OpenStation() ─────────▶│── Connect() ────────────▶│── TCP Connect ────▶│
-  │                            │                           │◀── Connected ──────│
-  │                            │                           │                     │
-  │── Scan(filter) ──────────▶│── SendScan() ───────────▶│── Scan msg ───────▶│
-  │                            │                           │◀── ScanResult ─────│
-  │◀── Networks[] ────────────│                           │                     │
-  │                            │                           │                     │
-  │── Connect(network) ──────▶│── SendConnect() ────────▶│── Connect msg ────▶│
-  │                            │                           │◀── Connected ──────│
-  │◀── Success ───────────────│                           │                     │
-```
-
-### Game Data Proxy
-
-```
-Game A                  ryu_ldn_nx                 Server                  Game B
-  │                           │                       │                        │
-  │── SendData(B, data) ────▶│── ProxyData(B) ─────▶│── ProxyData(B) ──────▶│
-  │                           │                       │                        │
-  │                           │◀── ProxyData(A) ─────│◀── ProxyData(A) ──────│
-  │◀── RecvData(A, data) ────│                       │                        │
-```
+- **Fast first retry**: 200ms delay on first failure, then exponential backoff (1s initial, 2x multiplier, 30s cap)
+- **Jitter**: ±10% randomization to prevent thundering herd
+- **TCP keepalive**: 30s idle / 10s interval / 5 probes (Switch only)
+- **Graceful disconnect**: `shutdown(SHUT_WR)` before `close()`
+- **Auto-reconnect**: Unlimited retries via `ConnectionStateMachine`
 
 ## Threading Model
 
 ```
-Main Thread (ServerManager)
-├── IPC request handling
-├── LdnMitMService
-└── LdnICommunication
-
-Network Thread (per session)
-├── TCP socket I/O
-├── Packet processing
-└── Callback invocation
-
-State events signaled cross-thread via os::SystemEvent
+MITM Server Thread         Receive Thread              Config Thread
+  │                            │                           │
+  ├── ldn:u IPC requests      ├── TcpClient.recv()        ├── ryu:cfg IPC requests
+  ├── CreateNetwork/Connect    ├── HandleServerPacket()    ├── Status queries
+  ├── Scan/GetNetworkInfo      ├── ProxyConfig/SyncNetwork  ├── Config changes
+  └── State transitions        └── P2P connect worker       └── Force reconnect
 ```
 
-## Memory Management
+State transitions are signaled cross-thread via `os::Event` (AutoClear for response/scan, ManualClear for error).
 
-- Fixed-size packet buffers (MTU-based)
-- Ring buffers for proxy data
-- No dynamic allocation in hot paths
-- RAII for resource cleanup
+## Memory Budget
 
-## Error Handling
-
-- Atmosphere Result codes for IPC
-- Automatic reconnection on network errors
-- State machine prevents invalid operations
-- Graceful degradation on server issues
+- **Heap**: 384 KB expanded heap
+- **Malloc buffer**: 1 MB for TLS heap central
+- **Thread stacks**: 32 KB (MITM), 8 KB (config), 4 KB (log)
+- **BSD sessions**: 14 concurrency limit
+- **Total sysmodule budget**: ~10 MB across all Switch sysmodules

@@ -47,8 +47,14 @@ Available suite names: `protocol`, `config`, `config-manager`, `log`, `socket`, 
 ### Distribution packaging
 
 ```bash
-cd sysmodule && make dist   # produces ryu_ldn_nx-sysmodule.zip with /atmosphere/contents/4200000000000010/ layout
+docker compose run --rm build   # build + overlay + dist ZIP + output/ directory
 ```
+
+The `dist` target in `sysmodule/Makefile` produces:
+- `output/` directory with SD card structure (atmosphere/contents/..., switch/.overlays/..., config/)
+- `ryu_ldn_nx-release.zip` with the same layout
+
+Config file (`config.ini`) is NOT included in dist because `ensure_config_exists()` in `config.cpp` auto-creates it on first boot with defaults.
 
 ### Debugging
 
@@ -82,6 +88,27 @@ Game (ldn:u IPC)                Game (bsd:u IPC)              Tesla overlay
  Ryujinx LDN server (TCP)
 ```
 
+### Data flow for gameplay traffic (PIA mesh)
+
+Games use Nintendo's PIA (Protocol Independent Application) library on top of LDN. After `CreateNetwork`/`Connect` establishes the LDN session via `ldn:u`:
+
+1. Game calls `GetIpv4Address()` → gets virtual LDN IP (e.g., `10.114.0.1`)
+2. Game calls `GetNetworkInfo()` → gets `NetworkInfo` with all nodes' IPs/MACs
+3. Game identifies its own node by matching `GetIpv4Address()` result against `NetworkInfo.ldn.nodes[].ipv4Address`
+4. Game opens UDP sockets via `bsd:u` → MITM intercepts `bind`/`connect` to `10.114.x.x` → creates `ProxySocket`
+5. PIA sends broadcast UDP packets (mesh discovery) → `ProxySocketManager::RouteIncomingData()` delivers to **all** matching sockets (not just first)
+6. PIA sends unicast UDP/TCP packets → `ProxySocket` → `ProxyData` header → TCP tunnel → Ryujinx server → peer
+
+**Critical**: broadcast delivery must hit every listening socket on the same port. The `FindAllSocketsByDestination()` method replaces the old `FindSocketByDestination()` for broadcast routing to ensure PIA mesh discovery works.
+
+### Packet signaling semantics
+
+`HandleServerPacket` signals `m_response_event` **only** for actual response packets that `WaitForResponse` expects:
+- **Signals event**: `Connected`, `ScanReply`, `ScanReplyEnd`, `RejectReply`, `ProxyConnectReply`, `NetworkError`
+- **Does NOT signal event**: `ProxyConfig`, `ProxyData`, `ProxyConnect`, `ExternalProxy`, `SyncNetwork`, `Ping`
+
+This prevents spurious wake-ups in `WaitForResponse()`. Previously, `ProxyConfig` arriving before `Connected` would wake the wait loop, recalculate timeout, and sometimes trigger a false timeout error.
+
 ### Key source directories
 
 | Path | Role |
@@ -90,7 +117,9 @@ Game (ldn:u IPC)                Game (bsd:u IPC)              Tesla overlay
 | `sysmodule/source/protocol/` | Wire format (`types.hpp`, `ryu_protocol.hpp`, `packet_buffer.hpp`). **Binary-compatible with C# server — do not modify padding** |
 | `sysmodule/source/network/` | `TcpClient`, `Client` (high-level), `ConnectionStateMachine`, `ReconnectManager`, `Socket` wrapper, `dns_wrap.cpp` |
 | `sysmodule/source/ldn/` | LDN MITM service, `ICommunicationService`, `LdnStateMachine`, `LdnPacketDispatcher`, `LdnSessionHandler`, `LdnProxyHandler`, `LdnSharedState`, `LdnNodeMapper`, `LdnNetworkTimeout` |
+| `sysmodule/source/ldn/ldn_icommunication.cpp` | Main LDN service implementation — CreateNetwork, Connect, Scan, WaitForResponse, HandleServerPacket, FindLocalNodeId |
 | `sysmodule/source/bsd/` | BSD MITM service, `ProxySocket`, `ProxySocketManager`, `EphemeralPortPool` |
+| `sysmodule/source/bsd/proxy_socket_manager.cpp` | Proxy data routing — `RouteIncomingData()` and `FindAllSocketsByDestination()` for broadcast fan-out |
 | `sysmodule/source/p2p/` | P2P proxy client/server, UPnP port mapper (`-lminiupnpc`) |
 | `sysmodule/source/config/` | Fixed-buffer INI parser, `ConfigManager`, `ConfigIpcService`, baked-in game whitelist (~40 KB) |
 | `sysmodule/source/debug/` | File logger with 2 s idle-timeout close thread, circular buffer for overlay |
@@ -112,6 +141,26 @@ Reference sources for cross-checking wire format:
 - `~/GIT/ldn_mitm/` — original Switch sysmodule
 
 **Do not second-guess the padding.** It has been verified repeatedly against Ryujinx source. If a bug looks like a protocol-padding mismatch, investigate game behavior, proxy socket routing, or state machine transitions first.
+
+## PIA Protocol Compatibility
+
+Games on Switch use Nintendo's PIA (Protocol Independent Application) library for multiplayer mesh networking on top of LDN. PIA is **not** part of the ldn:u service — it's a game-level library that uses the network information provided by LDN. Understanding PIA is essential for debugging game compatibility issues.
+
+### How PIA works with LDN
+
+1. **IP assignment**: The LDN AccessPoint (host) assigns IPs like `169.254.X.Y` (real hardware) or `10.114.X.Y` (RyuLDN proxy). Host always gets `.1`.
+2. **Node discovery**: After `CreateNetwork`/`Connect`, PIA uses `GetIpv4Address()` and `GetNetworkInfo()` to identify itself among nodes.
+3. **Mesh formation**: PIA sends broadcast UDP packets on specific ports (49152–49155) to discover peers. All listening sockets on the same port must receive broadcast packets.
+4. **Station protocol**: Connection requests/responses are exchanged over UDP. Each node advertises its Constant ID, Variable ID, and StationLocation (IP+port).
+5. **Reliable delivery**: PIA implements its own reliable transport layer over UDP (ACK/retransmit with 500ms timeout).
+
+### Key implications for ryu_ldn_nx
+
+- **Broadcast must reach all sockets**: `ProxySocketManager::RouteIncomingData()` uses `FindAllSocketsByDestination()` to deliver broadcast UDP to every matching proxy socket. Single-delivery (`FindSocketByDestination`) broke PIA mesh discovery in games like Smash Bros.
+- **IP consistency**: `GetIpv4Address()` must return the same IP that appears in `NetworkInfo.ldn.nodes[].ipv4Address`. If these mismatch, the game cannot identify its own node and destroys the network.
+- **Node ID zero**: In PIA, node 0 is always the host. `FindLocalNodeId()` returns the array index matching the local IP. If it returns `0xFF`, no match was found.
+- **UDP is primary**: PIA uses UDP for everything. TCP `ProxyConnect` handshakes are only for game TCP sockets (if any). Most PIA traffic is unicast or broadcast UDP.
+- **Port reuse**: Multiple game sockets may bind to the same port on different addresses or INADDR_ANY. Broadcast delivery must fan out to all of them.
 
 ## Memory Constraints
 
@@ -178,6 +227,24 @@ The `bsd:s` service type is used instead of `bsd:u` because UPnP's `upnpDiscover
 - The overlay Makefile uses `libultrahand` (submodule in `overlay/libultrahand/`) and produces a `.ovl` Tesla overlay.
 - Build wrapper (`scripts/builder/build-wrapper.sh`) handles file-lock coordination between parallel `docker-compose` services, with logs in `build-logs/`.
 - CI: `.github/workflows/build.yml` runs tests → builds sysmodule → builds overlay → packages. `.github/workflows/release.yml` additionally downloads game whitelist from the LDN server repo and creates a GitHub release with changelog.
+
+## Connection Resilience
+
+The network client (`RyuLdnClient` in `sysmodule/source/network/`) handles reconnection automatically:
+
+- **Fast first retry**: `ReconnectManager` starts with a 200ms delay on the first failure, then switches to exponential backoff (1s initial, 2x multiplier, 30s cap). This helps recover from brief WiFi blips.
+- **Jitter**: Backoff delays include ±10% jitter to prevent thundering herd after server restarts.
+- **TCP keepalive**: Enabled on Switch with 30s idle / 10s interval / 5 probes — detects dead connections without RyuLDN protocol changes.
+- **Graceful disconnect**: Socket `close()` calls `shutdown(SHUT_WR)` before `close()` so the server sees FIN instead of RST.
+- **Auto-reconnect**: When `ConnectionLost` fires, the state machine transitions through `Backoff` → `Retrying` → `Connecting` automatically (if `auto_reconnect` is enabled in config).
+
+## Known Issues & Pitfalls
+
+- **Byte order**: LDN IPs in `NetworkInfo`, `ProxyConfig`, and `m_ipv4_address` are all in "Ryujinx format" — big-endian read as `uint32` (e.g., `10.114.0.1` = `0x0A720001`). BSD `sockaddr_in.sin_addr` uses network byte order. `GetAddr()` does `bswap32`, `sin_addr` is stored in Ryujinx format. Never double-convert.
+- **P2P timing**: In P2P mode, `CreateNetwork` pre-sets `m_ipv4_address = 0x0A720001` (predicted host IP) before the P2P worker finishes. The `Connected` handler runs on the receive thread and may call `FindLocalNodeId()` before `m_ipv4_address` is updated — `FindLocalNodeId()` returns `0xFF` (not found) in that case. The predicted IP fixup in `CreateNetwork` (lines 997-1008) resolves this for the game-visible `GetIpv4Address()`.
+- **Relay mode timing**: In relay mode, `ProxyConfig` arrives before `Connected`. Only response-type packets signal `m_response_event` (see Packet Signaling Semantics above). `ProxyConfig` no longer wakes `WaitForResponse`.
+- **`FindLocalNodeId()` returns `0xFF`** (255) when the local IP doesn't match any node — not `0`. Node index 0 is a valid host ID.
+- **`m_network_info` race**: The receive thread writes `m_network_info` via `HandleServerPacket`. Any IPC handler reading it must hold `m_shared_mutex`.
 
 ## DCO & Commits
 

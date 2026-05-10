@@ -5,86 +5,176 @@ description: How to configure ryu_ldn_nx settings
 
 # Configuration
 
-ryu_ldn_nx can be configured via a configuration file on your SD card.
+ryu_ldn_nx can be configured via a configuration file on your SD card. The config file is auto-generated with defaults on first boot.
 
 ## Configuration File
 
 The configuration file is located at:
 
 ```
-SD Card/config/ryu_ldn_nx/config.ini
+config/ryu_ldn_nx/config.ini
 ```
 
-## Default Configuration
+If the file doesn't exist, the sysmodule creates it automatically with default values on first boot.
+
+## Reference Configuration
 
 ```ini
 ; ryu_ldn_nx Configuration
+; Auto-generated on first boot
 
 [server]
-; Server address for ryu_ldn multiplayer
+; Server hostname or IP address
 host = ldn.ryujinx.app
+; Server port
 port = 30456
+; Use TLS encryption (0/1)
+use_tls = 1
 
-[settings]
-; Enable debug logging (0 = off, 1 = on)
-debug = 0
+[network]
+; Connection timeout in milliseconds
+connect_timeout = 5000
+; Ping interval in milliseconds
+ping_interval = 10000
+; Reconnect delay in milliseconds
+reconnect_delay = 3000
+; Max reconnect attempts (0 = infinite)
+max_reconnect_attempts = 5
+
+[ldn]
+; Enable LDN emulation (0/1)
+enabled = 1
+; Room passphrase (empty = public)
+passphrase =
+; Network interface (empty = auto)
+interface =
+; Disable P2P proxy (0/1) — like Ryujinx MultiplayerDisableP2p
+disable_p2p = 0
+
+[debug]
+; Enable debug logging (0/1)
+enabled = 0
+; Log level (0=errors, 1=warnings, 2=info, 3=verbose)
+level = 1
+; Log to file (0/1)
+log_to_file = 0
+
+[perf]
+; Performance optimizations — flip individually if one regresses on hardware.
+
+; Step 1: bump the master TCP socket OS-level buffers (SO_RCVBUF/SO_SNDBUF)
+enable_larger_socket_buffers = 1
+socket_recv_buffer_kb = 64
+socket_send_buffer_kb = 64
+
+; Step 2: raise the LDN background thread priority (lower number = higher priority)
+enable_bg_thread_high_priority = 1
+bg_thread_priority = 8
+
+; Step 3: tighten the drain loop (reduces packet routing latency)
+enable_tight_drain_loop = 1
+recv_timeout_ms = 5
+bg_thread_sleep_ms = 5
+
+; Step 4 (not yet wired — keep at 0): release ProxySocketManager mutex early
+enable_manager_mutex_release = 0
+
+; Step 5 (not yet wired — keep at 0): asynchronous send queue
+enable_async_send_queue = 0
 ```
 
-## Options
+## Sections
 
-### Server Section
+### `[server]` — Server Connection
 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `host` | `ldn.ryujinx.app` | Server hostname or IP address |
 | `port` | `30456` | Server port number |
+| `use_tls` | `1` | Enable TLS encryption (0=off, 1=on) |
 
-### Settings Section
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `debug` | `0` | Enable debug logging (0=off, 1=on) |
-
-## Custom Servers
-
-To use a different LDN server, change the `host` and `port` values:
+To use a different LDN server:
 
 ```ini
 [server]
 host = my.custom.server.com
 port = 12345
+use_tls = 1
 ```
 
-### Self-Hosted Servers
-
-If you're running your own ryu_ldn server:
+For self-hosted servers on your LAN:
 
 ```ini
 [server]
 host = 192.168.1.100
 port = 30456
+use_tls = 0
 ```
 
-## Debug Mode
+### `[network]` — Connection Behavior
 
-Enable debug mode to troubleshoot connection issues:
+| Option | Default | Description |
+|--------|---------|-------------|
+| `connect_timeout` | `5000` | TCP connection timeout in milliseconds |
+| `ping_interval` | `10000` | Keepalive ping interval in milliseconds |
+| `reconnect_delay` | `3000` | Initial reconnect delay in milliseconds |
+| `max_reconnect_attempts` | `5` | Max reconnect attempts (0 = infinite) |
 
-```ini
-[settings]
-debug = 1
-```
+The reconnect system uses a **fast first retry** (200ms) before switching to exponential backoff (1s initial, 2x multiplier, 30s cap) with ±10% jitter. TCP keepalive is enabled automatically (30s idle / 10s interval / 5 probes).
 
-Debug logs are written to the system log and can be viewed with tools like:
-- `atmosphere/logs/`
-- NXLink console output
+### `[ldn]` — LDN Emulation
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `enabled` | `1` | Enable/disable LDN emulation |
+| `passphrase` | _(empty)_ | Room passphrase for private rooms (empty = public) |
+| `interface` | _(empty)_ | Preferred network interface (empty = auto-detect) |
+| `disable_p2p` | `0` | Disable P2P proxy (0=enable P2P, 1=relay only) |
+
+Setting `disable_p2p = 1` forces relay mode through the server. This is more reliable for most setups but adds server load. Enable P2P (`disable_p2p = 0`) if UPnP port mapping works on your network — it allows direct peer connections and reduces latency.
+
+### `[debug]` — Logging
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `enabled` | `0` | Enable debug logging (0=off, 1=on) |
+| `level` | `1` | Log level: 0=errors, 1=warnings, 2=info, 3=verbose |
+| `log_to_file` | `0` | Write logs to `config/ryu_ldn_nx/ryu_ldn_nx.log` (0=off, 1=on) |
+
+Log levels:
+- **0** — Errors only (critical issues)
+- **1** — Warnings (potential problems, **default**)
+- **2** — Info (normal operation events)
+- **3** — Verbose (detailed debug, including packet traces)
+
+At verbose level (3), the log can grow quickly. Read deltas per test run rather than the full file.
+
+### `[perf]` — Performance Tuning
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `enable_larger_socket_buffers` | `1` | Bump SO_RCVBUF/SO_SNDBUF to reduce backpressure |
+| `socket_recv_buffer_kb` | `64` | Socket receive buffer size in KB |
+| `socket_send_buffer_kb` | `64` | Socket send buffer size in KB |
+| `enable_bg_thread_high_priority` | `1` | Raise LDN background thread priority |
+| `bg_thread_priority` | `8` | Thread priority (lower = higher, Switch default is 20) |
+| `enable_tight_drain_loop` | `1` | Reduce drain loop latency (~40ms → ~10ms) |
+| `recv_timeout_ms` | `5` | Receive timeout in the tight drain loop |
+| `bg_thread_sleep_ms` | `5` | Sleep between drain iterations |
+| `enable_manager_mutex_release` | `0` | **Not yet wired** — early mutex release in ProxySocketManager |
+| `enable_async_send_queue` | `0` | **Not yet wired** — asynchronous send queue for BSD MITM |
+
+Most users should leave `[perf]` at defaults. If you experience high latency or stutter in-game, experiment with disabling these one at a time to identify which helps on your hardware.
 
 ## Applying Changes
 
-After modifying config.ini:
+After modifying `config.ini`:
 
 1. Save the file
 2. Use "Force Reconnect" in the Tesla overlay, or
 3. Reboot your Switch
+
+Some settings (like `[server]` host/port) require a reconnect. Others (like `[debug]` level) take effect immediately through the overlay.
 
 ## Overlay Configuration
 

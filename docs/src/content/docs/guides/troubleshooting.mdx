@@ -17,7 +17,7 @@ This page covers common issues and their solutions.
 1. Check your WiFi connection is working
 2. Try visiting a website to confirm internet access
 3. Verify server address in `config/ryu_ldn_nx/config.ini`
-4. The server might be down - check community channels
+4. The server might be down — check community channels
 
 ### "Error" Status
 
@@ -37,7 +37,26 @@ This page covers common issues and their solutions.
 1. Move closer to your WiFi router
 2. Use 5GHz WiFi if available
 3. Reduce network congestion (pause downloads, etc.)
-4. The server might be geographically far - check for closer servers
+4. The server might be geographically far — check for closer servers
+
+### Connection Drops During Play
+
+**Symptoms:** Players suddenly disappear from session
+
+**Solutions:**
+1. ryu_ldn_nx will attempt automatic reconnection (fast 200ms first retry, then exponential backoff)
+2. Check WiFi stability — move closer to your router
+3. If reconnection fails, restart the game session
+4. TCP keepalive (30s idle / 10s interval / 5 probes) should detect dead connections automatically
+
+### Protocol Version Mismatch
+
+**Symptoms:** Connected briefly then immediately disconnected, or `NetworkError` with code 1
+
+**Solutions:**
+1. Ensure your ryu_ldn_nx version matches the server version
+2. Update to the latest release
+3. Check the server supports protocol version 1
 
 ## Game Issues
 
@@ -50,6 +69,29 @@ This page covers common issues and their solutions.
 2. Verify all players are on the same server
 3. Check overlay shows "Ready" status
 4. Try having a different person host
+
+### Smash Bros Room Rejection / PIA Mesh Failure
+
+**Symptoms:** Can see the room but joining fails, or room disappears mid-match. "Communication error" in-game.
+
+**Root cause:** PIA (Protocol Independent Application) mesh discovery relies on **broadcast UDP packets** reaching every listening socket on the same port. If `RouteIncomingData()` delivers a broadcast packet to only one socket instead of all matching sockets, PIA's mesh protocol cannot form connections.
+
+**Solutions:**
+1. Ensure you're running the latest version — broadcast delivery was fixed to fan out to all matching proxy sockets
+2. If using P2P mode, verify UPnP port mapping is working (check overlay for P2P status)
+3. Try relay mode (disable P2P in config) as a fallback
+4. Check debug logs for `ProxySocket` creation — you should see multiple sockets on the same port for broadcast ports (49152–49155)
+
+### Game Finds Local IP Mismatch
+
+**Symptoms:** Game creates network then immediately destroys it, or reports "could not find local node"
+
+**Root cause:** PIA games call `GetIpv4Address()` and `GetNetworkInfo()` separately, then match the IP from `GetIpv4Address()` against `NetworkInfo.ldn.nodes[].ipv4Address`. If these mismatch, `FindLocalNodeId()` returns `0xFF` (not found).
+
+**Solutions:**
+1. This is a known timing issue in P2P mode where `m_ipv4_address` may not yet be updated when `Connected` arrives
+2. Usually resolves on second attempt — restart the game session
+3. If persistent, switch to relay mode (disable P2P)
 
 ### Disconnected During Game
 
@@ -68,6 +110,7 @@ This page covers common issues and their solutions.
 1. Make sure you have the latest ryu_ldn_nx version
 2. Update your game to the latest version
 3. Report the issue with game name and version
+4. Check Switch logs at `config/ryu_ldn_nx/ryu_ldn_nx.log` (enable `log_to_file=1` in config)
 
 ## Installation Issues
 
@@ -80,6 +123,8 @@ This page covers common issues and their solutions.
    ```
    atmosphere/contents/4200000000000010/exefs.nsp
    atmosphere/contents/4200000000000010/main.npdm
+   atmosphere/contents/4200000000000010/toolbox.json
+   atmosphere/contents/4200000000000010/flags/boot2.flag
    ```
 2. Make sure Atmosphere is up to date
 3. Reboot completely (not just sleep mode)
@@ -102,12 +147,41 @@ This page covers common issues and their solutions.
 
 **Solutions:**
 1. Make sure you saved the file
-2. Check file is in correct location:
+2. Check file is in the correct location:
    ```
    config/ryu_ldn_nx/config.ini
    ```
-3. Use "Force Reconnect" in overlay
+3. Use "Force Reconnect" in the overlay
 4. Or reboot your Switch
+
+## Debug Logging
+
+Enable debug logging to troubleshoot connection issues:
+
+```ini
+[debug]
+enabled = 1
+level = 3
+log_to_file = 1
+```
+
+Log levels:
+- **0** — Errors only (critical issues)
+- **1** — Warnings (potential problems)
+- **2** — Info (normal operation)
+- **3** — Verbose (detailed debug, including packet traces)
+
+The log file is written to `config/ryu_ldn_nx/ryu_ldn_nx.log` on the SD card. Read deltas per test run rather than the full file — it can grow quickly at verbose level.
+
+### Key Log Patterns
+
+| Pattern | Meaning |
+|---------|---------|
+| `[NETWORK:CONNECTION]` | TCP connection/reconnection events |
+| `[LDN:STATE]` | State machine transitions (None → Initialized → AccessPoint → AccessPointCreated) |
+| `[LDN:OPS]` | LDN operations (Scan, CreateNetwork, Connect) |
+| `[BSD:PROXY]` | Proxy socket creation, bind, connect — look for multiple sockets on the same port |
+| `[LDN:PROXY]` | ProxyData routing — broadcast delivery to all matching sockets |
 
 ## Getting Help
 
@@ -121,4 +195,4 @@ If your issue isn't covered here:
    - ryu_ldn_nx version
    - Game name and version
    - Steps to reproduce
-   - Debug logs if available
+   - Debug logs (with `level = 3`)

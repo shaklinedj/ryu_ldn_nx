@@ -1,201 +1,372 @@
 ---
 title: RyuLdn Protocol
-description: Reference for the RyuLdn network protocol
+description: Reference for the RyuLdn network protocol wire format
 ---
 
 # RyuLdn Protocol
 
-This page documents the RyuLdn network protocol used to communicate with the server.
+This page documents the RyuLdn network protocol used to communicate between the Switch sysmodule and the Ryujinx LDN server.
 
 ## Overview
 
-RyuLdn is a binary protocol over TCP. All multi-byte integers are little-endian.
+RyuLdn is a binary protocol over TCP. All multi-byte integers are **little-endian**, matching both x86/x64 (server) and ARM (Switch) native byte order.
+
+**Critical**: The protocol must remain byte-for-byte compatible with the C# server (`LdnServer/Network/RyuLdnProtocol.cs`). The C# server uses `[StructLayout(LayoutKind.Sequential)]` **without `Pack=1`**, which means `int32` fields are aligned on 4-byte boundaries. See [Byte Order & Padding](#byte-order--padding) for details.
 
 ## Packet Structure
 
+Every packet starts with a 12-byte `LdnHeader`:
+
 ```
-┌─────────────────────────────────────────┐
-│ Header (4 bytes)                        │
-├─────────────────────────────────────────┤
-│ Magic (2 bytes): 0x524C ("RL")          │
-│ Type (1 byte): PacketType enum          │
-│ Reserved (1 byte): 0x00                 │
-├─────────────────────────────────────────┤
-│ Payload (variable)                      │
-│ Structure depends on packet type        │
-└─────────────────────────────────────────┘
+┌──────────────────────────────────────────────────┐
+│ LdnHeader (12 bytes)                             │
+├──────────┬────────┬─────────┬──────────┬─────────┤
+│ Magic    │ Type   │ Version │ Reserved │DataSize │
+│ 4 bytes  │ 1 byte │ 1 byte  │ 2 bytes  │ 4 bytes │
+│ 0x4E444C52│ 0-255  │    1    │   0x00   │ 0-N     │
+└──────────┴────────┴─────────┴──────────┴─────────┘
 ```
+
+| Field | Offset | Size | Description |
+|-------|--------|------|-------------|
+| `magic` | 0x00 | 4 | Protocol magic: `0x4E444C52` ("RLDN" in LE) |
+| `type` | 0x04 | 1 | Packet type from `PacketId` enum |
+| `version` | 0x05 | 1 | Protocol version (must be `1`) |
+| `reserved` | 0x06 | 2 | Padding to align `data_size` on 4-byte boundary |
+| `data_size` | 0x08 | 4 | Payload size in bytes (signed int32, may be 0) |
+
+**Important**: The header is **12 bytes**, not 10. The `reserved` field at offset 0x06 pads `data_size` onto a 4-byte boundary at offset 0x08. This matches the C# `StructLayout(LayoutKind.Sequential, Size=0xA)` where `Size=0xA` only affects marshaling, not the internal struct layout.
 
 ## Packet Types
 
+### Session Management (0–1)
+
 | Value | Name | Direction | Description |
 |-------|------|-----------|-------------|
-| 0x01 | Passphrase | C→S | Authentication |
-| 0x02 | Connected | S→C | Connection confirmed |
-| 0x03 | SyncNetwork | S→C | Network state sync |
-| 0x04 | Disconnect | Both | Disconnection notice |
-| 0x10 | Scan | C→S | Request network scan |
-| 0x11 | ScanResponse | S→C | Scan results |
-| 0x20 | CreateAccessPoint | C→S | Create network |
-| 0x21 | CreateAccessPointResponse | S→C | Create result |
-| 0x30 | Connect | C→S | Join network |
-| 0x31 | ConnectResponse | S→C | Join result |
-| 0x40 | SetAcceptPolicy | C→S | Set join policy |
-| 0x50 | SetAdvertiseData | C→S | Update advertisement |
-| 0x60 | Reject | C→S | Reject a connection |
-| 0x70 | ProxyData | Both | Game data relay |
-| 0x80 | ProxyDataBroadcast | Both | Broadcast data |
+| 0 | `Initialize` | C→S | Client sends session ID and MAC address |
+| 1 | `Passphrase` | C→S | Room passphrase for private room filtering |
+
+### Access Point Operations (2–9)
+
+| Value | Name | Direction | Description |
+|-------|------|-----------|-------------|
+| 2 | `CreateAccessPoint` | C→S | Create a public network session |
+| 3 | `CreateAccessPointPrivate` | C→S | Create a private (passphrase) session |
+| 4 | `ExternalProxy` | S→C | Configure external proxy mode |
+| 5 | `ExternalProxyToken` | S→C | External proxy authentication token |
+| 6 | `ExternalProxyState` | S→C | External proxy state update |
+| 7 | `SyncNetwork` | S→C | Synchronize network state to clients |
+| 8 | `Reject` | C→S | Host rejects a player |
+| 9 | `RejectReply` | S→C | Server confirms rejection |
+
+### Network Discovery (10–16)
+
+| Value | Name | Direction | Description |
+|-------|------|-----------|-------------|
+| 10 | `Scan` | C→S | Request available networks |
+| 11 | `ScanReply` | S→C | One discovered network |
+| 12 | `ScanReplyEnd` | S→C | End of scan results |
+| 13 | `Connect` | C→S | Join a network |
+| 14 | `ConnectPrivate` | C→S | Join a private network |
+| 15 | `Connected` | S→C | Connection confirmed |
+| 16 | `Disconnect` | Both | Disconnection notice |
+
+### Proxy Operations (17–21)
+
+| Value | Name | Direction | Description |
+|-------|------|-----------|-------------|
+| 17 | `ProxyConfig` | S→C | Configure proxy settings (LDN subnet) |
+| 18 | `ProxyConnect` | S→C | Incoming P2P connection through proxy |
+| 19 | `ProxyConnectReply` | S→C | Proxy connection result |
+| 20 | `ProxyData` | Both | Game data relay through proxy |
+| 21 | `ProxyDisconnect` | Both | Close proxy connection |
+
+### Host Control (22–23)
+
+| Value | Name | Direction | Description |
+|-------|------|-----------|-------------|
+| 22 | `SetAcceptPolicy` | C→S | Change accept policy (allow/reject) |
+| 23 | `SetAdvertiseData` | C→S | Update session advertisement data |
+
+### Utility (254–255)
+
+| Value | Name | Direction | Description |
+|-------|------|-----------|-------------|
+| 254 | `Ping` | Both | Keepalive with timestamp |
+| 255 | `NetworkError` | S→C | Error notification |
+
+## Packet Signaling
+
+Not all packets wake `WaitForResponse`. The following table shows which packet types signal `m_response_event`:
+
+| Signal event? | Packet types |
+|---|---|
+| **Yes** | `Connected` (15), `ScanReply` (11), `ScanReplyEnd` (12), `RejectReply` (9), `ProxyConnectReply` (19), `NetworkError` (255) |
+| **No** | `ProxyConfig` (17), `ProxyData` (20), `ProxyConnect` (18), `ExternalProxy` (4), `SyncNetwork` (7), `Ping` (254) |
+
+This prevents spurious wake-ups — `ProxyConfig` arriving before `Connected` no longer triggers a false timeout.
 
 ## Authentication Flow
 
 ```
-Client                                Server
-  │                                      │
-  │──── Passphrase ─────────────────────▶│
-  │     (game_id, ssid, etc.)            │
-  │                                      │
-  │◀──── Connected ──────────────────────│
-  │      (assigned node_id)              │
+Client                                     Server
+  │                                          │
+  │──── Passphrase (1) ─────────────────────▶│
+  │     (passphrase or empty for public)     │
+  │                                          │
+  │──── Initialize (0) ─────────────────────▶│
+  │     (session_id, mac_address)            │
+  │                                          │
+  │◀──── ProxyConfig (17) ──────────────────│
+  │     (proxy_ip, proxy_subnet_mask)        │
+  │                                          │
+  │◀──── Connected (15) ─────────────────────│
+  │     (NetworkInfo + node assignment)      │
 ```
+
+After `Connected`, the client periodically sends `Ping` (254) and receives `SyncNetwork` (7) updates.
 
 ## Packet Definitions
 
-### Passphrase (0x01)
-
-Sent by client after TCP connection.
+### Initialize (0)
 
 ```cpp
-struct PassphrasePacket {
-    u32 magic;          // "RL" + type + reserved
-    u64 game_id;        // Title ID
-    u8 ssid[32];        // Network SSID
-    u8 passphrase[32];  // Network passphrase
+struct InitializeMessage {       // 22 bytes (0x16)
+    SessionId  id;               // 16 bytes: client session ID (zeros = new)
+    MacAddress mac_address;      // 6 bytes: client MAC (zeros = assign new)
 };
 ```
 
-### Connected (0x02)
-
-Sent by server to confirm connection.
+### Passphrase (1)
 
 ```cpp
-struct ConnectedPacket {
-    u32 magic;
-    u8 node_id;         // Assigned node ID (0-7)
+struct PassphraseMessage {       // 128 bytes (0x80)
+    uint8_t passphrase[128];     // UTF-8 passphrase, null-padded
+};                               // "Ryujinx-<hex8>" or empty for public
+```
+
+### ProxyConfig (17)
+
+```cpp
+struct ProxyConfig {             // 8 bytes
+    uint32_t proxy_ip;           // LDN subnet IP (e.g., 10.114.0.1 as 0x0A720001)
+    uint32_t proxy_subnet_mask;  // Subnet mask (e.g., 0xFFFF0000 for /16)
 };
 ```
 
-### SyncNetwork (0x03)
+### Connected (15)
 
-Sent by server when network state changes.
+Responds with full `NetworkInfo` (0x480 bytes) after the header. The client's assigned node is identified by matching `GetIpv4Address()` against `NetworkInfo.ldn.nodes[].ipv4_address`.
+
+### Scan (10) / ScanReply (11) / ScanReplyEnd (12)
+
+- **Scan**: payload is a `ScanFilterFull` (0x60 bytes) or empty for wildcards
+- **ScanReply**: payload is one `NetworkInfo` (0x480 bytes)
+- **ScanReplyEnd**: no payload, signals end of scan results
+
+### CreateAccessPoint (2) / CreateAccessPointPrivate (3)
 
 ```cpp
-struct SyncNetworkPacket {
-    u32 magic;
-    NetworkInfo network_info;  // Full network state
+struct CreateAccessPointRequest {       // 0xBC bytes (188)
+    SecurityConfig   security_config;   // 0x44 bytes
+    UserConfig       user_config;       // 0x30 bytes
+    NetworkConfig    network_config;    // 0x20 bytes
+    RyuNetworkConfig ryu_network_config;// 0x28 bytes
+};
+// Advertise data is appended after this structure
+```
+
+```cpp
+struct CreateAccessPointPrivateRequest { // 0x13C bytes (316)
+    SecurityConfig     security_config; // 0x00: 0x44 bytes
+    SecurityParameter  security_parameter; // 0x44: 0x20 bytes
+    UserConfig         user_config;    // 0x64: 0x30 bytes
+    NetworkConfig      network_config; // 0x94: 0x20 bytes
+    AddressList        address_list;    // 0xB4: 0x60 bytes
+    RyuNetworkConfig   ryu_network_config; // 0x114: 0x28 bytes
 };
 ```
 
-### Scan (0x10)
-
-Request to scan for available networks.
+### Connect (13) / ConnectPrivate (14)
 
 ```cpp
-struct ScanPacket {
-    u32 magic;
-    ScanFilter filter;  // Optional filter criteria
+struct ConnectRequest {                 // 0x500 bytes (1280)
+    SecurityConfig security_config;      // 0x00: 0x44 bytes
+    UserConfig     user_config;         // 0x44: 0x30 bytes
+    uint32_t       local_communication_version; // 0x74: 4 bytes
+    uint32_t       option_unknown;       // 0x78: 4 bytes
+    uint32_t       _padding;            // 0x7C: 4 bytes (C# alignment padding)
+    NetworkInfo    network_info;         // 0x80: 0x480 bytes
+};
+static_assert(sizeof(ConnectRequest) == 0x500);
+```
+
+**Important**: The `_padding` field at 0x7C is required because the C# `StructLayout` (without `Pack=1`) aligns `NetworkInfo` (which contains `int64_t local_communication_id` in `IntentId`) to an 8-byte boundary at offset 0x80.
+
+### ProxyData (20)
+
+```cpp
+struct ProxyDataHeader {                // 20 bytes (0x14)
+    ProxyInfo info;                     // 16 bytes: source/dest addressing
+    uint32_t  data_length;              // 4 bytes: payload size following header
 };
 ```
 
-### ScanResponse (0x11)
+`ProxyInfo` contains source/dest IPv4, source/dest port, and protocol type (TCP=6, UDP=17). This is how game traffic (PIA mesh data) is tunneled through the server.
 
-Contains discovered networks.
+For **broadcast** UDP packets (PIA mesh discovery), `dest_ipv4` is the broadcast address (e.g., `10.114.255.255`) and `dest_port` matches the game's listening port. The Switch-side `RouteIncomingData()` must deliver these to **all** matching proxy sockets on the same port.
+
+### ExternalProxy Structures
 
 ```cpp
-struct ScanResponsePacket {
-    u32 magic;
-    u16 network_count;
-    NetworkInfo networks[];  // Variable length
+struct ExternalProxyConfig {            // 0x26 bytes (38)
+    uint8_t  proxy_ip[16];             // IP address string (IPv4 or IPv6)
+    uint32_t address_family;           // 2 = IPv4, 23 = IPv6
+    uint16_t proxy_port;               // Proxy server port
+    uint8_t  token[16];               // Authentication token
+};
+
+struct ExternalProxyToken {             // 0x28 bytes (40)
+    uint32_t virtual_ip;               // Assigned virtual IP
+    uint8_t  token[16];                // Auth token
+    uint8_t  physical_ip[16];          // Client's physical IP
+    uint32_t address_family;           // 2 = IPv4, 23 = IPv6
+};
+
+struct ExternalProxyConnectionState {    // 0x08 bytes (8)
+    uint32_t ip_address;               // Client IP address
+    uint8_t  connected;                 // 0=disconnected, 1=connected
+    uint8_t  _pad[3];                  // Pack=4 alignment padding
 };
 ```
 
-### CreateAccessPoint (0x20)
-
-Request to create a new network (host).
+### Host Control Packets
 
 ```cpp
-struct CreateAccessPointPacket {
-    u32 magic;
-    SecurityConfig security;
-    UserConfig user;
-    NetworkConfig network;
+struct SetAcceptPolicyRequest {         // 1 byte
+    uint8_t accept_policy;             // AcceptPolicy enum (0-3)
+};
+
+struct RejectRequest {                  // 8 bytes
+    uint32_t node_id;                  // Node ID of player to reject
+    uint32_t disconnect_reason;        // DisconnectReason enum value
 };
 ```
 
-### Connect (0x30)
-
-Request to join an existing network.
+### Utility Packets
 
 ```cpp
-struct ConnectPacket {
-    u32 magic;
-    u8 network_id[16];   // Network to join
-    ConnectData data;    // Connection data
+struct PingMessage {                    // 2 bytes
+    uint8_t requester;                 // 0 = server ping (echo back), 1 = client ping
+    uint8_t id;                        // Ping ID for matching request/response
+};
+
+struct NetworkErrorMessage {            // 4 bytes
+    uint32_t error_code;               // NetworkErrorCode enum value
+};
+
+struct DisconnectMessage {              // 4 bytes
+    uint32_t disconnect_ip;            // IP of disconnecting client
 };
 ```
 
-### ProxyData (0x70)
+## Key Structures
 
-Game data relay between nodes.
+### NetworkInfo (0x480 bytes = 1152 bytes)
 
-```cpp
-struct ProxyDataPacket {
-    u32 magic;
-    u8 source_node;      // Sender node ID
-    u8 dest_node;        // Destination node ID (0xFF for all)
-    u16 data_size;       // Payload size
-    u8 data[];           // Game data
-};
-```
-
-### ProxyDataBroadcast (0x80)
-
-Broadcast game data to all nodes.
-
-```cpp
-struct ProxyDataBroadcastPacket {
-    u32 magic;
-    u8 source_node;
-    u16 data_size;
-    u8 data[];
-};
-```
-
-## NetworkInfo Structure
+The main structure used in `ScanReply`, `Connected`, and `SyncNetwork` packets:
 
 ```cpp
 struct NetworkInfo {
-    u8 network_id[16];           // Unique network ID
-    Ssid ssid;                   // Network SSID
-    SecurityConfig security;     // Security settings
-    UserConfig host_user;        // Host information
-    u8 node_count;               // Current players
-    u8 node_count_max;           // Maximum players
-    NodeInfo nodes[8];           // Player information
-    u16 advertise_data_size;     // Advertisement size
-    u8 advertise_data[384];      // Game advertisement
+    NetworkId         network_id;   // 0x000: 32 bytes
+    CommonNetworkInfo  common;       // 0x020: 48 bytes (0x30)
+    LdnNetworkInfo     ldn;         // 0x050: 1072 bytes (0x430)
+};
+static_assert(sizeof(NetworkInfo) == 0x480);
+```
+
+### NodeInfo (0x40 bytes = 64 bytes)
+
+```cpp
+struct NodeInfo {
+    uint32_t   ipv4_address;                // Network byte order
+    MacAddress mac_address;                  // 6 bytes
+    uint8_t    node_id;                      // 0 = host, 1-7 = clients
+    uint8_t    is_connected;                 // 1 = connected
+    char       user_name[33];                // UTF-8, null-terminated
+    uint8_t    reserved1;
+    uint16_t   local_communication_version;
+    uint8_t    reserved2[16];
 };
 ```
 
-## Error Handling
+Node 0 is always the host. Games use `GetIpv4Address()` and match it against `nodes[].ipv4_address` to find their own node index.
 
-If a malformed packet is received:
-1. Server may send Disconnect packet with reason
-2. Server closes TCP connection
-3. Client should attempt reconnection
+### LdnNetworkInfo (0x430 bytes = 1072 bytes)
 
-Disconnect reasons:
-- 0x01: Protocol error
-- 0x02: Authentication failed
-- 0x03: Network full
-- 0x04: Kicked by host
-- 0x05: Network closed
+```cpp
+struct LdnNetworkInfo {
+    uint8_t  security_parameter[16];  // 0x000
+    uint16_t security_mode;           // 0x010: SecurityMode enum
+    uint8_t  station_accept_policy;   // 0x012: AcceptPolicy enum
+    uint8_t  unknown1;               // 0x013
+    uint16_t reserved1;               // 0x014
+    uint8_t  node_count_max;           // 0x016
+    uint8_t  node_count;               // 0x017
+    NodeInfo nodes[8];                // 0x018: 8 × 64 = 512 bytes
+    uint16_t reserved2;               // 0x218
+    uint16_t advertise_data_size;     // 0x21A
+    uint8_t  advertise_data[384];     // 0x21C
+    uint8_t  unknown2[140];           // 0x39C
+    uint64_t authentication_id;       // 0x428
+};
+```
+
+## Byte Order & Padding
+
+### IP Addresses — Critical Invariant
+
+LDN IPs in `NetworkInfo`, `ProxyConfig`, and `m_ipv4_address` are all in **Ryujinx format**: big-endian read as `uint32` (e.g., `10.114.0.1` = `0x0A720001`). BSD `sockaddr_in.sin_addr` uses **network byte order** (which is also big-endian). `GetAddr()` does `bswap32`, `sin_addr` is stored in Ryujinx format (no bswap in `Bind`). **Never double-convert.**
+
+### Struct Layout Padding
+
+The C# server uses `[StructLayout(LayoutKind.Sequential)]` **without `Pack=1`**. This has real consequences:
+
+1. **`LdnHeader`** is 12 bytes, not 10: `reserved` at offset 0x06 pads `data_size` to offset 0x08
+2. **`ConnectRequest`** has `_padding` at 0x7C to align `NetworkInfo` at 0x80 (8-byte boundary for `int64_t`)
+3. **`ExternalProxyConnectionState`** has 3 bytes of `_pad` after `connected` for Pack=4 alignment
+
+Every struct has a `static_assert` for its expected size. If a `static_assert` fails, the fix is in the struct layout, not in the assert.
+
+## Network Error Codes
+
+| Value | Name | Description |
+|-------|------|-------------|
+| 0 | `None` | No error |
+| 1 | `VersionMismatch` | Protocol version doesn't match server |
+| 2 | `InvalidMagic` | Invalid protocol magic number |
+| 3 | `InvalidSessionId` | Session ID is invalid or expired |
+| 4 | `HandshakeTimeout` | Handshake didn't complete in time |
+| 5 | `AlreadyInitialized` | Client already sent Initialize |
+| 100 | `SessionNotFound` | Referenced session doesn't exist |
+| 101 | `SessionFull` | Session has maximum players |
+| 102 | `SessionClosed` | Session was closed by host |
+| 103 | `NotInSession` | Operation requires being in a session |
+| 104 | `AlreadyInSession` | Already in a session |
+| 200 | `NetworkNotFound` | Requested network doesn't exist |
+| 201 | `NetworkFull` | Network is at capacity |
+| 202 | `ConnectionRejected` | Host rejected the connection |
+| 203 | `AuthenticationFailed` | Passphrase authentication failed |
+| 204 | `InvalidRequest` | Malformed or invalid request |
+| 900 | `InternalError` | Server internal error |
+| 901 | `ServiceUnavailable` | Service temporarily unavailable |
+
+## Enums Reference
+
+| Enum | Values |
+|------|--------|
+| `AcceptPolicy` | `AcceptAll=0`, `RejectAll=1`, `BlackList=2`, `WhiteList=3` |
+| `SecurityMode` | `Any=0`, `Product=1`, `Debug=2` |
+| `NetworkType` | `None=0`, `General=1`, `Ldn=2`, `All=3` |
+| `DisconnectReason` | `None=0`, `User=1`, `SystemRequest=2`, `DestroyedByHost=3`, `DestroyedByAdmin=4`, `Rejected=5`, `SignalLost=6` |
+| `ProtocolType` | `Tcp=6`, `Udp=17` (most common for PIA traffic) |
