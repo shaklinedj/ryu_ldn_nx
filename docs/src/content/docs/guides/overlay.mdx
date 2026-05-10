@@ -5,7 +5,7 @@ description: How to use the Tesla overlay for ryu_ldn_nx
 
 # Using the Overlay
 
-ryu_ldn_nx includes a Tesla overlay that lets you monitor connection status and change settings without leaving your game.
+ryu_ldn_nx includes a Tesla overlay that lets you monitor connection status and change settings without leaving your game. The overlay communicates with the sysmodule via a custom IPC service (`ryu:cfg`).
 
 ## Requirements
 
@@ -20,16 +20,17 @@ ryu_ldn_nx includes a Tesla overlay that lets you monitor connection status and 
 
 ## Interface
 
-The overlay displays three sections:
+The overlay displays three sections, all powered by the `ryu:cfg` IPC service (see [IPC Commands](/ryu_ldn_nx/reference/ipc-commands)):
 
 ### Status
 
 | Item | Description |
 |------|-------------|
 | **Server Status** | Connection state (Disconnected, Connecting, Connected, Ready, Error) |
-| **LDN State** | Current LDN state (None, Initialized, Station, etc.) |
-| **Session** | Current session info (player count, host/client) |
+| **LDN State** | Current CommState (None, Initialized, AccessPoint, AccessPointCreated, Station, StationConnected) |
+| **Session** | Current session info (player count, max players, local node ID, host/client) |
 | **Latency** | Round-trip time to server in milliseconds |
+| **Game Active** | Whether a game is currently using LDN |
 
 ### Server
 
@@ -42,16 +43,27 @@ The overlay displays three sections:
 
 | Item | Description |
 |------|-------------|
+| **LDN Enabled** | Toggle LDN emulation on/off |
+| **P2P Proxy** | Enable or disable P2P proxy (relay-only when disabled) |
 | **Debug Logging** | Toggle debug output on/off |
+| **Log Level** | Set log verbosity (0=errors, 1=warnings, 2=info, 3=verbose) |
+| **Log to File** | Enable/disable file logging |
+| **Save Config** | Persist current settings to SD card |
 
 ## Status Colors
 
 The server status uses color coding:
 
-- **Green** - Connected and ready
-- **Yellow** - Connecting or handshaking
-- **Gray** - Disconnected
-- **Red** - Error state
+- **Green** — Connected and ready
+- **Yellow** — Connecting or handshaking
+- **Gray** — Disconnected
+- **Red** — Error state
+
+## How It Works
+
+The overlay talks to the sysmodule through `ryu:cfg`, a custom IPC service obtained via command 65000 on the MITM'd `ldn:u` service. The IPC stubs are in `overlay/source/ryu_ldn_ipc.c`.
+
+`LdnSharedState` bridges the LDN MITM and config service, allowing the overlay to read real-time state (connection status, LDN state, session info, RTT) without interfering with the game's LDN session.
 
 ## Automatic Updates
 
@@ -75,6 +87,13 @@ The overlay updates automatically every second while open. You can also:
 3. Select "Force Reconnect" and press A
 4. Wait for status to become "Ready"
 
+### Switch Between P2P and Relay Mode
+
+1. Open overlay
+2. Toggle "P2P Proxy" on or off
+3. P2P enabled: direct peer connections via UPnP (lower latency, needs port forwarding)
+4. P2P disabled: all traffic relayed through server (more reliable, higher latency)
+
 ### Monitor During Gameplay
 
 1. Open overlay during gameplay
@@ -94,7 +113,13 @@ The overlay updates automatically every second while open. You can also:
 
 This appears when the sysmodule isn't running:
 
-- Verify sysmodule files are in the correct location
+- Verify sysmodule files are in the correct location:
+  ```
+  atmosphere/contents/4200000000000010/exefs.nsp
+  atmosphere/contents/4200000000000010/main.npdm
+  atmosphere/contents/4200000000000010/toolbox.json
+  atmosphere/contents/4200000000000010/flags/boot2.flag
+  ```
 - Reboot your Switch
 - Check Atmosphere is working properly
 
@@ -103,4 +128,4 @@ This appears when the sysmodule isn't running:
 - Check your WiFi connection
 - Verify the server is online
 - Try "Force Reconnect"
-- Check server address in config.ini
+- Check server address in `config/ryu_ldn_nx/config.ini`
