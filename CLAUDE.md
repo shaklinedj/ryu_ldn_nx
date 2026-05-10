@@ -108,3 +108,6 @@ LDN IPs in `NetworkInfo`, `ProxyConfig`, `m_ipv4_address`, and `GetIpv4Address()
 - **P2P timing**: In P2P mode, `CreateNetwork` pre-sets `m_ipv4_address = 0x0A720001` (predicted host IP) before the P2P worker finishes. The `Connected` handler on the receive thread may call `FindLocalNodeId()` before `m_ipv4_address` is updated.
 - **Relay mode timing**: In relay mode, `ProxyConfig` arrives before `Connected`. Only response-type packets signal `m_response_event` (see Packet Signaling above). `ProxyConfig` no longer wakes `WaitForResponse`.
 - **`m_network_info` race**: The receive thread writes `m_network_info` via `HandleServerPacket`. Any IPC handler reading it must hold `m_shared_mutex`.
+- **`ping_interval` is unused**: The `ping_interval` config key is parsed and stored but never consumed by the network client.
+- **`[perf]` section is dead**: The perf config keys are in the example config but not parsed or consumed. They have zero runtime effect.
+- **`max_reconnect_attempts = 0` disables auto-reconnect**: It does not mean infinite retries — it means the client will not retry at all.

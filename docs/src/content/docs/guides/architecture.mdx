@@ -99,7 +99,7 @@ All LDN IPs use **Ryujinx format** — big-endian read as `uint32` (e.g., `10.11
 | Yes | `Connected`, `ScanReply`, `ScanReplyEnd`, `RejectReply`, `ProxyConnectReply`, `NetworkError` |
 | No | `ProxyConfig`, `ProxyData`, `ProxyConnect`, `ExternalProxy`, `SyncNetwork`, `Ping` |
 
-This prevents spurious wake-ups when `ProxyConfig` arrives before `Connected`.
+This prevents spurious wake-ups when `ProxyConfig` arrives before `Connected`. All other packet types (including `Initialize`, `Passphrase`, `CreateAccessPoint`, `Reject`, `Scan`, `Connect`, `Disconnect`, `ProxyDisconnect`, `SetAcceptPolicy`, `SetAdvertiseData`, `ExternalProxyToken`, `ExternalProxyState`) also do **not** signal the event.
 
 ## Connection Resilience
 
@@ -112,20 +112,24 @@ This prevents spurious wake-ups when `ProxyConfig` arrives before `Connected`.
 ## Threading Model
 
 ```
-MITM Server Thread         Receive Thread              Config Thread
+MITM Server Thread         Receive Thread (16KB)       Config Thread (8KB)
   │                            │                           │
   ├── ldn:u IPC requests      ├── TcpClient.recv()        ├── ryu:cfg IPC requests
   ├── CreateNetwork/Connect    ├── HandleServerPacket()    ├── Status queries
-  ├── Scan/GetNetworkInfo      ├── ProxyConfig/SyncNetwork  ├── Config changes
+  ├── Scan/GetNetworkInfo      ├── All packet processing    ├── Config changes
   └── State transitions        └── P2P connect worker       └── Force reconnect
+                                                             │
+                                                     Log Thread (4KB)
+                                                             │
+                                                    └── File logger, idle-timeout close
 ```
 
-State transitions are signaled cross-thread via `os::Event` (AutoClear for response/scan, ManualClear for error).
+State transitions are signaled cross-thread via `os::Event` (AutoClear for response/scan/reject, ManualClear for error).
 
 ## Memory Budget
 
 - **Heap**: 384 KB expanded heap
 - **Malloc buffer**: 1 MB for TLS heap central
-- **Thread stacks**: 32 KB (MITM), 8 KB (config), 4 KB (log)
+- **Thread stacks**: 32 KB (MITM), 16 KB (receive), 8 KB (config), 16 KB (P2P connect), 4 KB (log). Total: ~76 KB
 - **BSD sessions**: 14 concurrency limit
 - **Total sysmodule budget**: ~10 MB across all Switch sysmodules

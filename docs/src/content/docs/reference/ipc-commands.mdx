@@ -16,44 +16,56 @@ These are the standard Nintendo LDN IPC commands that ryu_ldn_nx intercepts:
 | Cmd | Name | Description |
 |-----|------|-------------|
 | 0 | CreateUserLocalCommunicationService | Creates a communication session |
+| 1 | *CreateClientProcessMonitor* | Internal monitor (not MITMed) |
 
 ### ICommunicationInterface
 
 | Cmd | Name | Description |
 |-----|------|-------------|
 | 0 | GetState | Get current LDN state |
+| 1 | GetNetworkInfo | Get current network information |
+| 2 | GetIpv4Address | Get local IPv4 address (Ryujinx format: big-endian uint32) |
+| 3 | GetDisconnectReason | Get reason for last disconnect |
+| 4 | GetSecurityParameter | Get security configuration |
+| 5 | GetNetworkConfig | Get network configuration |
 | 100 | AttachStateChangeEvent | Get event handle for state changes |
-| 200 | GetNetworkInfo | Get current network information |
-| 201 | GetIpv4Address | Get local IPv4 address (Ryujinx format: big-endian uint32) |
-| 202 | GetDisconnectReason | Get reason for last disconnect |
-| 203 | GetSecurityParameter | Get security configuration |
-| 204 | GetNetworkConfig | Get network configuration |
-| 300 | OpenAccessPoint | Open as network host |
-| 301 | CloseAccessPoint | Close host mode |
-| 302 | CreateNetwork | Create a new network |
-| 303 | CreateNetworkPrivate | Create private network |
-| 304 | DestroyNetwork | Destroy current network |
-| 400 | OpenStation | Open as client |
-| 401 | CloseStation | Close client mode |
-| 402 | Connect | Connect to a network |
-| 403 | ConnectPrivate | Connect to private network |
-| 404 | Disconnect | Disconnect from network |
-| 500 | SetAdvertiseData | Set advertisement data |
-| 600 | Scan | Scan for networks |
-| 601 | ScanPrivate | Scan for private networks |
+| 101 | GetNetworkInfoLatestUpdate | Get network info with update counter |
+| 102 | Scan | Scan for available networks |
+| 103 | ScanPrivate | Scan for private networks |
+| 104 | SetWirelessControllerRestriction | Restrict wireless controllers |
+| 200 | OpenAccessPoint | Open as network host |
+| 201 | CloseAccessPoint | Close host mode |
+| 202 | CreateNetwork | Create a new network |
+| 203 | CreateNetworkPrivate | Create private network |
+| 204 | DestroyNetwork | Destroy current network |
+| 205 | Reject | Reject a connected player |
+| 206 | SetAdvertiseData | Set advertisement data |
+| 207 | SetStationAcceptPolicy | Set join policy (allow/reject) |
+| 208 | AddAcceptFilterEntry | Add entry to accept filter |
+| 209 | ClearAcceptFilter | Clear accept filter |
+| 300 | OpenStation | Open as client |
+| 301 | CloseStation | Close client mode |
+| 302 | Connect | Connect to a network |
+| 303 | ConnectPrivate | Connect to private network |
+| 304 | Disconnect | Disconnect from network |
+| 400 | Initialize | Initialize the service |
+| 401 | Finalize | Finalize the service |
+| 402 | InitializeSystem2 | Alternate initialization |
 
 **PIA note**: After `CreateNetwork`/`Connect`, games call `GetIpv4Address()` and `GetNetworkInfo()` separately. The game then matches the IP against `NetworkInfo.ldn.nodes[].ipv4_address` to find its own node index. If these mismatch, `FindLocalNodeId()` returns `0xFF` (not found) and the game destroys the network.
 
 ## Custom Config Commands (ryu:cfg)
 
-ryu_ldn_nx adds a custom IPC service for overlay communication. Obtained via command 65000 on the MITM service.
+The standalone `ryu:cfg` IPC service is available directly via `smGetService("ryu:cfg")`. The overlay uses this service for live configuration and status display.
+
+> **Note**: `GetConnectionStatus` (cmd 1) in the standalone `ryu:cfg` service currently always returns `0` (Disconnected). For actual connection status, use `GetLdnState` (cmd 24) which returns the `CommState` enum.
 
 ### Configuration Commands (0–22)
 
 | Cmd | Name | Parameters | Returns | Description |
 |-----|------|------------|---------|-------------|
 | 0 | GetVersion | - | char[32] | Sysmodule version string |
-| 1 | GetConnectionStatus | - | u32 | Server connection state |
+| 1 | GetConnectionStatus | - | u32 | Server connection state (currently always 0) |
 | 2 | GetPassphrase | - | char[64] | Current room passphrase |
 | 3 | SetPassphrase | char[64] | - | Set room passphrase |
 | 4 | GetServerAddress | - | ServerAddress | Configured server address |
@@ -72,7 +84,7 @@ ryu_ldn_nx adds a custom IPC service for overlay communication. Obtained via com
 | 17 | ReloadConfig | - | ConfigResult | Reload config from SD card |
 | 18 | GetConnectTimeout | - | u32 | Connection timeout in ms |
 | 19 | SetConnectTimeout | u32 | - | Set connection timeout in ms |
-| 20 | GetPingInterval | - | u32 | Ping interval in ms |
+| 20 | GetPingInterval | - | u32 | Ping interval in ms (not used by client) |
 | 21 | SetPingInterval | u32 | - | Set ping interval in ms |
 | 22 | IsServiceActive | - | u32 | Service ping (returns 1 if active) |
 
@@ -89,10 +101,26 @@ ryu_ldn_nx adds a custom IPC service for overlay communication. Obtained via com
 
 ### P2P Proxy Commands (29–30)
 
+> **Note**: Commands 29–30 are available in the `ryu:cfg` service but do not yet have overlay client stubs in `ryu_ldn_ipc.c`.
+
 | Cmd | Name | Parameters | Returns | Description |
 |-----|------|------------|---------|-------------|
 | 29 | GetDisableP2p | - | u32 | Returns 1 if P2P proxy is disabled |
 | 30 | SetDisableP2p | u32 | - | Enable/disable P2P proxy (0=enable, 1=disable) |
+
+### MITM Config Commands (65000+)
+
+The LDN MITM service also exposes a `LdnConfigService` via command 65000 on `ldn:u`. This service has additional commands not available in the standalone `ryu:cfg`:
+
+| Cmd | Name | Description |
+|-----|------|-------------|
+| 65000 | (get service) | Obtain LdnConfigService instance |
+| 65021 | GetReconnectDelay | Get reconnect delay in ms |
+| 65022 | SetReconnectDelay | Set reconnect delay in ms |
+| 65023 | GetMaxReconnectAttempts | Get max reconnect attempts |
+| 65024 | SetMaxReconnectAttempts | Set max reconnect attempts |
+
+Plus all commands 65001–65010 (matching `ryu:cfg` commands 0–9 with different IDs).
 
 ## Data Structures
 
@@ -106,6 +134,8 @@ ryu_ldn_nx adds a custom IPC service for overlay communication. Obtained via com
 | 3 | Ready | Fully connected and operational |
 | 4 | Error | Connection error occurred |
 
+> **Note**: In the standalone `ryu:cfg` service, `GetConnectionStatus` always returns `0` (Disconnected). Use `GetLdnState` (cmd 24) for actual status.
+
 ### LdnState / CommState (enum u32)
 
 | Value | Name | Description |
@@ -118,16 +148,17 @@ ryu_ldn_nx adds a custom IPC service for overlay communication. Obtained via com
 | 5 | StationConnected | Connected to network |
 | 6 | Error | Error state |
 
-### SessionInfo (struct, 72 bytes)
+### SessionInfo (struct, 8 bytes)
+
+> **Important**: The overlay `SessionInfo` is only 8 bytes, not 72 bytes as in some Nintendo SDKs. It does not contain `session_duration_ms` or `game_name`.
 
 | Offset | Type | Name | Description |
 |--------|------|------|-------------|
 | 0x00 | u8 | node_count | Players in session |
-| 0x01 | u8 | node_count_max | Maximum players |
+| 0x01 | u8 | max_nodes | Maximum players |
 | 0x02 | u8 | local_node_id | Our node ID |
 | 0x03 | u8 | is_host | 1 if hosting |
-| 0x04 | u32 | session_duration_ms | Session duration |
-| 0x08 | char[64] | game_name | Game name |
+| 0x04 | u8[4] | reserved | Padding |
 
 ### ServerAddress (struct, 68 bytes)
 
@@ -145,34 +176,38 @@ ryu_ldn_nx adds a custom IPC service for overlay communication. Obtained via com
 | 1 | FileNotFound | Config file does not exist |
 | 2 | ParseError | Config file has syntax errors |
 | 3 | IoError | File I/O error |
+| 4 | InvalidValue | Config value out of range or invalid |
 
 ## Usage Example (C)
 
 ```c
-// Get config service from ldn:u MITM
-Service ldnService;
-smGetService(&ldnService, "ldn:u");
-
-RyuLdnConfigService configService;
-serviceDispatch(&ldnService, 65000,
-    .out_num_objects = 1,
-    .out_objects = &configService.s,
-);
-
-// Get version
-char version[32];
-serviceDispatchOut(&configService.s, 0, version);
-printf("Version: %s\n", version);
+// Connect to ryu:cfg service directly
+Service cfgService;
+smGetService(&cfgService, "ryu:cfg");
 
 // Get LDN state
 u32 state;
-serviceDispatchOut(&configService.s, 24, &state);
-printf("State: %u\n", state);
+serviceDispatchOut(&cfgService, 24, &state);
+printf("LDN State: %u\n", state);
+
+// Get session info
+struct {
+    u8 node_count;
+    u8 max_nodes;
+    u8 local_node_id;
+    u8 is_host;
+    u8 reserved[4];
+} session_info;
+serviceDispatchOut(&cfgService, 25, &session_info);
 
 // Force reconnect
-serviceDispatch(&configService.s, 27);
+serviceDispatch(&cfgService, 27);
+
+// Check P2P status
+u32 p2p_disabled;
+serviceDispatchOut(&cfgService, 29, &p2p_disabled);
 
 // Save config to SD card
 u32 result;
-serviceDispatchOut(&configService.s, 16, &result);
+serviceDispatchOut(&cfgService, 16, &result);
 ```

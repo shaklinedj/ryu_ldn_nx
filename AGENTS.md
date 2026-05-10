@@ -99,7 +99,7 @@ Games use Nintendo's PIA (Protocol Independent Application) library on top of LD
 
 `HandleServerPacket` signals `m_response_event` **only** for actual response packets that `WaitForResponse` expects:
 - **Signals event**: `Connected`, `ScanReply`, `ScanReplyEnd`, `RejectReply`, `ProxyConnectReply`, `NetworkError`
-- **Does NOT signal event**: `ProxyConfig`, `ProxyData`, `ProxyConnect`, `ExternalProxy`, `SyncNetwork`, `Ping`
+- **Does NOT signal event**: All other packet types, including `ProxyConfig`, `ProxyData`, `ProxyConnect`, `ExternalProxy`, `ExternalProxyToken`, `ExternalProxyState`, `SyncNetwork`, `Ping`, `Initialize`, `Passphrase`, `CreateAccessPoint`, `CreateAccessPointPrivate`, `Reject`, `Scan`, `Connect`, `ConnectPrivate`, `Disconnect`, `ProxyDisconnect`, `SetAcceptPolicy`, `SetAdvertiseData`
 
 This prevents spurious wake-ups in `WaitForResponse()`. Previously, `ProxyConfig` arriving before `Connected` would wake the wait loop, recalculate timeout, and sometimes trigger a false timeout error.
 
@@ -162,7 +162,7 @@ The sysmodule runs on Switch hardware with aggressive constraints:
 
 - **Heap**: 384 KB expanded heap (`g_heap_memory` in `main.cpp:143`). Previously 96 KB, saturated under real gameplay traffic causing DABRT 0x101 on allocation failure.
 - **Malloc buffer**: 1 MB (`MallocBufferSize`) for the TLS heap central. Minimum for `TlsHeapCentral` to initialize properly.
-- **Thread stacks**: MITM threads use 32 KB (`0x8000`). Config thread: 8 KB (`0x2000`). Log thread: 4 KB (`0x1000`). miniupnpc's `upnpDiscover()` needs this headroom.
+- **Thread stacks**: MITM threads use 32 KB (`0x8000`). Config thread: 8 KB (`0x2000`). Log thread: 4 KB (`0x1000`). Receive thread: 16 KB (`0x4000`). P2P connect thread: 16 KB (`0x4000`). Total: ~76 KB in thread stacks alone.
 - **BSD sessions**: 14 (`ConcurrencyLimitMax` in libstratosphere). The default of 3 saturated with P2P loopback sessions.
 - **Total sysmodule budget**: ~10 MB across all Switch sysmodules — don't grow buffers without proof it's needed.
 - Use fixed buffers, `constinit` statics, and stack-allocated work areas. Avoid `std::vector`/`std::deque`/`new` in hot paths.
@@ -230,7 +230,9 @@ The network client (`RyuLdnClient` in `sysmodule/source/network/`) handles recon
 - **Jitter**: Backoff delays include ±10% jitter to prevent thundering herd after server restarts.
 - **TCP keepalive**: Enabled on Switch with 30s idle / 10s interval / 5 probes — detects dead connections without RyuLDN protocol changes.
 - **Graceful disconnect**: Socket `close()` calls `shutdown(SHUT_WR)` before `close()` so the server sees FIN instead of RST.
-- **Auto-reconnect**: When `ConnectionLost` fires, the state machine transitions through `Backoff` → `Retrying` → `Connecting` automatically (if `auto_reconnect` is enabled in config).
+- **Auto-reconnect**: When `ConnectionLost` fires, the state machine transitions through `Backoff` → `Retrying` → `Connecting` automatically if `max_reconnect_attempts != 0`. Setting `max_reconnect_attempts = 0` **disables** auto-reconnect entirely — it does not mean infinite retries.
+- **`ping_interval` is unused**: The `ping_interval` config key is parsed and stored but never consumed by the network client. Server-side pings drive keepalive behavior.
+- **`[perf]` section is dead**: The perf config keys (`enable_larger_socket_buffers`, `enable_tight_drain_loop`, etc.) are in the example config but not parsed or consumed by the sysmodule. They have zero runtime effect.
 
 ## Known Issues & Pitfalls
 

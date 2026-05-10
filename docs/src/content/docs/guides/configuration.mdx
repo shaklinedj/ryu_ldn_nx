@@ -9,11 +9,13 @@ ryu_ldn_nx can be configured via a configuration file on your SD card. The confi
 
 ## Configuration File
 
-The configuration file is located at:
+The configuration file is located on the SD card at:
 
 ```
-config/ryu_ldn_nx/config.ini
+sdmc:/config/ryu_ldn_nx/config.ini
 ```
+
+On a PC, this appears as `config/ryu_ldn_nx/config.ini` on the SD card root.
 
 If the file doesn't exist, the sysmodule creates it automatically with default values on first boot.
 
@@ -116,11 +118,15 @@ use_tls = 0
 | Option | Default | Description |
 |--------|---------|-------------|
 | `connect_timeout` | `5000` | TCP connection timeout in milliseconds |
-| `ping_interval` | `10000` | Keepalive ping interval in milliseconds |
+| `ping_interval` | `10000` | ⚠️ Parsed but **not used** — server drives keepalive pings |
 | `reconnect_delay` | `3000` | Initial reconnect delay in milliseconds |
-| `max_reconnect_attempts` | `5` | Max reconnect attempts (0 = infinite) |
+| `max_reconnect_attempts` | `5` | Max reconnect attempts (0 = **disable auto-reconnect**, not infinite) |
 
-The reconnect system uses a **fast first retry** (200ms) before switching to exponential backoff (1s initial, 2x multiplier, 30s cap) with ±10% jitter. TCP keepalive is enabled automatically (30s idle / 10s interval / 5 probes).
+The reconnect system uses a **fast first retry** (200ms for the first attempt only) before switching to exponential backoff starting at `reconnect_delay` (default 3s, with 2x multiplier and 30s cap) with ±10% jitter. TCP keepalive is enabled automatically (30s idle / 10s interval / 5 probes).
+
+**Note on `ping_interval`**: This key is parsed and stored in config but **not consumed** by the network client — the server drives keepalive pings. Changing this value has no effect.
+
+**Note on `max_reconnect_attempts`**: A value of `0` **disables** auto-reconnect entirely (the client will not retry after the first failure). For unlimited retries, set a very large number.
 
 ### `[ldn]` — LDN Emulation
 
@@ -149,7 +155,9 @@ Log levels:
 
 At verbose level (3), the log can grow quickly. Read deltas per test run rather than the full file.
 
-### `[perf]` — Performance Tuning
+### `[perf]` — Performance Tuning (Experimental, Not Yet Wired)
+
+> **Warning**: The `[perf]` section is defined in the example config file but **not yet parsed or used** by the sysmodule. These keys are silently ignored. They are included for forward compatibility — once wired, they will take effect automatically.
 
 | Option | Default | Description |
 |--------|---------|-------------|
@@ -164,7 +172,7 @@ At verbose level (3), the log can grow quickly. Read deltas per test run rather 
 | `enable_manager_mutex_release` | `0` | **Not yet wired** — early mutex release in ProxySocketManager |
 | `enable_async_send_queue` | `0` | **Not yet wired** — asynchronous send queue for BSD MITM |
 
-Most users should leave `[perf]` at defaults. If you experience high latency or stutter in-game, experiment with disabling these one at a time to identify which helps on your hardware.
+Changing `[perf]` values currently has **no effect**. These options will become functional in a future release.
 
 ## Applying Changes
 
