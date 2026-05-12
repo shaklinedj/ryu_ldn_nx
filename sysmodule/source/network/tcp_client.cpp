@@ -29,6 +29,8 @@
 
 #include "tcp_client.hpp"
 #include "../debug/log.hpp"
+#include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <mutex>
 

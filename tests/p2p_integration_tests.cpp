@@ -507,7 +507,7 @@ struct ReceivedPacket {
 
 ReceivedPacket g_last_packet = {};
 
-void mock_callback(protocol::PacketId type, const void* data, size_t size) {
+void mock_callback(protocol::PacketId type, const void* /*data*/, size_t size) {
     g_last_packet.type = type;
     g_last_packet.data_size = size;
     g_last_packet.processed = true;

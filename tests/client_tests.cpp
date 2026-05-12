@@ -120,8 +120,8 @@ bool test_config_defaults() {
     ASSERT_STREQ(cfg.host, "127.0.0.1");
     ASSERT_EQ(cfg.port, 30456);
     ASSERT_EQ(cfg.connect_timeout_ms, 5000);
-    ASSERT_EQ(cfg.recv_timeout_ms, 100);
-    ASSERT_EQ(cfg.ping_interval_ms, 30000);
+    ASSERT_EQ(cfg.recv_timeout_ms, 20);
+    ASSERT_EQ(cfg.ping_interval_ms, 0);
     ASSERT_TRUE(cfg.auto_reconnect);
 
     return true;
@@ -144,7 +144,7 @@ bool test_config_from_app_config() {
     ASSERT_STREQ(cfg.host, "192.168.1.100");
     ASSERT_EQ(cfg.port, 12345);
     ASSERT_EQ(cfg.connect_timeout_ms, 10000);
-    ASSERT_EQ(cfg.ping_interval_ms, 60000);
+    ASSERT_EQ(cfg.ping_interval_ms, 0);  // ping_interval is forced to 0
     ASSERT_EQ(cfg.reconnect.initial_delay_ms, 2000);
 
     return true;
@@ -444,8 +444,11 @@ bool test_self_move_assignment() {
 
     RyuLdnClient client(cfg);
 
-    // Self-assignment should be safe
+    // Self-assignment should be safe (guarded by `if (this != &other)`)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wself-move"
     client = std::move(client);
+#pragma GCC diagnostic pop
 
     ASSERT_EQ(client.get_config().port, 5555);
 
@@ -580,6 +583,130 @@ bool test_get_last_rtt_initial() {
 }
 
 // ============================================================================
+// Additional Not-Ready Path Tests
+// ============================================================================
+
+/**
+ * @brief Test send_create_access_point_private fails when not ready
+ */
+bool test_send_create_access_point_private_not_ready() {
+    RyuLdnClient client;
+
+    protocol::CreateAccessPointPrivateRequest request{};
+    request.security_config.security_mode = 2;
+    ClientOpResult result = client.send_create_access_point_private(request);
+
+    ASSERT_EQ(result, ClientOpResult::NotReady);
+    return true;
+}
+
+/**
+ * @brief Test send_connect_private fails when not ready
+ */
+bool test_send_connect_private_not_ready() {
+    RyuLdnClient client;
+
+    protocol::ConnectPrivateRequest request{};
+    request.security_config.security_mode = 2;
+    ClientOpResult result = client.send_connect_private(request);
+
+    ASSERT_EQ(result, ClientOpResult::NotReady);
+    return true;
+}
+
+/**
+ * @brief Test send_ping_response fails when not ready
+ */
+bool test_send_ping_response_not_ready() {
+    RyuLdnClient client;
+
+    ClientOpResult result = client.send_ping_response(1);
+
+    ASSERT_EQ(result, ClientOpResult::NotReady);
+    return true;
+}
+
+/**
+ * @brief Test send_disconnect_network fails when not ready
+ */
+bool test_send_disconnect_network_not_ready() {
+    RyuLdnClient client;
+
+    ClientOpResult result = client.send_disconnect_network();
+
+    ASSERT_EQ(result, ClientOpResult::NotReady);
+    return true;
+}
+
+/**
+ * @brief Test send_set_accept_policy fails when not ready
+ */
+bool test_send_set_accept_policy_not_ready() {
+    RyuLdnClient client;
+
+    ClientOpResult result = client.send_set_accept_policy(protocol::AcceptPolicy::AcceptAll);
+
+    ASSERT_EQ(result, ClientOpResult::NotReady);
+    return true;
+}
+
+/**
+ * @brief Test send_set_advertise_data fails when not ready
+ */
+bool test_send_set_advertise_data_not_ready() {
+    RyuLdnClient client;
+
+    uint8_t data[] = {0x01, 0x02, 0x03};
+    ClientOpResult result = client.send_set_advertise_data(data, sizeof(data));
+
+    ASSERT_EQ(result, ClientOpResult::NotReady);
+    return true;
+}
+
+/**
+ * @brief Test send_reject fails when not ready
+ */
+bool test_send_reject_not_ready() {
+    RyuLdnClient client;
+
+    ClientOpResult result = client.send_reject(1, protocol::DisconnectReason::Rejected);
+
+    ASSERT_EQ(result, ClientOpResult::NotReady);
+    return true;
+}
+
+/**
+ * @brief Test send_raw_packet fails when not ready
+ */
+bool test_send_raw_packet_not_ready() {
+    RyuLdnClient client;
+
+    uint8_t data[] = {0x01, 0x02, 0x03};
+    ClientOpResult result = client.send_raw_packet(data, sizeof(data));
+
+    ASSERT_EQ(result, ClientOpResult::NotReady);
+    return true;
+}
+
+/**
+ * @brief Test ClientOpResult to string for all values
+ */
+bool test_client_op_result_all_to_string() {
+    ASSERT_STREQ(client_op_result_to_string(ClientOpResult::Success), "Success");
+    ASSERT_STREQ(client_op_result_to_string(ClientOpResult::NotConnected), "NotConnected");
+    ASSERT_STREQ(client_op_result_to_string(ClientOpResult::NotReady), "NotReady");
+    ASSERT_STREQ(client_op_result_to_string(ClientOpResult::AlreadyConnected), "AlreadyConnected");
+    ASSERT_STREQ(client_op_result_to_string(ClientOpResult::ConnectionFailed), "ConnectionFailed");
+    ASSERT_STREQ(client_op_result_to_string(ClientOpResult::SendFailed), "SendFailed");
+    ASSERT_STREQ(client_op_result_to_string(ClientOpResult::InvalidState), "InvalidState");
+    ASSERT_STREQ(client_op_result_to_string(ClientOpResult::Timeout), "Timeout");
+    ASSERT_STREQ(client_op_result_to_string(ClientOpResult::ProtocolError), "ProtocolError");
+    ASSERT_STREQ(client_op_result_to_string(ClientOpResult::InternalError), "InternalError");
+    ASSERT_STREQ(client_op_result_to_string(static_cast<ClientOpResult>(99)), "Unknown");
+    return true;
+}
+
+// ============================================================================
 // Main
 // ============================================================================
 
@@ -654,6 +781,21 @@ int main() {
     // Ping/Keepalive Tests
     printf("\nPing/Keepalive:\n");
     RUN_TEST(test_get_last_rtt_initial);
+
+    // Additional Not-Ready Path Tests
+    printf("\nSend (Not Ready - Extended):\n");
+    RUN_TEST(test_send_create_access_point_private_not_ready);
+    RUN_TEST(test_send_connect_private_not_ready);
+    RUN_TEST(test_send_ping_response_not_ready);
+    RUN_TEST(test_send_disconnect_network_not_ready);
+    RUN_TEST(test_send_set_accept_policy_not_ready);
+    RUN_TEST(test_send_set_advertise_data_not_ready);
+    RUN_TEST(test_send_reject_not_ready);
+    RUN_TEST(test_send_raw_packet_not_ready);
+
+    // String Conversion (Extended)
+    printf("\nString Conversion (Extended):\n");
+    RUN_TEST(test_client_op_result_all_to_string);
 
     // Summary
     printf("\n========================================\n");

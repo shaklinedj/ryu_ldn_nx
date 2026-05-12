@@ -105,6 +105,9 @@ tests/*.o
 tests/run_*
 tests/*.exe
 
+# Integration test generated docker-compose (derived from submodule)
+tests/integration/docker-compose.yml
+
 # Coverage reports
 tests/coverage/
 *.gcda

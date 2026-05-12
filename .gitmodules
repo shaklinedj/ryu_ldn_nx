@@ -4,3 +4,6 @@
 [submodule "overlay/libultrahand"]
 	path = overlay/libultrahand
 	url = https://github.com/ppkantorski/libultrahand.git
+[submodule "tests/ldn-server"]
+	path = tests/ldn-server
+	url = https://github.com/Ethiquema/LdnServer.git

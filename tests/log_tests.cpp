@@ -355,6 +355,132 @@ TEST(logger_default_config_disabled) {
 }
 
 // ============================================================================
+// Log Buffer — Additional Coverage
+// ============================================================================
+
+TEST(log_buffer_init_capacity_clamp) {
+    LogBuffer buffer;
+    buffer.init(MAX_LOG_BUFFER_ENTRIES + 100);  // Exceeds max
+
+    // Should be clamped to MAX_LOG_BUFFER_ENTRIES
+    ASSERT_EQ(buffer.count(), 0u);
+}
+
+TEST(log_buffer_init_small_capacity) {
+    LogBuffer buffer;
+    buffer.init(2);
+
+    buffer.add("A");
+    buffer.add("B");
+    buffer.add("C");  // Should overwrite A
+
+    ASSERT_EQ(buffer.count(), 2u);
+}
+
+TEST(log_buffer_get_by_index) {
+    LogBuffer buffer;
+    buffer.init(10);
+
+    buffer.add("First");
+    buffer.add("Second");
+    buffer.add("Third");
+
+    const char* msg0 = buffer.get(0);
+    const char* msg1 = buffer.get(1);
+    const char* msg2 = buffer.get(2);
+    const char* msg_invalid = buffer.get(99);
+
+    ASSERT_TRUE(msg0 != nullptr);
+    ASSERT_TRUE(strstr(msg0, "First") != nullptr);
+    ASSERT_TRUE(msg1 != nullptr);
+    ASSERT_TRUE(strstr(msg1, "Second") != nullptr);
+    ASSERT_TRUE(msg2 != nullptr);
+    ASSERT_TRUE(strstr(msg2, "Third") != nullptr);
+    ASSERT_TRUE(msg_invalid == nullptr);
+}
+
+TEST(log_buffer_get_empty) {
+    LogBuffer buffer;
+    buffer.init(10);
+
+    const char* msg = buffer.get(0);
+    ASSERT_TRUE(msg == nullptr);
+}
+
+TEST(log_buffer_add_null_ignored) {
+    LogBuffer buffer;
+    buffer.init(10);
+
+    buffer.add(nullptr);
+    ASSERT_EQ(buffer.count(), 0u);
+}
+
+// ============================================================================
+// Logger — Additional Coverage
+// ============================================================================
+
+TEST(logger_flush_without_file) {
+    Logger logger;
+    DebugConfig cfg;
+    cfg.enabled = true;
+    cfg.level = 3;
+    cfg.log_to_file = false;
+    logger.init(cfg);
+
+    // flush() without open file should not crash
+    logger.flush();
+}
+
+TEST(logger_flush_with_file) {
+    Logger logger;
+    DebugConfig cfg;
+    cfg.enabled = true;
+    cfg.level = 3;
+    cfg.log_to_file = true;
+    char path[256];
+    std::snprintf(path, sizeof(path),
+                  "/tmp/test_flush_%d.log", rand());
+    logger.init(cfg, path);
+
+    logger.log(LogLevel::Info, "Flush test");
+    logger.flush();
+
+    // Clean up
+    std::remove(path);
+}
+
+TEST(logger_check_idle_timeout_no_file) {
+    Logger logger;
+    DebugConfig cfg;
+    cfg.enabled = true;
+    cfg.level = 3;
+    cfg.log_to_file = false;
+    logger.init(cfg);
+
+    // check_idle_timeout without open file should not crash
+    logger.check_idle_timeout();
+}
+
+TEST(logger_check_idle_timeout_with_file) {
+    Logger logger;
+    DebugConfig cfg;
+    cfg.enabled = true;
+    cfg.level = 3;
+    cfg.log_to_file = true;
+    char path[256];
+    std::snprintf(path, sizeof(path),
+                  "/tmp/test_idle_%d.log", rand());
+    logger.init(cfg, path);
+
+    logger.log(LogLevel::Info, "Test message");
+    // On host, check_idle_timeout closes the file
+    logger.check_idle_timeout();
+
+    // Clean up
+    std::remove(path);
+}
+
+// ============================================================================
 // Main
 // ============================================================================
 

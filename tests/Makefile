@@ -114,8 +114,8 @@ $(TARGET_CONFIG_MANAGER): config_manager_tests.o config_manager.o config.o
 $(TARGET_LOG): log_tests.o log.o config.o
 	$(CXX) $(LDFLAGS) -o $@ $^
 
-# Socket tests (needs socket.cpp impl)
-$(TARGET_SOCKET): socket_tests.o socket.o
+# Socket tests (needs socket.cpp, log.cpp for logging)
+$(TARGET_SOCKET): socket_tests.o socket.o log.o config.o
 	$(CXX) $(LDFLAGS) -o $@ $^
 
 # TCP Client tests (needs socket.cpp, tcp_client.cpp, and log.cpp for logging)
@@ -123,7 +123,7 @@ $(TARGET_TCP_CLIENT): tcp_client_tests.o tcp_client.o socket.o log.o config.o
 	$(CXX) $(LDFLAGS) -o $@ $^
 
 # Connection State tests (needs connection_state.cpp)
-$(TARGET_CONNECTION_STATE): connection_state_tests.o connection_state.o
+$(TARGET_CONNECTION_STATE): connection_state_tests.o connection_state.o log.o config.o
 	$(CXX) $(LDFLAGS) -o $@ $^
 
 # Reconnect tests (needs reconnect.cpp)

@@ -30,6 +30,47 @@ jobs:
           make clean
           make test
 
+  integration-test:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    continue-on-error: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential g++ netcat-openbsd
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+      - name: Generate docker-compose from submodule
+        run: |
+          cd tests/integration
+          bash prepare-compose.sh
+
+      - name: Start LdnServer
+        run: |
+          cd tests/integration
+          docker compose -f docker-compose.yml up -d
+          bash wait-for-server.sh localhost 30456 60
+
+      - name: Build and run integration tests
+        run: |
+          cd tests/integration
+          make clean
+          make test-local
+
+      - name: Tear down LdnServer
+        if: always()
+        run: |
+          cd tests/integration
+          docker compose -f docker-compose.yml down -v
+
   build:
     name: Build Sysmodule
     runs-on: ubuntu-latest

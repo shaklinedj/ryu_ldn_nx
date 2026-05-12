@@ -676,6 +676,125 @@ TEST(address_entry_size) {
 }
 
 // =============================================================================
+// Tests: Additional Not-Connected Path Coverage
+// =============================================================================
+
+/**
+ * @test send_raw fails when not connected
+ */
+TEST(send_raw_not_connected) {
+    socket_init();
+    TcpClient client;
+
+    uint8_t data[] = {0x01, 0x02, 0x03};
+    ClientResult result = client.send_raw(data, sizeof(data));
+
+    ASSERT_EQ(result, ClientResult::NotConnected);
+}
+
+/**
+ * @test send_raw fails with null data when not connected
+ */
+TEST(send_raw_null_not_connected) {
+    socket_init();
+    TcpClient client;
+
+    ClientResult result = client.send_raw(nullptr, 10);
+
+    ASSERT_EQ(result, ClientResult::NotConnected);
+}
+
+/**
+ * @test send_passphrase (char*) fails when not connected
+ */
+TEST(send_passphrase_cstr_not_connected) {
+    socket_init();
+    TcpClient client;
+
+    ClientResult result = client.send_passphrase("AA-BB-CC");
+
+    ASSERT_EQ(result, ClientResult::NotConnected);
+}
+
+/**
+ * @test send_passphrase (char*) with null fails when not connected
+ */
+TEST(send_passphrase_cstr_null_not_connected) {
+    socket_init();
+    TcpClient client;
+
+    ClientResult result = client.send_passphrase(static_cast<const char*>(nullptr));
+
+    ASSERT_EQ(result, ClientResult::NotConnected);
+}
+
+/**
+ * @test send_set_accept_policy fails when not connected
+ */
+TEST(send_set_accept_policy_not_connected) {
+    socket_init();
+    TcpClient client;
+
+    SetAcceptPolicyRequest request{};
+    request.accept_policy = static_cast<uint8_t>(1);
+
+    ClientResult result = client.send_set_accept_policy(request);
+
+    ASSERT_EQ(result, ClientResult::NotConnected);
+}
+
+/**
+ * @test send_set_advertise_data fails when not connected
+ */
+TEST(send_set_advertise_data_not_connected) {
+    socket_init();
+    TcpClient client;
+
+    uint8_t data[] = {0x01, 0x02, 0x03};
+    ClientResult result = client.send_set_advertise_data(data, sizeof(data));
+
+    ASSERT_EQ(result, ClientResult::NotConnected);
+}
+
+/**
+ * @test send_set_advertise_data null data fails when not connected
+ */
+TEST(send_set_advertise_data_null_not_connected) {
+    socket_init();
+    TcpClient client;
+
+    ClientResult result = client.send_set_advertise_data(nullptr, 0);
+
+    ASSERT_EQ(result, ClientResult::NotConnected);
+}
+
+/**
+ * @test send_reject fails when not connected
+ */
+TEST(send_reject_not_connected) {
+    socket_init();
+    TcpClient client;
+
+    RejectRequest request{};
+    request.node_id = 1;
+    request.disconnect_reason = 1;
+
+    ClientResult result = client.send_reject(request);
+
+    ASSERT_EQ(result, ClientResult::NotConnected);
+}
+
+/**
+ * @test has_packet_available returns false when not connected
+ */
+TEST(has_packet_available_not_connected) {
+    socket_init();
+    TcpClient client;
+
+    ASSERT_FALSE(client.has_packet_available());
+}
+
+// =============================================================================
 // Main
 // =============================================================================
 

@@ -73,7 +73,16 @@
 
 #ifdef TEST_BUILD
     #include <mutex>
-    namespace ams::os { using Mutex = std::mutex; }
+    namespace ams::os {
+        class Mutex {
+            std::mutex m_mutex;
+        public:
+            explicit constexpr Mutex(bool = false) noexcept {}
+            void lock()   { m_mutex.lock(); }
+            void unlock() { m_mutex.unlock(); }
+            bool try_lock() { return m_mutex.try_lock(); }
+        };
+    }
 #else
     #include <stratosphere.hpp>
 #endif

@@ -1005,9 +1005,13 @@ void RyuLdnClient::process_packets() {
 
         if (result == ClientResult::ConnectionLost) {
             LOG_INFO("process_packets: receive_packet returned ConnectionLost (server closed TCP)");
+            ConnectionState before_state = m_state_machine.get_state();
             m_state_machine.process_event(ConnectionEvent::ConnectionLost);
             if (m_config.auto_reconnect) {
                 start_backoff();
+            }
+            if (m_state_callback && before_state != m_state_machine.get_state()) {
+                m_state_callback(before_state, m_state_machine.get_state(), m_state_callback_user_data);
             }
             break;
         }
