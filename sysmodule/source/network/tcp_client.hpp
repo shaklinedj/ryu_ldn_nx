@@ -87,66 +87,12 @@
     #include <stratosphere.hpp>
 #endif
 
+#include "itcp_client.hpp"
 #include "socket.hpp"
 #include "protocol/ryu_protocol.hpp"
 #include "protocol/packet_buffer.hpp"
 
 namespace ryu_ldn::network {
-
-// =============================================================================
-// Result Codes
-// =============================================================================
-
-/**
- * @brief Result codes for TcpClient operations
- *
- * These codes provide more context than raw socket errors by combining
- * transport-level and protocol-level error conditions.
- */
-enum class ClientResult {
-    Success = 0,           ///< Operation completed successfully
-
-    // Connection errors
-    NotConnected,          ///< Client is not connected to server
-    AlreadyConnected,      ///< Client is already connected
-    ConnectionFailed,      ///< Failed to establish connection
-    ConnectionLost,        ///< Connection was lost during operation
-    Timeout,               ///< Operation timed out
-
-    // Protocol errors
-    InvalidPacket,         ///< Received packet failed validation
-    ProtocolError,         ///< Protocol-level error (version mismatch, etc.)
-    BufferTooSmall,        ///< Provided buffer too small for data
-    EncodingError,         ///< Failed to encode outgoing packet
-
-    // Resource errors
-    NotInitialized,        ///< Socket subsystem not initialized
-    InternalError          ///< Unexpected internal error
-};
-
-/**
- * @brief Convert ClientResult to human-readable string
- *
- * @param result ClientResult enum value
- * @return Static string describing the result
- */
-inline const char* client_result_to_string(ClientResult result) {
-    switch (result) {
-        case ClientResult::Success:          return "Success";
-        case ClientResult::NotConnected:     return "NotConnected";
-        case ClientResult::AlreadyConnected: return "AlreadyConnected";
-        case ClientResult::ConnectionFailed: return "ConnectionFailed";
-        case ClientResult::ConnectionLost:   return "ConnectionLost";
-        case ClientResult::Timeout:          return "Timeout";
-        case ClientResult::InvalidPacket:    return "InvalidPacket";
-        case ClientResult::ProtocolError:    return "ProtocolError";
-        case ClientResult::BufferTooSmall:   return "BufferTooSmall";
-        case ClientResult::EncodingError:    return "EncodingError";
-        case ClientResult::NotInitialized:   return "NotInitialized";
-        case ClientResult::InternalError:    return "InternalError";
-        default:                             return "Unknown";
-    }
-}
 
 // =============================================================================
 // TcpClient Class
@@ -169,7 +115,7 @@ inline const char* client_result_to_string(ClientResult result) {
  * again to re-establish connection. Previous session state is NOT
  * preserved - send Initialize again after reconnecting.
  */
-class TcpClient {
+class TcpClient : public ITcpClient {
 public:
     /**
      * @brief Default constructor
@@ -183,7 +129,9 @@ public:
      *
      * Automatically disconnects if connected.
      */
-    ~TcpClient();
+    ~TcpClient() override;
+
+    bool initialize() override;
 
     // Non-copyable
     TcpClient(const TcpClient&) = delete;
@@ -217,7 +165,7 @@ public:
      * @note Recommended timeout: 5000ms (5 seconds)
      */
     /// @gdb{tag="NETWORK:TCP", msg="TcpClient::connect"}
-    ClientResult connect(const char* host, uint16_t port, uint32_t timeout_ms = 5000);
+    ClientResult connect(const char* host, uint16_t port, uint32_t timeout_ms = 5000) override;
 
     /**
      * @brief Disconnect from server
@@ -229,7 +177,7 @@ public:
      *       first if you want to notify the server gracefully.
      */
     /// @gdb{tag="NETWORK:TCP", msg="TcpClient::disconnect"}
-    void disconnect();
+    void disconnect() override;
 
     /**
      * @brief Check if client is connected
@@ -241,7 +189,7 @@ public:
      *       connection; this will be detected on next send/receive.
      */
     /// @gdb{tag="NETWORK:TCP", msg="TcpClient::is_connected"}
-    bool is_connected() const;
+    bool is_connected() const override;
 
     // =========================================================================
     // Send Operations
@@ -263,7 +211,7 @@ public:
      * @return ClientResult::ConnectionLost if send failed
      */
     /// @gdb{tag="NETWORK:TCP", msg="TcpClient::send_packet"}
-    ClientResult send_packet(protocol::PacketId type, const void* payload, size_t payload_size);
+    ClientResult send_packet(protocol::PacketId type, const void* payload, size_t payload_size) override;
 
     /**
      * @brief Send raw pre-encoded data
@@ -279,7 +227,7 @@ public:
      * @return ClientResult::ConnectionLost if send failed
      */
     /// @gdb{tag="NETWORK:TCP", msg="TcpClient::send_raw"}
-    ClientResult send_raw(const void* data, size_t size);
+    ClientResult send_raw(const void* data, size_t size) override;
 
     /**
      * @brief Send Initialize message
@@ -293,7 +241,7 @@ public:
      * @note Send with zeros for id/mac to request new session from server
      */
     /// @gdb{tag="NETWORK:TCP", msg="send_initialize"}
-    ClientResult send_initialize(const protocol::InitializeMessage& msg);
+    ClientResult send_initialize(const protocol::InitializeMessage& msg) override;
 
     /**
      * @brief Send Passphrase message
@@ -304,7 +252,7 @@ public:
      * @return ClientResult indicating success or error
      */
     /// @gdb{tag="NETWORK:TCP", msg="send_passphrase"}
-    ClientResult send_passphrase(const protocol::PassphraseMessage& msg);
+    ClientResult send_passphrase(const protocol::PassphraseMessage& msg) override;
 
     /**
      * @brief Send Passphrase message
@@ -315,7 +263,7 @@ public:
      * @param passphrase Passphrase string (null-terminated)
      * @return ClientResult indicating success or error
      */
-    ClientResult send_passphrase(const char* passphrase);
+    ClientResult send_passphrase(const char* passphrase) override;
 
     /**
      * @brief Send Ping message
@@ -328,7 +276,7 @@ public:
      * @note Server will echo back the ping when requester=0
      */
     /// @gdb{tag="NETWORK:TCP", msg="send_ping"}
-    ClientResult send_ping(const protocol::PingMessage& msg);
+    ClientResult send_ping(const protocol::PingMessage& msg) override;
 
     /**
      * @brief Send Disconnect message
@@ -341,7 +289,7 @@ public:
      * @note Call this before disconnect() for graceful shutdown
      */
     /// @gdb{tag="NETWORK:TCP", msg="send_disconnect"}
-    ClientResult send_disconnect(const protocol::DisconnectMessage& msg);
+    ClientResult send_disconnect(const protocol::DisconnectMessage& msg) override;
 
     /**
      * @brief Send CreateAccessPoint request
@@ -354,7 +302,7 @@ public:
     /// @gdb{tag="NETWORK:TCP", msg="send_create_access_point"}
     ClientResult send_create_access_point(const protocol::CreateAccessPointRequest& request,
                                           const uint8_t* advertise_data = nullptr,
-                                          size_t advertise_size = 0);
+                                          size_t advertise_size = 0) override;
 
     /**
      * @brief Send CreateAccessPointPrivate request
@@ -369,7 +317,7 @@ public:
     /// @gdb{tag="NETWORK:TCP", msg="send_create_access_point_private"}
     ClientResult send_create_access_point_private(const protocol::CreateAccessPointPrivateRequest& request,
                                                    const uint8_t* advertise_data = nullptr,
-                                                   size_t advertise_size = 0);
+                                                   size_t advertise_size = 0) override;
 
     /**
      * @brief Send Connect request
@@ -380,7 +328,7 @@ public:
      * @return ClientResult indicating success or error
      */
     /// @gdb{tag="NETWORK:TCP", msg="send_connect"}
-    ClientResult send_connect(const protocol::ConnectRequest& request);
+    ClientResult send_connect(const protocol::ConnectRequest& request) override;
 
     /**
      * @brief Send ConnectPrivate request
@@ -391,7 +339,7 @@ public:
      * @return ClientResult indicating success or error
      */
     /// @gdb{tag="NETWORK:TCP", msg="send_connect_private"}
-    ClientResult send_connect_private(const protocol::ConnectPrivateRequest& request);
+    ClientResult send_connect_private(const protocol::ConnectPrivateRequest& request) override;
 
     /**
      * @brief Send Scan request
@@ -402,7 +350,7 @@ public:
      * @return ClientResult indicating success or error
      */
     /// @gdb{tag="NETWORK:TCP", msg="send_scan"}
-    ClientResult send_scan(const protocol::ScanFilterFull& filter);
+    ClientResult send_scan(const protocol::ScanFilterFull& filter) override;
 
     /**
      * @brief Send proxy data
@@ -416,7 +364,7 @@ public:
      */
     /// @gdb{tag="NETWORK:TCP", msg="send_proxy_data"}
     ClientResult send_proxy_data(const protocol::ProxyDataHeader& header,
-                                  const uint8_t* data, size_t data_size);
+                                  const uint8_t* data, size_t data_size) override;
 
     /**
      * @brief Send SetAcceptPolicy request
@@ -427,7 +375,7 @@ public:
      * @return ClientResult indicating success or error
      */
     /// @gdb{tag="NETWORK:TCP", msg="send_set_accept_policy"}
-    ClientResult send_set_accept_policy(const protocol::SetAcceptPolicyRequest& request);
+    ClientResult send_set_accept_policy(const protocol::SetAcceptPolicyRequest& request) override;
 
     /**
      * @brief Send SetAdvertiseData request
@@ -439,7 +387,7 @@ public:
      * @return ClientResult indicating success or error
      */
     /// @gdb{tag="NETWORK:TCP", msg="send_set_advertise_data"}
-    ClientResult send_set_advertise_data(const uint8_t* data, size_t size);
+    ClientResult send_set_advertise_data(const uint8_t* data, size_t size) override;
 
     /**
      * @brief Send Reject request
@@ -450,7 +398,7 @@ public:
      * @return ClientResult indicating success or error
      */
     /// @gdb{tag="NETWORK:TCP", msg="send_reject"}
-    ClientResult send_reject(const protocol::RejectRequest& request);
+    ClientResult send_reject(const protocol::RejectRequest& request) override;
 
     // =========================================================================
     // Receive Operations
@@ -481,7 +429,7 @@ public:
     ClientResult receive_packet(protocol::PacketId& type,
                                  void* payload, size_t payload_buffer_size,
                                  size_t& payload_size,
-                                 int32_t timeout_ms = -1);
+                                 int32_t timeout_ms = -1) override;
 
     /**
      * @brief Check if a complete packet is available
@@ -494,7 +442,7 @@ public:
      *
      * @note Call receive_packet() after this returns true to get the packet
      */
-    bool has_packet_available() const;
+    bool has_packet_available() const override;
 
     // =========================================================================
     // Configuration
@@ -510,7 +458,7 @@ public:
      * @return ClientResult::Success on success
      * @return ClientResult::NotConnected if not connected
      */
-    ClientResult set_nodelay(bool enable);
+    ClientResult set_nodelay(bool enable) override;
 
 private:
     Socket m_socket;                                 ///< Underlying TCP socket

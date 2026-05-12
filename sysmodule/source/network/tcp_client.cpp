@@ -59,6 +59,11 @@ TcpClient::~TcpClient() {
     disconnect();
 }
 
+bool TcpClient::initialize() {
+    SocketResult result = socket_init();
+    return result == SocketResult::Success;
+}
+
 /**
  * @brief Move constructor
  *

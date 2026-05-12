@@ -7,6 +7,7 @@ CXX := g++
 CXXFLAGS := -std=c++17 -Wall -Wextra -g -O0
 CXXFLAGS += -I../sysmodule/source
 CXXFLAGS += -DTEST_BUILD
+LDFLAGS += -no-pie
 
 # Coverage flags (optional)
 ifdef COVERAGE
@@ -479,9 +480,11 @@ reconnect.o: ../sysmodule/source/network/reconnect.cpp \
 
 client_tests.o: client_tests.cpp \
 	../sysmodule/source/network/client.hpp \
+	../sysmodule/source/network/itcp_client.hpp \
 	../sysmodule/source/network/tcp_client.hpp \
 	../sysmodule/source/network/connection_state.hpp \
-	../sysmodule/source/network/reconnect.hpp
+	../sysmodule/source/network/reconnect.hpp \
+	mock_tcp_client.hpp
 
 client.o: ../sysmodule/source/network/client.cpp \
 	../sysmodule/source/network/client.hpp \

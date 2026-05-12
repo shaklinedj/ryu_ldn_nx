@@ -79,8 +79,9 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <memory>
 
-#include "tcp_client.hpp"
+#include "itcp_client.hpp"
 #include "connection_state.hpp"
 #include "reconnect.hpp"
 #include "../config/config.hpp"
@@ -236,6 +237,14 @@ public:
      * @param config Client configuration
      */
     explicit RyuLdnClient(const RyuLdnClientConfig& config);
+
+    /**
+     * @brief Constructor with injected ITcpClient (for testing)
+     *
+     * @param config Client configuration
+     * @param tcp_client Injected TCP client implementation
+     */
+    RyuLdnClient(const RyuLdnClientConfig& config, std::unique_ptr<ITcpClient> tcp_client);
 
     /**
      * @brief Destructor - ensures clean disconnect
@@ -555,7 +564,7 @@ private:
     // ========================================================================
 
     RyuLdnClientConfig m_config;            ///< Client configuration
-    TcpClient m_tcp_client;                 ///< Low-level TCP client
+    std::unique_ptr<ITcpClient> m_tcp_client; ///< Low-level TCP client (injected)
     ConnectionStateMachine m_state_machine; ///< Connection state tracking
     ReconnectManager m_reconnect_manager;   ///< Reconnection backoff logic
 
@@ -567,6 +576,7 @@ private:
     uint64_t m_last_ping_time_ms;           ///< Time of last ping sent
     uint64_t m_backoff_start_time_ms;       ///< Start of current backoff period
     uint32_t m_current_backoff_delay_ms;    ///< Current backoff delay
+    uint64_t m_last_update_time_ms;        ///< Time from last update() call
 
     protocol::SessionId m_session_id;       ///< Our session ID (from server)
     protocol::MacAddress m_mac_address;     ///< Our MAC address
@@ -651,6 +661,11 @@ private:
 
     /**
      * @brief Start backoff timer
+     *
+     * Captures m_last_update_time_ms as the backoff start time.
+     * If m_last_update_time_ms is 0 (called before first update()),
+     * the start time will be deferred to the first is_backoff_expired()
+     * call which has a valid current_time_ms.
      */
     /// @gdb{tag="NETWORK:STATE_CALLBACKS", msg="start_backoff: delay=%u retry=%u", args="$x0, $x1"}
     void start_backoff();
@@ -658,8 +673,10 @@ private:
     /**
      * @brief Check if backoff has expired
      *
-     * Captures current time on first call after start_backoff(),
-     * then checks if the backoff delay has elapsed.
+     * If start_backoff() was called before the first update() (so
+     * m_backoff_start_time_ms is 0), this captures current_time_ms as
+     * the start time and returns false (start timer, check next tick).
+     * Otherwise, checks if the backoff delay has elapsed.
      *
      * @param current_time_ms Current time in milliseconds
      * @return true if backoff period has elapsed
