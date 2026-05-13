@@ -176,41 +176,24 @@ namespace {
  * - ETIMEDOUT -> Timeout (connection or operation timeout)
  */
 SocketResult errno_to_result(int err) {
-    switch (err) {
-        // Non-blocking operation would block
-        case EAGAIN:
+    // Non-blocking operation would block
+    if (err == EAGAIN) return SocketResult::WouldBlock;
 #if EAGAIN != EWOULDBLOCK
-        case EWOULDBLOCK:
+    if (err == EWOULDBLOCK) return SocketResult::WouldBlock;
 #endif
-            return SocketResult::WouldBlock;
-
-        // Connection errors
-        case ECONNREFUSED:
-            return SocketResult::ConnectionRefused;
-        case ECONNRESET:
-            return SocketResult::ConnectionReset;
-
-        // Network reachability errors
-        case EHOSTUNREACH:
-        case ENETUNREACH:
-            return SocketResult::HostUnreachable;
-        case ENETDOWN:
-            return SocketResult::NetworkDown;
-
-        // Socket state errors
-        case ENOTCONN:
-            return SocketResult::NotConnected;
-        case EISCONN:
-            return SocketResult::AlreadyConnected;
-
-        // Timeout
-        case ETIMEDOUT:
-            return SocketResult::Timeout;
-
-        // Everything else is a generic socket error
-        default:
-            return SocketResult::SocketError;
-    }
+    // Connection errors
+    if (err == ECONNREFUSED) return SocketResult::ConnectionRefused;
+    if (err == ECONNRESET) return SocketResult::ConnectionReset;
+    // Network reachability errors
+    if (err == EHOSTUNREACH || err == ENETUNREACH) return SocketResult::HostUnreachable;
+    if (err == ENETDOWN) return SocketResult::NetworkDown;
+    // Socket state errors
+    if (err == ENOTCONN) return SocketResult::NotConnected;
+    if (err == EISCONN) return SocketResult::AlreadyConnected;
+    // Timeout
+    if (err == ETIMEDOUT) return SocketResult::Timeout;
+    // Everything else is a generic socket error
+    return SocketResult::SocketError;
 }
 
 /**

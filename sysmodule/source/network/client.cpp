@@ -481,18 +481,8 @@ void RyuLdnClient::update(uint64_t current_time_ms) {
 
         case ConnectionState::Connecting:
         case ConnectionState::Retrying:
-            // Connection attempt is synchronous in TcpClient, so normally
-            // we shouldn't be in this state during update(). If we are,
-            // it means try_connect() was called but didn't transition
-            // out (e.g., initial connect via connect()). Re-attempt.
-            try_connect();
-            if (m_state_callback) {
-                ConnectionState after = m_state_machine.get_state();
-                // State may have changed from Connecting/Retrying
-                if (state != after) {
-                    m_state_callback(state, after, m_state_callback_user_data);
-                }
-            }
+            // Connection attempt is synchronous in TcpClient
+            // If we're still in this state, something went wrong
             break;
 
         case ConnectionState::Connected:

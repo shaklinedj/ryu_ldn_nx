@@ -241,6 +241,8 @@ The network client (`RyuLdnClient` in `sysmodule/source/network/`) handles recon
 - **Relay mode timing**: In relay mode, `ProxyConfig` arrives before `Connected`. Only response-type packets signal `m_response_event` (see Packet Signaling Semantics above). `ProxyConfig` no longer wakes `WaitForResponse`.
 - **`FindLocalNodeId()` returns `0xFF`** (255) when the local IP doesn't match any node — not `0`. Node index 0 is a valid host ID.
 - **`m_network_info` race**: The receive thread writes `m_network_info` via `HandleServerPacket`. Any IPC handler reading it must hold `m_shared_mutex`.
+- **Double-connect bug (fixed)**: `update()` must NOT call `try_connect()` when in `Connecting/Retrying` state. The connection attempt is synchronous — `connect()` already calls `try_connect()`. Calling it again from `update()` creates a duplicate connection attempt that causes `EISCONN` errors and corrupts the TCP state. The correct behavior is to `break` (do nothing) in those states.
+- **WaitForResponse spurious timeout**: `HandleServerPacket` now only signals `m_response_event` for response-type packets (Connected, ScanReply, ScanReplyEnd, RejectReply, ProxyConnectReply, NetworkError). Async packets (ProxyConfig, ProxyData, ExternalProxy, SyncNetwork, Ping) do NOT signal the event. When `WaitForResponse` receives an unexpected response-type packet, it must `continue` waiting — not fall through to a timeout break.
 
 ## DCO & Commits
 

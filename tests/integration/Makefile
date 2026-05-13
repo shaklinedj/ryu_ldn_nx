@@ -8,7 +8,7 @@ CXXFLAGS += -I../../sysmodule/source
 CXXFLAGS += -DTEST_BUILD
 
 # Coverage support
-CXXFLAGS_COV := $(CXXFLAGS) --coverage -fprofile-arcs -ftest-coverage
+CXXFLAGS_COV := $(CXXFLAGS) --coverage -fprofile-arcs -ftest-coverage -fno-inline-small-functions -fno-inline-functions
 LDFLAGS_COV := --coverage
 
 TARGET := run_integration_tests
