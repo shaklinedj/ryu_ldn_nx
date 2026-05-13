@@ -176,6 +176,14 @@ public:
                                  int32_t /*timeout_ms*/) override {
         recv_call_count++;
         if (recv_queue.empty()) {
+            // When queue is empty, never return Success — that causes infinite loops
+            // in process_packets() which loops until recv returns non-Success.
+            // Return next_recv_result only if it's an error; otherwise return Timeout.
+            type = static_cast<protocol::PacketId>(0xFF);
+            payload_size = 0;
+            if (next_recv_result == ClientResult::Success) {
+                return ClientResult::Timeout;
+            }
             return next_recv_result;
         }
         MockPacket pkt = std::move(recv_queue.front());
@@ -189,6 +197,29 @@ public:
             std::memcpy(payload, pkt.data.data(), payload_size);
         }
         return ClientResult::Success;
+    }
+
+    /** Reset all counters to zero. */
+    void reset_counters() {
+        connect_call_count = 0;
+        disconnect_call_count = 0;
+        send_packet_call_count = 0;
+        send_raw_call_count = 0;
+        send_initialize_call_count = 0;
+        send_passphrase_msg_call_count = 0;
+        send_passphrase_str_call_count = 0;
+        send_ping_call_count = 0;
+        send_disconnect_call_count = 0;
+        send_create_access_point_call_count = 0;
+        send_create_access_point_private_call_count = 0;
+        send_connect_call_count = 0;
+        send_connect_private_call_count = 0;
+        send_scan_call_count = 0;
+        send_proxy_data_call_count = 0;
+        send_set_accept_policy_call_count = 0;
+        send_set_advertise_data_call_count = 0;
+        send_reject_call_count = 0;
+        recv_call_count = 0;
     }
 
     bool has_packet_available() const override {

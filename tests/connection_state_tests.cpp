@@ -889,6 +889,212 @@ TEST(is_not_transitioning_in_ready) {
 }
 
 // ============================================================================
+// Additional Transition Coverage Tests
+// ============================================================================
+
+TEST(disconnected_retry_requested) {
+    ConnectionStateMachine sm;
+    TransitionResult result = sm.process_event(ConnectionEvent::RetryRequested);
+    ASSERT_EQ(result, TransitionResult::Success);
+    ASSERT_TRUE(sm.get_state() == ConnectionState::Connecting);
+}
+
+TEST(connecting_disconnect) {
+    ConnectionStateMachine sm;
+    sm.force_state(ConnectionState::Connecting);
+    TransitionResult result = sm.process_event(ConnectionEvent::Disconnect);
+    ASSERT_EQ(result, TransitionResult::Success);
+    ASSERT_TRUE(sm.get_state() == ConnectionState::Disconnected);
+}
+
+TEST(connecting_fatal_error) {
+    ConnectionStateMachine sm;
+    sm.force_state(ConnectionState::Connecting);
+    TransitionResult result = sm.process_event(ConnectionEvent::FatalError);
+    ASSERT_EQ(result, TransitionResult::Success);
+    ASSERT_TRUE(sm.get_state() == ConnectionState::Error);
+}
+
+TEST(connected_connection_lost) {
+    ConnectionStateMachine sm;
+    sm.force_state(ConnectionState::Connected);
+    TransitionResult result = sm.process_event(ConnectionEvent::ConnectionLost);
+    ASSERT_EQ(result, TransitionResult::Success);
+    ASSERT_TRUE(sm.get_state() == ConnectionState::Backoff);
+}
+
+TEST(connected_disconnect_to_disconnecting) {
+    ConnectionStateMachine sm;
+    sm.force_state(ConnectionState::Connected);
+    TransitionResult result = sm.process_event(ConnectionEvent::Disconnect);
+    ASSERT_EQ(result, TransitionResult::Success);
+    ASSERT_TRUE(sm.get_state() == ConnectionState::Disconnecting);
+}
+
+TEST(connected_fatal_error) {
+    ConnectionStateMachine sm;
+    sm.force_state(ConnectionState::Connected);
+    TransitionResult result = sm.process_event(ConnectionEvent::FatalError);
+    ASSERT_EQ(result, TransitionResult::Success);
+    ASSERT_TRUE(sm.get_state() == ConnectionState::Error);
+}
+
+TEST(handshaking_disconnect) {
+    ConnectionStateMachine sm;
+    sm.force_state(ConnectionState::Handshaking);
+    TransitionResult result = sm.process_event(ConnectionEvent::Disconnect);
+    ASSERT_EQ(result, TransitionResult::Success);
+    ASSERT_TRUE(sm.get_state() == ConnectionState::Disconnecting);
+}
+
+TEST(handshaking_fatal_error) {
+    ConnectionStateMachine sm;
+    sm.force_state(ConnectionState::Handshaking);
+    TransitionResult result = sm.process_event(ConnectionEvent::FatalError);
+    ASSERT_EQ(result, TransitionResult::Success);
+    ASSERT_TRUE(sm.get_state() == ConnectionState::Error);
+}
+
+TEST(ready_fatal_error) {
+    ConnectionStateMachine sm;
+    sm.force_state(ConnectionState::Ready);
+    TransitionResult result = sm.process_event(ConnectionEvent::FatalError);
+    ASSERT_EQ(result, TransitionResult::Success);
+    ASSERT_TRUE(sm.get_state() == ConnectionState::Error);
+}
+
+TEST(backoff_retry_requested) {
+    ConnectionStateMachine sm;
+    sm.force_state(ConnectionState::Backoff);
+    TransitionResult result = sm.process_event(ConnectionEvent::RetryRequested);
+    ASSERT_EQ(result, TransitionResult::Success);
+    ASSERT_TRUE(sm.get_state() == ConnectionState::Retrying);
+}
+
+TEST(backoff_fatal_error) {
+    ConnectionStateMachine sm;
+    sm.force_state(ConnectionState::Backoff);
+    TransitionResult result = sm.process_event(ConnectionEvent::FatalError);
+    ASSERT_EQ(result, TransitionResult::Success);
+    ASSERT_TRUE(sm.get_state() == ConnectionState::Error);
+}
+
+TEST(retrying_connect_success) {
+    ConnectionStateMachine sm;
+    sm.force_state(ConnectionState::Retrying);
+    TransitionResult result = sm.process_event(ConnectionEvent::ConnectSuccess);
+    ASSERT_EQ(result, TransitionResult::Success);
+    ASSERT_TRUE(sm.get_state() == ConnectionState::Connected);
+}
+
+TEST(retrying_connect_failed) {
+    ConnectionStateMachine sm;
+    sm.force_state(ConnectionState::Retrying);
+    TransitionResult result = sm.process_event(ConnectionEvent::ConnectFailed);
+    ASSERT_EQ(result, TransitionResult::Success);
+    ASSERT_TRUE(sm.get_state() == ConnectionState::Backoff);
+}
+
+TEST(retrying_disconnect) {
+    ConnectionStateMachine sm;
+    sm.force_state(ConnectionState::Retrying);
+    TransitionResult result = sm.process_event(ConnectionEvent::Disconnect);
+    ASSERT_EQ(result, TransitionResult::Success);
+    ASSERT_TRUE(sm.get_state() == ConnectionState::Disconnected);
+}
+
+TEST(retrying_fatal_error) {
+    ConnectionStateMachine sm;
+    sm.force_state(ConnectionState::Retrying);
+    TransitionResult result = sm.process_event(ConnectionEvent::FatalError);
+    ASSERT_EQ(result, TransitionResult::Success);
+    ASSERT_TRUE(sm.get_state() == ConnectionState::Error);
+}
+
+TEST(disconnecting_connect_success) {
+    ConnectionStateMachine sm;
+    sm.force_state(ConnectionState::Disconnecting);
+    TransitionResult result = sm.process_event(ConnectionEvent::ConnectSuccess);
+    ASSERT_EQ(result, TransitionResult::Success);
+    ASSERT_TRUE(sm.get_state() == ConnectionState::Disconnected);
+}
+
+TEST(disconnecting_connect_failed) {
+    ConnectionStateMachine sm;
+    sm.force_state(ConnectionState::Disconnecting);
+    TransitionResult result = sm.process_event(ConnectionEvent::ConnectFailed);
+    ASSERT_EQ(result, TransitionResult::Success);
+    ASSERT_TRUE(sm.get_state() == ConnectionState::Disconnected);
+}
+
+TEST(disconnecting_connection_lost) {
+    ConnectionStateMachine sm;
+    sm.force_state(ConnectionState::Disconnecting);
+    TransitionResult result = sm.process_event(ConnectionEvent::ConnectionLost);
+    ASSERT_EQ(result, TransitionResult::Success);
+    ASSERT_TRUE(sm.get_state() == ConnectionState::Disconnected);
+}
+
+TEST(disconnecting_fatal_error) {
+    ConnectionStateMachine sm;
+    sm.force_state(ConnectionState::Disconnecting);
+    TransitionResult result = sm.process_event(ConnectionEvent::FatalError);
+    ASSERT_EQ(result, TransitionResult::Success);
+    ASSERT_TRUE(sm.get_state() == ConnectionState::Disconnected);
+}
+
+TEST(ready_connect_success_noop) {
+    ConnectionStateMachine sm;
+    sm.force_state(ConnectionState::Ready);
+    TransitionResult result = sm.process_event(ConnectionEvent::ConnectSuccess);
+    ASSERT_EQ(result, TransitionResult::AlreadyInState);
+    ASSERT_TRUE(sm.get_state() == ConnectionState::Ready);
+}
+
+TEST(connected_handshake_started) {
+    ConnectionStateMachine sm;
+    sm.force_state(ConnectionState::Connected);
+    TransitionResult result = sm.process_event(ConnectionEvent::HandshakeStarted);
+    ASSERT_EQ(result, TransitionResult::Success);
+    ASSERT_TRUE(sm.get_state() == ConnectionState::Handshaking);
+}
+
+TEST(is_transitioning_in_handshaking) {
+    ConnectionStateMachine sm;
+    sm.force_state(ConnectionState::Handshaking);
+    ASSERT_TRUE(sm.is_transitioning());
+}
+
+TEST(is_transitioning_in_retrying) {
+    ConnectionStateMachine sm;
+    sm.force_state(ConnectionState::Retrying);
+    ASSERT_TRUE(sm.is_transitioning());
+}
+
+TEST(is_transitioning_in_disconnecting) {
+    ConnectionStateMachine sm;
+    sm.force_state(ConnectionState::Disconnecting);
+    ASSERT_TRUE(sm.is_transitioning());
+}
+
+TEST(is_connected_in_handshaking_detailed) {
+    ConnectionStateMachine sm;
+    sm.force_state(ConnectionState::Handshaking);
+    ASSERT_TRUE(sm.is_connected());
+    ASSERT_FALSE(sm.is_ready());
+}
+
+TEST(state_to_string_unknown) {
+    const char* result = ConnectionStateMachine::state_to_string(static_cast<ConnectionState>(99));
+    ASSERT_STREQ(result, "Unknown");
+}
+
+TEST(event_to_string_unknown) {
+    const char* result = ConnectionStateMachine::event_to_string(static_cast<ConnectionEvent>(99));
+    ASSERT_STREQ(result, "Unknown");
+}
+
+// ============================================================================
 // Main Entry Point
 // ============================================================================
 
@@ -975,6 +1181,35 @@ int main() {
     RUN_TEST(is_transitioning_in_connecting);
     RUN_TEST(is_transitioning_in_backoff);
     RUN_TEST(is_not_transitioning_in_ready);
+
+    // Additional Transition Coverage
+    RUN_TEST(disconnected_retry_requested);
+    RUN_TEST(connecting_disconnect);
+    RUN_TEST(connecting_fatal_error);
+    RUN_TEST(connected_connection_lost);
+    RUN_TEST(connected_disconnect_to_disconnecting);
+    RUN_TEST(connected_fatal_error);
+    RUN_TEST(handshaking_disconnect);
+    RUN_TEST(handshaking_fatal_error);
+    RUN_TEST(ready_fatal_error);
+    RUN_TEST(backoff_retry_requested);
+    RUN_TEST(backoff_fatal_error);
+    RUN_TEST(retrying_connect_success);
+    RUN_TEST(retrying_connect_failed);
+    RUN_TEST(retrying_disconnect);
+    RUN_TEST(retrying_fatal_error);
+    RUN_TEST(disconnecting_connect_success);
+    RUN_TEST(disconnecting_connect_failed);
+    RUN_TEST(disconnecting_connection_lost);
+    RUN_TEST(disconnecting_fatal_error);
+    RUN_TEST(ready_connect_success_noop);
+    RUN_TEST(connected_handshake_started);
+    RUN_TEST(is_transitioning_in_handshaking);
+    RUN_TEST(is_transitioning_in_retrying);
+    RUN_TEST(is_transitioning_in_disconnecting);
+    RUN_TEST(is_connected_in_handshaking_detailed);
+    RUN_TEST(state_to_string_unknown);
+    RUN_TEST(event_to_string_unknown);
 
     printf("\n========================================\n");
     printf("  Results: %d/%d passed\n", g_tests_passed, g_tests_run);
