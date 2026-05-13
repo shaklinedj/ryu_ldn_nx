@@ -104,21 +104,29 @@ test-docker: $(TARGET) docker-compose
 clean:
 	rm -f *.o *.gcda *.gcno $(TARGET) docker-compose.yml
 
-coverage:
-	$(MAKE) COV=1 clean all docker-compose
+# Coverage: build with --coverage, run tests against Docker server, generate report
+COV_SOURCES := \
+	../../sysmodule/source/network/client.cpp \
+	../../sysmodule/source/network/tcp_client.cpp \
+	../../sysmodule/source/network/connection_state.cpp \
+	../../sysmodule/source/network/reconnect.cpp \
+	../../sysmodule/source/network/socket.cpp
+
+coverage: clean
+	$(MAKE) COV=1 all
 	@echo "=== Starting LdnServer via docker-compose (coverage build) ==="
+	bash prepare-compose.sh
 	docker compose -f docker-compose.yml up -d
 	bash wait-for-server.sh localhost 30456 60
 	sleep 2
 	@echo "=== Running integration tests with coverage ==="
-	INTEGRATION_COMPOSE_FILE="$(shell pwd)/docker-compose.yml" ./$(TARGET) localhost 30456 ; exit_code=$$? ; \
+	INTEGRATION_COMPOSE_FILE="$$(pwd)/docker-compose.yml" ./$(TARGET) localhost 30456 ; exit_code=$$? ; \
 	echo "=== Generating coverage report ===" ; \
-	gcov --branch-counts --branch-probabilities \
-	  -o . ../../sysmodule/source/network/client.cpp \
-	  -o . ../../sysmodule/source/network/tcp_client.cpp \
-	  -o . ../../sysmodule/source/network/connection_state.cpp \
-	  -o . ../../sysmodule/source/network/reconnect.cpp \
-	  -o . ../../sysmodule/source/network/socket.cpp 2>&1 | grep -E 'Lines|Branches|client\.cpp|tcp_client\.cpp|connection_state\.cpp|reconnect\.cpp|socket\.cpp' ; \
+	for src in $(COV_SOURCES); do \
+		echo "--- $$src ---" ; \
+		gcov --branch-counts --branch-probabilities -o . "$$src" 2>/dev/null \
+			| grep -E "Lines executed|Branches executed" | head -2 ; \
+	done ; \
 	echo "=== Stopping LdnServer ===" ; \
 	docker compose -f docker-compose.yml down -v ; \
 	exit $$exit_code

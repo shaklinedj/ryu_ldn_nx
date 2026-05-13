@@ -414,6 +414,46 @@ coverage: clean
 	gcov $(TEST_SOURCES)
 	@echo "Coverage report generated"
 
+# Full coverage: unit tests + integration tests against Docker LDN server
+# Builds everything with --coverage, runs unit tests, then fires up the
+# Docker LdnServer and runs integration tests, finally reports per-file
+# line coverage for the 5 network source files.
+COV_NETWORK_SOURCES := \
+	client.cpp \
+	tcp_client.cpp \
+	connection_state.cpp \
+	reconnect.cpp \
+	socket.cpp
+
+coverage-full: clean
+	@echo "=== Phase 1: Unit tests with coverage ==="
+	$(MAKE) COVERAGE=1 test
+	@echo ""
+	@echo "=== Phase 2: Integration tests with coverage ==="
+	$(MAKE) -C integration COV=1 clean all
+	$(MAKE) -C integration docker-compose
+	docker compose -f integration/docker-compose.yml up -d
+	bash integration/wait-for-server.sh localhost 30456 60
+	sleep 2
+	INTEGRATION_COMPOSE_FILE="$$(pwd)/integration/docker-compose.yml" \
+		./integration/run_integration_tests localhost 30456 ; \
+		int_exit=$$? ; \
+	echo "" ; \
+	echo "=== Coverage Report ===" ; \
+	for src in $(COV_NETWORK_SOURCES); do \
+		echo "--- $$src ---" ; \
+		echo "  Unit:" ; \
+		gcov --branch-counts --branch-probabilities $${src%%.cpp}.gcno 2>/dev/null \
+			| grep -A1 "network/$$src" | grep "Lignes exécutées" | head -1 ; \
+		echo "  Integration:" ; \
+		gcov --branch-counts --branch-probabilities -o integration $${src%%.cpp}.gcno 2>/dev/null \
+			| grep -A1 "network/$$src" | grep "Lignes exécutées" | head -1 ; \
+	done ; \
+	echo "" ; \
+	echo "=== Stopping LdnServer ===" ; \
+	docker compose -f integration/docker-compose.yml down -v ; \
+	exit $$int_exit
+
 clean:
 	rm -f *.o $(TARGET_PROTOCOL) $(TARGET_CONFIG) $(TARGET_CONFIG_MANAGER) $(TARGET_LOG) $(TARGET_SOCKET) $(TARGET_TCP_CLIENT) $(TARGET_CONNECTION_STATE) $(TARGET_RECONNECT) $(TARGET_CLIENT) $(TARGET_LDN_TYPES) $(TARGET_LDN_STATE_MACHINE) $(TARGET_LDN_PROXY) $(TARGET_LDN_ERROR) $(TARGET_LDN_INTEGRATION) $(TARGET_OVERLAY) $(TARGET_IPC_CONFIG) $(TARGET_CONFIG_IPC_SERVICE) $(TARGET_SHARED_STATE) $(TARGET_PACKET_DISPATCHER) $(TARGET_SESSION_HANDLER) $(TARGET_PROXY_HANDLER) $(TARGET_HANDLER_INTEGRATION) $(TARGET_UPNP) $(TARGET_P2P_PROXY) $(TARGET_P2P_CLIENT) $(TARGET_P2P_INTEGRATION) $(TARGET_P2P_CREATE_NETWORK)
 	rm -f *.gcno *.gcda *.gcov

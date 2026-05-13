@@ -22,6 +22,7 @@
 #include <functional>
 
 #include "network/socket.hpp"
+#include "network/tcp_client.hpp"
 #include "network/client.hpp"
 #include "config/config.hpp"
 
@@ -1468,6 +1469,460 @@ bool test_server_initiated_disconnect() {
 }
 
 // ============================================================================
+// SECTION: TcpClient Direct Tests
+// ============================================================================
+
+bool test_tcpclient_connect_already_connected() {
+    socket_init();
+    TcpClient tc;
+    ClientResult r = tc.connect(g_host, g_port, 3000);
+    ASSERT_EQ(r, ClientResult::Success);
+
+    // Second connect should return AlreadyConnected
+    ClientResult r2 = tc.connect(g_host, g_port, 1000);
+    ASSERT_EQ(r2, ClientResult::AlreadyConnected);
+
+    tc.disconnect();
+    socket_exit();
+    return true;
+}
+
+bool test_tcpclient_send_not_connected() {
+    TcpClient tc;
+    ClientResult r = tc.send_packet(protocol::PacketId::Scan, nullptr, 0);
+    ASSERT_EQ(r, ClientResult::NotConnected);
+
+    r = tc.send_raw(nullptr, 0);
+    ASSERT_EQ(r, ClientResult::NotConnected);
+
+    protocol::InitializeMessage init{};
+    r = tc.send_initialize(init);
+    ASSERT_EQ(r, ClientResult::NotConnected);
+
+    protocol::PassphraseMessage pass{};
+    r = tc.send_passphrase(pass);
+    ASSERT_EQ(r, ClientResult::NotConnected);
+
+    r = tc.send_passphrase("test");
+    ASSERT_EQ(r, ClientResult::NotConnected);
+
+    protocol::PingMessage ping{};
+    r = tc.send_ping(ping);
+    ASSERT_EQ(r, ClientResult::NotConnected);
+
+    protocol::DisconnectMessage disc{};
+    r = tc.send_disconnect(disc);
+    ASSERT_EQ(r, ClientResult::NotConnected);
+
+    protocol::CreateAccessPointRequest ap{};
+    r = tc.send_create_access_point(ap);
+    ASSERT_EQ(r, ClientResult::NotConnected);
+
+    protocol::CreateAccessPointPrivateRequest app{};
+    r = tc.send_create_access_point_private(app);
+    ASSERT_EQ(r, ClientResult::NotConnected);
+
+    protocol::ConnectRequest cr{};
+    r = tc.send_connect(cr);
+    ASSERT_EQ(r, ClientResult::NotConnected);
+
+    protocol::ConnectPrivateRequest cpr{};
+    r = tc.send_connect_private(cpr);
+    ASSERT_EQ(r, ClientResult::NotConnected);
+
+    protocol::ScanFilterFull sf{};
+    r = tc.send_scan(sf);
+    ASSERT_EQ(r, ClientResult::NotConnected);
+
+    protocol::ProxyDataHeader pdh{};
+    r = tc.send_proxy_data(pdh, nullptr, 0);
+    ASSERT_EQ(r, ClientResult::NotConnected);
+
+    protocol::SetAcceptPolicyRequest sap{};
+    r = tc.send_set_accept_policy(sap);
+    ASSERT_EQ(r, ClientResult::NotConnected);
+
+    uint8_t adv_data[] = {0x01, 0x02};
+    r = tc.send_set_advertise_data(adv_data, sizeof(adv_data));
+    ASSERT_EQ(r, ClientResult::NotConnected);
+
+    protocol::RejectRequest rej{};
+    r = tc.send_reject(rej);
+    ASSERT_EQ(r, ClientResult::NotConnected);
+
+    r = tc.set_nodelay(true);
+    ASSERT_EQ(r, ClientResult::NotConnected);
+
+    return true;
+}
+
+bool test_tcpclient_move_constructor() {
+    socket_init();
+    TcpClient tc1;
+    ClientResult r = tc1.connect(g_host, g_port, 3000);
+    ASSERT_EQ(r, ClientResult::Success);
+    ASSERT_TRUE(tc1.is_connected());
+
+    TcpClient tc2 = std::move(tc1);
+    ASSERT_TRUE(tc2.is_connected());
+    // tc1 moved-from: may or may not report connected, just verify no crash
+
+    tc2.disconnect();
+    socket_exit();
+    return true;
+}
+
+bool test_tcpclient_move_assignment() {
+    socket_init();
+    TcpClient tc1;
+    ClientResult r = tc1.connect(g_host, g_port, 3000);
+    ASSERT_EQ(r, ClientResult::Success);
+
+    TcpClient tc2;
+    tc2 = std::move(tc1);
+    ASSERT_TRUE(tc2.is_connected());
+
+    tc2.disconnect();
+    socket_exit();
+    return true;
+}
+
+bool test_tcpclient_receive_packet_not_connected() {
+    TcpClient tc;
+    protocol::PacketId type;
+    uint8_t buf[1024];
+    size_t payload_size = 0;
+    ClientResult r = tc.receive_packet(type, buf, sizeof(buf), payload_size, 100);
+    ASSERT_EQ(r, ClientResult::NotConnected);
+    return true;
+}
+
+bool test_tcpclient_has_packet_available_not_connected() {
+    TcpClient tc;
+    // has_packet_available returns false when not connected
+    // (buffer is empty)
+    ASSERT_FALSE(tc.has_packet_available());
+    return true;
+}
+
+bool test_tcpclient_set_nodelay_connected() {
+    socket_init();
+    TcpClient tc;
+    ClientResult r = tc.connect(g_host, g_port, 3000);
+    ASSERT_EQ(r, ClientResult::Success);
+
+    // On connected socket, set_nodelay should succeed
+    ClientResult nr = tc.set_nodelay(true);
+    ASSERT_EQ(nr, ClientResult::Success);
+
+    nr = tc.set_nodelay(false);
+    ASSERT_EQ(nr, ClientResult::Success);
+
+    tc.disconnect();
+    socket_exit();
+    return true;
+}
+
+bool test_tcpclient_send_receive_roundtrip() {
+    socket_init();
+    TcpClient tc;
+    ClientResult r = tc.connect(g_host, g_port, 3000);
+    ASSERT_EQ(r, ClientResult::Success);
+
+    // Send passphrase + initialize to handshake
+    protocol::PassphraseMessage pass{};
+    r = tc.send_passphrase(pass);
+    ASSERT_EQ(r, ClientResult::Success);
+
+    protocol::InitializeMessage init{};
+    r = tc.send_initialize(init);
+    ASSERT_EQ(r, ClientResult::Success);
+
+    // Wait for Connected packet (server should send one)
+    protocol::PacketId type;
+    uint8_t buf[4096];
+    size_t payload_size = 0;
+    r = ClientResult::Timeout;
+    for (int i = 0; i < 100; i++) {
+        r = tc.receive_packet(type, buf, sizeof(buf), payload_size, 500);
+        if (r == ClientResult::Success) {
+            // Got a packet — verify it's a valid type
+            ASSERT_TRUE(type == protocol::PacketId::Connected ||
+                        type == protocol::PacketId::Initialize);
+            break;
+        }
+        if (r == ClientResult::ConnectionLost) break;
+    }
+    // Success if we got any packet, or Timeout is acceptable
+    // (server may not respond without proper handshake sequence)
+    ASSERT_TRUE(r == ClientResult::Success || r == ClientResult::Timeout);
+
+    tc.disconnect();
+    socket_exit();
+    return true;
+}
+
+// ============================================================================
+// SECTION: Socket Direct Tests
+// ============================================================================
+
+bool test_socket_init_exit() {
+    ASSERT_TRUE(socket_init() == SocketResult::Success);
+    // Double init is idempotent
+    ASSERT_TRUE(socket_init() == SocketResult::Success);
+    ASSERT_TRUE(socket_is_initialized());
+    socket_exit();
+    ASSERT_FALSE(socket_is_initialized());
+    socket_exit();  // Double exit is safe
+    return true;
+}
+
+bool test_socket_connect_disconnect() {
+    ASSERT_TRUE(socket_init() == SocketResult::Success);
+    Socket sock;
+    ASSERT_FALSE(sock.is_connected());
+    ASSERT_FALSE(sock.is_valid());
+
+    SocketResult r = sock.connect(g_host, g_port, 3000);
+    ASSERT_EQ(r, SocketResult::Success);
+    ASSERT_TRUE(sock.is_connected());
+    ASSERT_TRUE(sock.is_valid());
+
+    sock.close();
+    ASSERT_FALSE(sock.is_connected());
+    ASSERT_FALSE(sock.is_valid());
+
+    socket_exit();
+    return true;
+}
+
+bool test_socket_connect_already_connected() {
+    ASSERT_TRUE(socket_init() == SocketResult::Success);
+    Socket sock;
+    SocketResult r = sock.connect(g_host, g_port, 3000);
+    ASSERT_EQ(r, SocketResult::Success);
+
+    // Second connect should fail with AlreadyConnected
+    SocketResult r2 = sock.connect(g_host, g_port, 1000);
+    ASSERT_EQ(r2, SocketResult::AlreadyConnected);
+
+    sock.close();
+    socket_exit();
+    return true;
+}
+
+bool test_socket_connect_invalid_host() {
+    ASSERT_TRUE(socket_init() == SocketResult::Success);
+    Socket sock;
+    // Empty string is invalid
+    SocketResult r = sock.connect("", g_port, 1000);
+    ASSERT_EQ(r, SocketResult::InvalidAddress);
+
+    // Unresolvable hostname
+    r = sock.connect("this.host.does.not.exist.invalid", g_port, 2000);
+    ASSERT_EQ(r, SocketResult::InvalidAddress);
+
+    socket_exit();
+    return true;
+}
+
+bool test_socket_not_initialized() {
+    socket_exit();  // Ensure not initialized
+    Socket sock;
+    SocketResult r = sock.connect(g_host, g_port, 1000);
+    ASSERT_EQ(r, SocketResult::NotInitialized);
+    socket_init();
+    return true;
+}
+
+bool test_socket_send_recv_not_connected() {
+    Socket sock;
+    uint8_t data[] = {0x01, 0x02, 0x03};
+    size_t sent = 0;
+    SocketResult r = sock.send(data, sizeof(data), sent);
+    ASSERT_EQ(r, SocketResult::NotConnected);
+
+    r = sock.send_all(data, sizeof(data));
+    ASSERT_EQ(r, SocketResult::NotConnected);
+
+    uint8_t buf[256];
+    size_t received = 0;
+    r = sock.recv(buf, sizeof(buf), received, 100);
+    ASSERT_EQ(r, SocketResult::NotConnected);
+    return true;
+}
+
+bool test_socket_move_constructor() {
+    ASSERT_TRUE(socket_init() == SocketResult::Success);
+    Socket sock1;
+    SocketResult r = sock1.connect(g_host, g_port, 3000);
+    ASSERT_EQ(r, SocketResult::Success);
+    ASSERT_TRUE(sock1.is_connected());
+
+    Socket sock2 = std::move(sock1);
+    ASSERT_TRUE(sock2.is_connected());
+    // sock1 moved-from
+    ASSERT_FALSE(sock1.is_valid());
+    ASSERT_FALSE(sock1.is_connected());
+
+    sock2.close();
+    socket_exit();
+    return true;
+}
+
+bool test_socket_move_assignment() {
+    ASSERT_TRUE(socket_init() == SocketResult::Success);
+    Socket sock1;
+    SocketResult r = sock1.connect(g_host, g_port, 3000);
+    ASSERT_EQ(r, SocketResult::Success);
+
+    Socket sock2;
+    sock2 = std::move(sock1);
+    ASSERT_TRUE(sock2.is_connected());
+    ASSERT_FALSE(sock1.is_valid());
+
+    sock2.close();
+    socket_exit();
+    return true;
+}
+
+bool test_socket_send_all_connected() {
+    ASSERT_TRUE(socket_init() == SocketResult::Success);
+    Socket sock;
+    SocketResult r = sock.connect(g_host, g_port, 3000);
+    ASSERT_EQ(r, SocketResult::Success);
+
+    // Send a passphrase packet using send_all to verify the path
+    // Build a minimal LdnHeader + PassphraseMessage
+    protocol::LdnHeader hdr{};
+    hdr.magic = protocol::PROTOCOL_MAGIC;
+    hdr.version = protocol::PROTOCOL_VERSION;
+    hdr.type = static_cast<uint8_t>(protocol::PacketId::Passphrase);
+    hdr.data_size = sizeof(protocol::PassphraseMessage);
+
+    uint8_t send_buf[256];
+    std::memcpy(send_buf, &hdr, sizeof(hdr));
+    protocol::PassphraseMessage pass{};
+    std::memcpy(send_buf + sizeof(hdr), &pass, sizeof(pass));
+
+    r = sock.send_all(send_buf, sizeof(hdr) + sizeof(pass));
+    ASSERT_EQ(r, SocketResult::Success);
+
+    // Verify we can receive something back
+    uint8_t recv_buf[4096];
+    size_t received = 0;
+    r = sock.recv(recv_buf, sizeof(recv_buf), received, 2000);
+    // Server may reply or timeout — just verify no crash
+    ASSERT_TRUE(r == SocketResult::Success || r == SocketResult::Timeout);
+
+    sock.close();
+    socket_exit();
+    return true;
+}
+
+bool test_socket_set_nodelay_connected() {
+    ASSERT_TRUE(socket_init() == SocketResult::Success);
+    Socket sock;
+    SocketResult r = sock.connect(g_host, g_port, 3000);
+    ASSERT_EQ(r, SocketResult::Success);
+
+    r = sock.set_nodelay(true);
+    ASSERT_EQ(r, SocketResult::Success);
+
+    r = sock.set_nodelay(false);
+    ASSERT_EQ(r, SocketResult::Success);
+
+    sock.close();
+    socket_exit();
+    return true;
+}
+
+bool test_socket_set_buffer_sizes_connected() {
+    ASSERT_TRUE(socket_init() == SocketResult::Success);
+    Socket sock;
+    SocketResult r = sock.connect(g_host, g_port, 3000);
+    ASSERT_EQ(r, SocketResult::Success);
+
+    r = sock.set_recv_buffer_size(65536);
+    ASSERT_EQ(r, SocketResult::Success);
+
+    r = sock.set_send_buffer_size(65536);
+    ASSERT_EQ(r, SocketResult::Success);
+
+    sock.close();
+    socket_exit();
+    return true;
+}
+
+bool test_socket_set_options_invalid_fd() {
+    Socket sock;  // no fd
+    ASSERT_FALSE(sock.is_valid());
+
+    SocketResult r = sock.set_nodelay(true);
+    ASSERT_EQ(r, SocketResult::SocketError);
+
+    r = sock.set_recv_buffer_size(65536);
+    ASSERT_EQ(r, SocketResult::SocketError);
+
+    r = sock.set_send_buffer_size(65536);
+    ASSERT_EQ(r, SocketResult::SocketError);
+
+    r = sock.set_non_blocking(true);
+    ASSERT_EQ(r, SocketResult::SocketError);
+    return true;
+}
+
+bool test_socket_ipv4_connect() {
+    ASSERT_TRUE(socket_init() == SocketResult::Success);
+    Socket sock;
+    // Connect using 127.0.0.1 numeric IP (tests inet_pton path in resolve_host)
+    SocketResult r = sock.connect("127.0.0.1", g_port, 3000);
+    ASSERT_EQ(r, SocketResult::Success);
+    ASSERT_TRUE(sock.is_connected());
+
+    sock.close();
+    socket_exit();
+    return true;
+}
+
+bool test_socket_recv_timeout() {
+    ASSERT_TRUE(socket_init() == SocketResult::Success);
+    Socket sock;
+    SocketResult r = sock.connect(g_host, g_port, 3000);
+    ASSERT_EQ(r, SocketResult::Success);
+
+    // Receive with short timeout — server may not send immediately
+    uint8_t buf[256];
+    size_t received = 0;
+    r = sock.recv(buf, sizeof(buf), received, 100);
+    // Timeout is expected since we haven't sent any handshake
+    ASSERT_TRUE(r == SocketResult::Timeout || r == SocketResult::Success);
+
+    sock.close();
+    socket_exit();
+    return true;
+}
+
+bool test_socket_double_close() {
+    ASSERT_TRUE(socket_init() == SocketResult::Success);
+    Socket sock;
+    SocketResult r = sock.connect(g_host, g_port, 3000);
+    ASSERT_EQ(r, SocketResult::Success);
+
+    sock.close();
+    ASSERT_FALSE(sock.is_connected());
+    ASSERT_FALSE(sock.is_valid());
+
+    // Double close should not crash
+    sock.close();
+    ASSERT_FALSE(sock.is_connected());
+    ASSERT_FALSE(sock.is_valid());
+
+    socket_exit();
+    return true;
+}
+
+// ============================================================================
 // Main
 // ============================================================================
 
@@ -1554,6 +2009,33 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_try_connect_failure_then_backoff);
     RUN_TEST(test_backoff_expiry_and_retry);
     RUN_TEST(test_server_initiated_disconnect);
+
+    printf("\n--- TcpClient Direct ---\n");
+    RUN_TEST(test_tcpclient_connect_already_connected);
+    RUN_TEST(test_tcpclient_send_not_connected);
+    RUN_TEST(test_tcpclient_move_constructor);
+    RUN_TEST(test_tcpclient_move_assignment);
+    RUN_TEST(test_tcpclient_receive_packet_not_connected);
+    RUN_TEST(test_tcpclient_has_packet_available_not_connected);
+    RUN_TEST(test_tcpclient_set_nodelay_connected);
+    RUN_TEST(test_tcpclient_send_receive_roundtrip);
+
+    printf("\n--- Socket Direct ---\n");
+    RUN_TEST(test_socket_init_exit);
+    RUN_TEST(test_socket_connect_disconnect);
+    RUN_TEST(test_socket_connect_already_connected);
+    RUN_TEST(test_socket_connect_invalid_host);
+    RUN_TEST(test_socket_not_initialized);
+    RUN_TEST(test_socket_send_recv_not_connected);
+    RUN_TEST(test_socket_move_constructor);
+    RUN_TEST(test_socket_move_assignment);
+    RUN_TEST(test_socket_send_all_connected);
+    RUN_TEST(test_socket_set_nodelay_connected);
+    RUN_TEST(test_socket_set_buffer_sizes_connected);
+    RUN_TEST(test_socket_set_options_invalid_fd);
+    RUN_TEST(test_socket_ipv4_connect);
+    RUN_TEST(test_socket_recv_timeout);
+    RUN_TEST(test_socket_double_close);
 
     printf("\n========================================\n");
     printf("  Results: %d/%d passed\n",
