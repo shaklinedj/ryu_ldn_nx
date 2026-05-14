@@ -51,9 +51,16 @@ jobs:
           fi
           sudo dpkg --configure -a
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends wget gnupg pkg-config
-          wget -O /tmp/install-devkitpro-pacman https://apt.devkitpro.org/install-devkitpro-pacman
-          sudo bash /tmp/install-devkitpro-pacman
+          sudo apt-get install -y --no-install-recommends wget
+          # devkitPro stopped shipping a Linux .deb on GitHub Releases and
+          # apt.devkitpro.org is blocked by Cloudflare bot protection from CI.
+          # Pin to the last published .deb (1.0.2) hosted on a community mirror,
+          # verified by SHA-256 to detect tampering.
+          DKP_DEB_URL=https://wii.leseratte10.de/devkitPro/pacman/devkitpro-pacman-1.0.2.amd64.deb
+          DKP_DEB_SHA256=ebc9f199da9a685e5264c87578efe29309d5d90f44f99f3dad9dcd96323fece3
+          wget -O /tmp/devkitpro-pacman.deb "$DKP_DEB_URL"
+          echo "$DKP_DEB_SHA256  /tmp/devkitpro-pacman.deb" | sha256sum -c -
+          sudo apt-get install -y /tmp/devkitpro-pacman.deb
           sudo dkp-pacman -Syyu --noconfirm
           sudo dkp-pacman -S --noconfirm \
             switch-dev \
