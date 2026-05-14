@@ -46,24 +46,43 @@ jobs:
       - name: Build host tests (CodeQL tracing)
         run: cd tests && make clean && make COVERAGE=1 test
 
-      - name: Wrap non-compiler devkitPro tools to bypass CodeQL tracer
-        # CodeQL's LD_PRELOAD tracer (libtrace.so) attaches to every child
-        # process spawned by make. Compilers handle this fine, but small
-        # devkitPro post-link tools (npdmtool, elf2nso, build_pfs0, nacptool)
-        # mis-parse their input under the tracer ("Failed to parse descriptor
-        # json!"). Shadow them with wrappers that unset LD_PRELOAD before
-        # exec'ing the real binary. Compiler tracing is unaffected.
+      - name: Detach CodeQL tracer from non-compiler devkitPro packaging tools
+        # CONTEXT: This does NOT disable any CodeQL security analysis. CodeQL
+        # analyses C/C++ source AS IT IS COMPILED, by attaching its tracer
+        # (LD_PRELOAD) to gcc/g++ to record every translation unit. That
+        # attachment is left fully intact; 100% of our .cpp/.h files remain
+        # analyzed by CodeQL.
+        #
+        # PROBLEM: LD_PRELOAD propagates to ALL child processes make spawns,
+        # not only compilers. The devkitPro post-link packaging tools
+        # (npdmtool, elf2nso, build_pfs0, nacptool) ship third-party binaries
+        # that contain no project code and are NOT subject to CodeQL analysis,
+        # but they crash under the tracer with "Failed to parse descriptor
+        # json!" because the preloaded library interferes with their I/O.
+        #
+        # FIX: Replace each of those 4 binaries in /opt/devkitpro/tools/bin
+        # with a tiny wrapper that just `unset LD_PRELOAD` and execs the
+        # original (saved as <tool>.real). Compilers continue to be traced;
+        # only the format-conversion utilities are spared. In-place shadow
+        # (rather than PATH prepend) so the build cannot accidentally bypass
+        # the wrapper via an absolute path lookup.
         run: |
-          mkdir -p /tmp/codeql-wrappers
           for tool in npdmtool elf2nso build_pfs0 nacptool; do
-            cat > "/tmp/codeql-wrappers/$tool" <<EOF
+            real="/opt/devkitpro/tools/bin/$tool"
+            if [ ! -f "$real.real" ]; then
+              mv "$real" "$real.real"
+            fi
+            cat > "$real" <<'EOF'
           #!/bin/bash
+          self="${0}.real"
+          if [ -n "${LD_PRELOAD:-}" ]; then
+            echo "[codeql-wrapper] $(basename "$0"): stripping LD_PRELOAD=$LD_PRELOAD" >&2
+          fi
           unset LD_PRELOAD
-          exec "/opt/devkitpro/tools/bin/$tool" "\$@"
+          exec "$self" "$@"
           EOF
-            chmod +x "/tmp/codeql-wrappers/$tool"
+            chmod +x "$real"
           done
-          echo "/tmp/codeql-wrappers" >> "$GITHUB_PATH"
 
       - name: Build sysmodule (cross-compiled, tracked by CodeQL)
         env:
@@ -72,9 +91,7 @@ jobs:
           export DEVKITPRO=/opt/devkitpro
           export DEVKITARM=$DEVKITPRO/devkitARM
           export DEVKITA64=$DEVKITPRO/devkitA64
-          # Prepend wrapper dir before devkitPro tools so npdmtool & friends
-          # resolve to the LD_PRELOAD-stripping wrapper.
-          export PATH=/tmp/codeql-wrappers:$DEVKITPRO/tools/bin:$DEVKITA64/bin:$PATH
+          export PATH=$DEVKITPRO/tools/bin:$DEVKITA64/bin:$PATH
           cd sysmodule/Atmosphere-libs/libstratosphere && make -j4 nx_release
           cd ../../..
           cd sysmodule && make -j4 all
