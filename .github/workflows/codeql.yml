@@ -51,9 +51,9 @@ jobs:
           fi
           sudo dpkg --configure -a
           sudo apt-get update
-          sudo apt-get install -y wget
-          wget -qO /tmp/devkitpro-pacman.deb https://github.com/devkitPro/pacman/releases/latest/download/devkitpro-pacman.deb
-          sudo dpkg -i /tmp/devkitpro-pacman.deb
+          sudo apt-get install -y --no-install-recommends wget gnupg pkg-config
+          wget -O /tmp/install-devkitpro-pacman https://apt.devkitpro.org/install-devkitpro-pacman
+          sudo bash /tmp/install-devkitpro-pacman
           sudo dkp-pacman -Syyu --noconfirm
           sudo dkp-pacman -S --noconfirm \
             switch-dev \
