@@ -44,6 +44,25 @@ jobs:
       - name: Build host tests (CodeQL tracing)
         run: cd tests && make clean && make COVERAGE=1 test
 
+      - name: Wrap non-compiler devkitPro tools to bypass CodeQL tracer
+        # CodeQL's LD_PRELOAD tracer (libtrace.so) attaches to every child
+        # process spawned by make. Compilers handle this fine, but small
+        # devkitPro post-link tools (npdmtool, elf2nso, build_pfs0, nacptool)
+        # mis-parse their input under the tracer ("Failed to parse descriptor
+        # json!"). Shadow them with wrappers that unset LD_PRELOAD before
+        # exec'ing the real binary. Compiler tracing is unaffected.
+        run: |
+          mkdir -p /tmp/codeql-wrappers
+          for tool in npdmtool elf2nso build_pfs0 nacptool; do
+            cat > "/tmp/codeql-wrappers/$tool" <<EOF
+          #!/bin/bash
+          unset LD_PRELOAD
+          exec "/opt/devkitpro/tools/bin/$tool" "\$@"
+          EOF
+            chmod +x "/tmp/codeql-wrappers/$tool"
+          done
+          echo "/tmp/codeql-wrappers" >> "$GITHUB_PATH"
+
       - name: Build sysmodule (cross-compiled, tracked by CodeQL)
         env:
           DEVKITPRO: /opt/devkitpro
@@ -51,7 +70,9 @@ jobs:
           export DEVKITPRO=/opt/devkitpro
           export DEVKITARM=$DEVKITPRO/devkitARM
           export DEVKITA64=$DEVKITPRO/devkitA64
-          export PATH=$DEVKITPRO/tools/bin:$DEVKITA64/bin:$PATH
+          # Prepend wrapper dir before devkitPro tools so npdmtool & friends
+          # resolve to the LD_PRELOAD-stripping wrapper.
+          export PATH=/tmp/codeql-wrappers:$DEVKITPRO/tools/bin:$DEVKITA64/bin:$PATH
           cd sysmodule/Atmosphere-libs/libstratosphere && make -j4 nx_release
           cd ../../..
           cd sysmodule && make -j4 all
