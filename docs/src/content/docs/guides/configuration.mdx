@@ -27,18 +27,18 @@ If the file doesn't exist, the sysmodule creates it automatically with default v
 
 [server]
 ; Server hostname or IP address
-host = ldn.ryujinx.app
+host = 150.230.119.252
 ; Server port
 port = 30456
-; Use TLS encryption (0/1) — NOT IMPLEMENTED: no TLS code exists, always plain TCP
+; Use TLS encryption (0/1) — NOT IMPLEMENTED: always plain TCP regardless of this setting
 use_tls = 0
 
 [network]
 ; Connection timeout in milliseconds
 connect_timeout = 5000
-; Ping interval in milliseconds
+; Ping interval in milliseconds (parsed but not used — server drives pings)
 ping_interval = 10000
-; Reconnect delay in milliseconds
+; Initial reconnect delay in milliseconds (fast retry of 200ms applies first attempt)
 reconnect_delay = 3000
 ; Max reconnect attempts (0 = disable auto-reconnect, not infinite)
 max_reconnect_attempts = 5
@@ -48,10 +48,10 @@ max_reconnect_attempts = 5
 enabled = 1
 ; Room passphrase (empty = public)
 passphrase =
-; Network interface (empty = auto) — NOT YET WIRED: always auto-detects
+; Network interface (empty = auto)
 interface =
 ; Disable P2P proxy (0/1/true/false/yes/no)
-disable_p2p = 0
+disable_p2p = 1
 
 [debug]
 ; Enable debug logging (0/1/true/false/yes/no)
@@ -62,27 +62,19 @@ level = 1
 log_to_file = 0
 
 [perf]
-; Performance optimizations — flip individually if one regresses on hardware.
+; NOT IMPLEMENTED — these settings are NOT parsed and NOT consumed.
+; They have no effect. Kept as comments for future reference only.
 
-; Step 1: bump the master TCP socket OS-level buffers (SO_RCVBUF/SO_SNDBUF)
-enable_larger_socket_buffers = 1
-socket_recv_buffer_kb = 64
-socket_send_buffer_kb = 64
-
-; Step 2: raise the LDN background thread priority (lower number = higher priority)
-enable_bg_thread_high_priority = 1
-bg_thread_priority = 8
-
-; Step 3: tighten the drain loop (reduces packet routing latency)
-enable_tight_drain_loop = 1
-recv_timeout_ms = 5
-bg_thread_sleep_ms = 5
-
-; Step 4 (not yet wired — keep at 0): release ProxySocketManager mutex early
-enable_manager_mutex_release = 0
-
-; Step 5 (not yet wired — keep at 0): asynchronous send queue
-enable_async_send_queue = 0
+; enable_larger_socket_buffers = 0
+; socket_recv_buffer_kb = 64
+; socket_send_buffer_kb = 64
+; enable_bg_thread_high_priority = 0
+; bg_thread_priority = 8
+; enable_tight_drain_loop = 0
+; recv_timeout_ms = 20
+; bg_thread_sleep_ms = 10
+; enable_manager_mutex_release = 0
+; enable_async_send_queue = 0
 ```
 
 ## Boolean Values
@@ -100,9 +92,9 @@ This means `true`, `True`, `yes`, `Yes`, `1` all evaluate to **true**, while `fa
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `host` | `ldn.ryujinx.app` | Server hostname or IP address |
+| `host` | `150.230.119.252` | Server hostname or IP address |
 | `port` | `30456` | Server port number |
-| `use_tls` | `true` | ⚠️ **Not implemented** — no TLS code exists, always plain TCP regardless of this setting |
+| `use_tls` | `0` (false) | ⚠️ **Not implemented** — always plain TCP regardless of this setting |
 
 To use a different LDN server:
 
@@ -143,8 +135,8 @@ The reconnect system uses a **fast first retry** (200ms for the first attempt on
 |--------|---------|-------------|
 | `enabled` | `1` | Enable/disable LDN emulation |
 | `passphrase` | _(empty)_ | Room passphrase for private rooms (empty = public) |
-| `interface` | _(empty)_ | ⚠️ Parsed but **not used** — always auto-detects network interface |
-| `disable_p2p` | `0` | Disable P2P proxy (0=enable P2P, 1=relay only) |
+| `interface` | _(empty)_ | Parsed but **not used** — always auto-detects network interface |
+| `disable_p2p` | `1` | Disable P2P proxy (0=enable P2P, 1=relay only) |
 
 Setting `disable_p2p = 1` forces relay mode through the server. This is more reliable for most setups but adds server load. Enable P2P (`disable_p2p = 0`) if UPnP port mapping works on your network — it allows direct peer connections and reduces latency.
 
@@ -164,24 +156,24 @@ Log levels:
 
 At verbose level (3), the log can grow quickly. Read deltas per test run rather than the full file.
 
-### `[perf]` — Performance Tuning (Experimental, Not Yet Wired)
+### `[perf]` — Performance Tuning (Not Implemented)
 
-> **Warning**: The `[perf]` section is defined in the example config file but **not yet parsed or used** by the sysmodule. These keys are silently ignored. They are included for forward compatibility — once wired, they will take effect automatically.
+> **Warning**: The `[perf]` section keys are **NOT parsed** by the INI parser and **NOT consumed** by the runtime. They are commented out in the example config and included only as reference for future implementation. Changing them has **zero effect**.
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `enable_larger_socket_buffers` | `1` | Bump SO_RCVBUF/SO_SNDBUF to reduce backpressure |
-| `socket_recv_buffer_kb` | `64` | Socket receive buffer size in KB |
-| `socket_send_buffer_kb` | `64` | Socket send buffer size in KB |
-| `enable_bg_thread_high_priority` | `1` | Raise LDN background thread priority |
-| `bg_thread_priority` | `8` | Thread priority (lower = higher, Switch default is 20) |
-| `enable_tight_drain_loop` | `1` | Reduce drain loop latency (~40ms → ~10ms) |
-| `recv_timeout_ms` | `5` | Receive timeout in the tight drain loop |
-| `bg_thread_sleep_ms` | `5` | Sleep between drain iterations |
-| `enable_manager_mutex_release` | `0` | **Not yet wired** — early mutex release in ProxySocketManager |
-| `enable_async_send_queue` | `0` | **Not yet wired** — asynchronous send queue for BSD MITM |
+These keys are reserved for future use:
 
-Changing `[perf]` values currently has **no effect**. These options will become functional in a future release.
+| Option | Description |
+|--------|-------------|
+| `enable_larger_socket_buffers` | Bump socket receive/send buffers to reduce backpressure |
+| `socket_recv_buffer_kb` | Socket receive buffer size in KB |
+| `socket_send_buffer_kb` | Socket send buffer size in KB |
+| `enable_bg_thread_high_priority` | Raise LDN background thread priority |
+| `bg_thread_priority` | Thread priority (lower = higher priority) |
+| `enable_tight_drain_loop` | Reduce drain loop latency |
+| `recv_timeout_ms` | Receive timeout in the tight drain loop |
+| `bg_thread_sleep_ms` | Sleep between drain iterations |
+| `enable_manager_mutex_release` | Early mutex release in ProxySocketManager |
+| `enable_async_send_queue` | Asynchronous send queue for BSD MITM |
 
 ## Applying Changes
 

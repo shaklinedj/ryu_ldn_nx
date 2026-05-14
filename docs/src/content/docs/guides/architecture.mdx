@@ -122,6 +122,11 @@ MITM Server Thread (2×32KB)    Receive Thread (16KB)       Config Thread (8KB)
                                                      Log Thread (4KB)
                                                              │
                                                     └── File logger, idle-timeout close
+
+P2P Threads (dynamic, up to 8×16KB):
+  ├── P2P accept (16KB)       ─── loopback listener
+  ├── P2P client recv (16KB)  ─── per-session receive
+  └── P2P lease (8KB)         ─── UPnP lease renewal
 ```
 
 State transitions are signaled cross-thread via `os::Event` (AutoClear for response/scan/reject, ManualClear for error).
@@ -129,7 +134,7 @@ State transitions are signaled cross-thread via `os::Event` (AutoClear for respo
 ## Memory Budget
 
 - **Heap**: 384 KB expanded heap
-- **Malloc buffer**: 1 MB for TLS heap central
-- **Thread stacks**: 2×32 KB (MITM), 16 KB (receive), 8 KB (config), 16 KB (P2P connect), 4 KB (log). Total: ~108 KB
+- **Malloc buffer**: 1 MB for TLS heap central. Sufficient for gameplay traffic.
+- **Thread stacks**: 2×32 KB (MITM), 16 KB (background receive), 16 KB (P2P connect), 16 KB (P2P accept), 16 KB (P2P client recv), 8 KB (P2P lease), 8 KB (config), 4 KB (log). Total: ~148 KB in permanent stacks, plus up to 8×16 KB (128 KB) P2P session stacks allocated dynamically.
 - **BSD sessions**: 14 concurrency limit
 - **Total sysmodule budget**: ~10 MB across all Switch sysmodules

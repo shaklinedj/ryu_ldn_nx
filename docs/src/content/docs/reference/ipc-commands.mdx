@@ -72,8 +72,8 @@ The standalone `ryu:cfg` IPC service is available directly via `smGetService("ry
 | 5 | SetServerAddress | ServerAddress | - | Change server address |
 | 6 | GetLdnEnabled | - | u32 | LDN emulation enabled flag |
 | 7 | SetLdnEnabled | u32 | - | Enable/disable LDN emulation |
-| 8 | GetUseTls | - | u32 | TLS enabled flag |
-| 9 | SetUseTls | u32 | - | Enable/disable TLS |
+| 8 | GetUseTls | - | u32 | TLS flag (⚠️ NOT IMPLEMENTED — always plain TCP) |
+| 9 | SetUseTls | u32 | - | Enable/disable TLS (⚠️ has no effect) |
 | 10 | GetDebugEnabled | - | u32 | Debug logging flag |
 | 11 | SetDebugEnabled | u32 | - | Enable/disable debug logging |
 | 12 | GetDebugLevel | - | u32 | Log level (0-3) |
@@ -84,8 +84,8 @@ The standalone `ryu:cfg` IPC service is available directly via `smGetService("ry
 | 17 | ReloadConfig | - | ConfigResult | Reload config from SD card |
 | 18 | GetConnectTimeout | - | u32 | Connection timeout in ms |
 | 19 | SetConnectTimeout | u32 | - | Set connection timeout in ms |
-| 20 | GetPingInterval | - | u32 | Ping interval in ms (not used by client) |
-| 21 | SetPingInterval | u32 | - | Set ping interval in ms |
+| 20 | GetPingInterval | - | u32 | Ping interval in ms (⚠️ parsed but not used — server drives pings) |
+| 21 | SetPingInterval | u32 | - | Set ping interval in ms (⚠️ has no effect) |
 | 22 | IsServiceActive | - | u32 | Service ping (returns 1 if active) |
 
 ### Runtime State Commands (23–28)
