@@ -794,6 +794,57 @@ TEST(has_packet_available_not_connected) {
     ASSERT_FALSE(client.has_packet_available());
 }
 
+TEST(tcp_client_initialize) {
+    TcpClient client;
+    bool result = client.initialize();
+    ASSERT_EQ(result, true);
+    socket_exit();
+}
+
+TEST(tcp_client_initialize_already_init) {
+    TcpClient client;
+    bool result = client.initialize();
+    ASSERT_EQ(result, true);
+    // Second init should also succeed (idempotent)
+    result = client.initialize();
+    ASSERT_EQ(result, true);
+    socket_exit();
+}
+
+TEST(tcp_client_has_packet_when_disconnected) {
+    TcpClient client;
+    ASSERT_TRUE(!client.has_packet_available());
+}
+
+TEST(tcp_client_set_nodelay_not_connected) {
+    TcpClient client;
+    ClientResult r = client.set_nodelay(true);
+    ASSERT_EQ(r, ClientResult::NotConnected);
+}
+
+TEST(client_result_to_string_additional) {
+    ASSERT_TRUE(strcmp(client_result_to_string(ClientResult::ConnectionFailed), "ConnectionFailed") == 0);
+    ASSERT_TRUE(strcmp(client_result_to_string(ClientResult::ProtocolError), "ProtocolError") == 0);
+    ASSERT_TRUE(strcmp(client_result_to_string(ClientResult::BufferTooSmall), "BufferTooSmall") == 0);
+    ASSERT_TRUE(strcmp(client_result_to_string(ClientResult::EncodingError), "EncodingError") == 0);
+    ASSERT_TRUE(strcmp(client_result_to_string(ClientResult::NotInitialized), "NotInitialized") == 0);
+    ASSERT_TRUE(strcmp(client_result_to_string(ClientResult::InternalError), "InternalError") == 0);
+}
+
+TEST(tcp_client_send_create_access_point_private_not_connected) {
+    TcpClient client;
+    CreateAccessPointPrivateRequest req{};
+    ClientResult r = client.send_create_access_point_private(req);
+    ASSERT_EQ(r, ClientResult::NotConnected);
+}
+
+TEST(tcp_client_send_connect_private_not_connected) {
+    TcpClient client;
+    ConnectPrivateRequest req{};
+    ClientResult r = client.send_connect_private(req);
+    ASSERT_EQ(r, ClientResult::NotConnected);
+}
+
 // =============================================================================
 // Main
 // =============================================================================

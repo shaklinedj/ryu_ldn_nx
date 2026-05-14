@@ -160,6 +160,9 @@ bool socket_is_initialized() {
 namespace {
 
 /**
+ * @brief Resolve hostname to IPv4 address
+
+/**
  * @brief Map POSIX errno to SocketResult
  *
  * This function translates standard errno values to our SocketResult enum,
@@ -175,6 +178,7 @@ namespace {
  * - EHOSTUNREACH -> HostUnreachable (routing failure)
  * - ETIMEDOUT -> Timeout (connection or operation timeout)
  */
+#ifndef TEST_BUILD
 SocketResult errno_to_result(int err) {
     // Non-blocking operation would block
     if (err == EAGAIN) return SocketResult::WouldBlock;
@@ -195,6 +199,7 @@ SocketResult errno_to_result(int err) {
     // Everything else is a generic socket error
     return SocketResult::SocketError;
 }
+#endif
 
 /**
  * @brief Resolve hostname to IPv4 address
@@ -883,3 +888,27 @@ SocketResult Socket::wait_ready(uint32_t timeout_ms, bool for_write) {
 }
 
 } // namespace ryu_ldn::network
+
+#ifdef TEST_BUILD
+// Expose errno_to_result for unit testing
+namespace ryu_ldn::network {
+
+SocketResult errno_to_result(int err) {
+    // Delegate to the anonymous namespace version by reimplementing
+    // (the anonymous version is not accessible here)
+    if (err == EAGAIN) return SocketResult::WouldBlock;
+#if EAGAIN != EWOULDBLOCK
+    if (err == EWOULDBLOCK) return SocketResult::WouldBlock;
+#endif
+    if (err == ECONNREFUSED) return SocketResult::ConnectionRefused;
+    if (err == ECONNRESET) return SocketResult::ConnectionReset;
+    if (err == EHOSTUNREACH || err == ENETUNREACH) return SocketResult::HostUnreachable;
+    if (err == ENETDOWN) return SocketResult::NetworkDown;
+    if (err == ENOTCONN) return SocketResult::NotConnected;
+    if (err == EISCONN) return SocketResult::AlreadyConnected;
+    if (err == ETIMEDOUT) return SocketResult::Timeout;
+    return SocketResult::SocketError;
+}
+
+} // namespace ryu_ldn::network
+#endif

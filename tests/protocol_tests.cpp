@@ -1443,6 +1443,752 @@ TEST(decode_with_data_no_extra) {
 }
 
 // ============================================================================
+// PacketBuffer Additional Coverage
+// ============================================================================
+
+TEST(buffer_initial_state) {
+    PacketBuffer<256> buf;
+    ASSERT_TRUE(buf.empty());
+    ASSERT_EQ(buf.size(), 0u);
+    ASSERT_EQ(buf.available(), 256u);
+}
+
+TEST(buffer_size_and_available_after_append) {
+    PacketBuffer<256> buf;
+    uint8_t data[10] = {};
+    buf.append(data, 10);
+    ASSERT_EQ(buf.size(), 10u);
+    ASSERT_EQ(buf.available(), 246u);
+    ASSERT_TRUE(!buf.empty());
+}
+
+TEST(buffer_data_ptr) {
+    PacketBuffer<256> buf;
+    ASSERT_TRUE(buf.data() != nullptr);
+    uint8_t data[5] = {1, 2, 3, 4, 5};
+    buf.append(data, 5);
+    ASSERT_EQ(buf.data()[0], 1);
+    ASSERT_EQ(buf.data()[4], 5);
+}
+
+TEST(buffer_append_zero_size) {
+    PacketBuffer<256> buf;
+    BufferResult r = buf.append(nullptr, 0);
+    ASSERT_EQ(r, BufferResult::Success);
+    ASSERT_EQ(buf.size(), 0u);
+}
+
+TEST(buffer_append_overflow) {
+    PacketBuffer<16> buf;
+    uint8_t data[20] = {};
+    BufferResult r = buf.append(data, 20);
+    ASSERT_EQ(r, BufferResult::BufferFull);
+}
+
+TEST(buffer_has_complete_packet_too_small) {
+    PacketBuffer<256> buf;
+    uint8_t hdr[4] = {};  // Only 4 bytes, need 12 for header
+    buf.append(hdr, 4);
+    ASSERT_TRUE(!buf.has_complete_packet());
+}
+
+TEST(buffer_peek_packet_info_incomplete) {
+    PacketBuffer<256> buf;
+    size_t pkt_size = 0;
+    BufferResult r = buf.peek_packet_info(pkt_size);
+    ASSERT_EQ(r, BufferResult::NoCompletePacket);
+    ASSERT_EQ(pkt_size, 0u);
+}
+
+TEST(buffer_peek_packet_info_invalid_magic) {
+    PacketBuffer<256> buf;
+    uint8_t garbage[12] = {};
+    buf.append(garbage, 12);
+    size_t pkt_size = 0;
+    BufferResult r = buf.peek_packet_info(pkt_size);
+    ASSERT_EQ(r, BufferResult::InvalidPacket);
+}
+
+TEST(buffer_peek_packet_info_valid) {
+    PacketBuffer<256> buf;
+    LdnHeader hdr{};
+    hdr.magic = PROTOCOL_MAGIC;
+    hdr.type = static_cast<uint8_t>(PacketId::Ping);
+    hdr.version = PROTOCOL_VERSION;
+    hdr.data_size = sizeof(PingMessage);
+    PingMessage ping{};
+    buf.append(reinterpret_cast<uint8_t*>(&hdr), sizeof(hdr));
+    buf.append(reinterpret_cast<uint8_t*>(&ping), sizeof(ping));
+    size_t pkt_size = 0;
+    BufferResult r = buf.peek_packet_info(pkt_size);
+    ASSERT_EQ(r, BufferResult::Success);
+    ASSERT_EQ(pkt_size, sizeof(LdnHeader) + sizeof(PingMessage));
+}
+
+TEST(buffer_peek_packet_nullptr) {
+    PacketBuffer<256> buf;
+    size_t pkt_size = 0;
+    const uint8_t* p = buf.peek_packet(pkt_size);
+    ASSERT_TRUE(p == nullptr);
+    ASSERT_EQ(pkt_size, 0u);
+}
+
+TEST(buffer_peek_packet_valid) {
+    PacketBuffer<256> buf;
+    LdnHeader hdr{};
+    hdr.magic = PROTOCOL_MAGIC;
+    hdr.type = static_cast<uint8_t>(PacketId::Ping);
+    hdr.version = PROTOCOL_VERSION;
+    hdr.data_size = 0;
+    buf.append(reinterpret_cast<uint8_t*>(&hdr), sizeof(hdr));
+    size_t pkt_size = 0;
+    const uint8_t* p = buf.peek_packet(pkt_size);
+    ASSERT_TRUE(p != nullptr);
+    ASSERT_EQ(pkt_size, sizeof(LdnHeader));
+}
+
+TEST(buffer_peek_packet_type) {
+    PacketBuffer<256> buf;
+    LdnHeader hdr{};
+    hdr.magic = PROTOCOL_MAGIC;
+    hdr.type = static_cast<uint8_t>(PacketId::Scan);
+    hdr.version = PROTOCOL_VERSION;
+    hdr.data_size = 0;
+    buf.append(reinterpret_cast<uint8_t*>(&hdr), sizeof(hdr));
+    PacketId t = buf.peek_packet_type();
+    ASSERT_EQ(t, PacketId::Scan);
+}
+
+TEST(buffer_peek_packet_type_empty) {
+    PacketBuffer<256> buf;
+    PacketId t = buf.peek_packet_type();
+    ASSERT_EQ(t, PacketId::Initialize);
+}
+
+TEST(buffer_consume_zero) {
+    PacketBuffer<256> buf;
+    uint8_t data[10] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
+    buf.append(data, 10);
+    buf.consume(0);
+    ASSERT_EQ(buf.size(), 10u);
+}
+
+TEST(buffer_consume_all) {
+    PacketBuffer<256> buf;
+    uint8_t data[10] = {};
+    buf.append(data, 10);
+    buf.consume(10);
+    ASSERT_EQ(buf.size(), 0u);
+    ASSERT_TRUE(buf.empty());
+}
+
+TEST(buffer_consume_partial_shift) {
+    PacketBuffer<256> buf;
+    uint8_t data[10] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
+    buf.append(data, 10);
+    buf.consume(3);
+    ASSERT_EQ(buf.size(), 7u);
+    ASSERT_EQ(buf.data()[0], 4);
+    ASSERT_EQ(buf.data()[6], 10);
+}
+
+TEST(buffer_extract_packet_success) {
+    PacketBuffer<256> buf;
+    LdnHeader hdr{};
+    hdr.magic = PROTOCOL_MAGIC;
+    hdr.type = static_cast<uint8_t>(PacketId::Ping);
+    hdr.version = PROTOCOL_VERSION;
+    hdr.data_size = 0;
+    buf.append(reinterpret_cast<uint8_t*>(&hdr), sizeof(hdr));
+
+    uint8_t out[64];
+    size_t pkt_size = 0;
+    BufferResult r = buf.extract_packet(out, sizeof(out), pkt_size);
+    ASSERT_EQ(r, BufferResult::Success);
+    ASSERT_EQ(pkt_size, sizeof(LdnHeader));
+    ASSERT_TRUE(buf.empty());
+}
+
+TEST(buffer_extract_packet_too_small) {
+    PacketBuffer<256> buf;
+    LdnHeader hdr{};
+    hdr.magic = PROTOCOL_MAGIC;
+    hdr.type = static_cast<uint8_t>(PacketId::Ping);
+    hdr.version = PROTOCOL_VERSION;
+    hdr.data_size = 0;
+    buf.append(reinterpret_cast<uint8_t*>(&hdr), sizeof(hdr));
+
+    uint8_t out[4];  // too small
+    size_t pkt_size = 0;
+    BufferResult r = buf.extract_packet(out, sizeof(out), pkt_size);
+    ASSERT_EQ(r, BufferResult::BufferFull);
+}
+
+TEST(buffer_discard_until_valid) {
+    PacketBuffer<256> buf;
+    // 3 garbage bytes + valid header
+    uint8_t garbage[3] = {0xFF, 0xFF, 0xFF};
+    buf.append(garbage, 3);
+
+    LdnHeader hdr{};
+    hdr.magic = PROTOCOL_MAGIC;
+    hdr.type = static_cast<uint8_t>(PacketId::Ping);
+    hdr.version = PROTOCOL_VERSION;
+    hdr.data_size = 0;
+    buf.append(reinterpret_cast<uint8_t*>(&hdr), sizeof(hdr));
+
+    size_t discarded = buf.discard_until_valid();
+    ASSERT_EQ(discarded, 3u);
+    ASSERT_TRUE(buf.has_complete_packet());
+}
+
+TEST(buffer_discard_until_valid_empty) {
+    PacketBuffer<256> buf;
+    size_t discarded = buf.discard_until_valid();
+    ASSERT_EQ(discarded, 0u);
+}
+
+TEST(buffer_write_ptr_and_advance) {
+    PacketBuffer<256> buf;
+    uint8_t* wptr = buf.write_ptr();
+    ASSERT_TRUE(wptr != nullptr);
+    // Write 4 bytes directly
+    LdnHeader hdr{};
+    hdr.magic = PROTOCOL_MAGIC;
+    hdr.type = static_cast<uint8_t>(PacketId::Ping);
+    hdr.version = PROTOCOL_VERSION;
+    hdr.data_size = 0;
+    std::memcpy(wptr, &hdr, sizeof(hdr));
+    buf.advance_write(sizeof(hdr));
+    ASSERT_EQ(buf.size(), sizeof(hdr));
+    ASSERT_TRUE(buf.has_complete_packet());
+}
+
+TEST(buffer_advance_write_overflow) {
+    PacketBuffer<16> buf;
+    buf.advance_write(20);  // exceeds capacity
+    ASSERT_EQ(buf.size(), 0u);  // should not advance
+}
+
+TEST(buffer_capacity) {
+    ASSERT_EQ(PacketBuffer<256>::capacity(), 256u);
+    ASSERT_EQ(PacketBuffer<512>::capacity(), 512u);
+}
+
+TEST(buffer_packet_too_large) {
+    PacketBuffer<256> buf;
+    // Create a header with data_size that exceeds buffer
+    LdnHeader hdr{};
+    hdr.magic = PROTOCOL_MAGIC;
+    hdr.type = static_cast<uint8_t>(PacketId::Ping);
+    hdr.version = PROTOCOL_VERSION;
+    hdr.data_size = 500000;  // way too large
+    buf.append(reinterpret_cast<uint8_t*>(&hdr), sizeof(hdr));
+    size_t pkt_size = 0;
+    BufferResult r = buf.peek_packet_info(pkt_size);
+    ASSERT_EQ(r, BufferResult::PacketTooLarge);
+}
+
+// ============================================================================
+// Protocol Encode/Decode Additional Coverage
+// ============================================================================
+
+TEST(encode_header_only_packet_types) {
+    uint8_t buffer[64];
+    size_t out_size = 0;
+    // ScanReplyEnd (no payload)
+    EncodeResult r = encode(buffer, sizeof(buffer), PacketId::ScanReplyEnd, out_size);
+    ASSERT_EQ(r, EncodeResult::Success);
+    ASSERT_EQ(out_size, sizeof(LdnHeader));
+
+    // RejectReply (no payload)
+    r = encode(buffer, sizeof(buffer), PacketId::RejectReply, out_size);
+    ASSERT_EQ(r, EncodeResult::Success);
+
+    // NetworkError (no payload)
+    r = encode(buffer, sizeof(buffer), PacketId::NetworkError, out_size);
+    ASSERT_EQ(r, EncodeResult::Success);
+}
+
+TEST(encode_header_too_small) {
+    uint8_t buffer[4];
+    size_t out_size = 99;
+    EncodeResult r = encode(buffer, sizeof(buffer), PacketId::Ping, out_size);
+    ASSERT_EQ(r, EncodeResult::BufferTooSmall);
+    ASSERT_EQ(out_size, 0u);
+}
+
+TEST(encode_with_data_buffer_too_small) {
+    uint8_t buffer[8];
+    PingMessage msg{};
+    size_t out_size = 99;
+    EncodeResult r = encode_with_data(buffer, sizeof(buffer), PacketId::Ping, msg, nullptr, 0, out_size);
+    ASSERT_EQ(r, EncodeResult::BufferTooSmall);
+    ASSERT_EQ(out_size, 0u);
+}
+
+TEST(encode_with_data_with_extra) {
+    uint8_t buffer[256];
+    PingMessage msg{};
+    uint8_t extra[10] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
+    size_t out_size = 0;
+    EncodeResult r = encode_with_data(buffer, sizeof(buffer), PacketId::Ping, msg, extra, sizeof(extra), out_size);
+    ASSERT_EQ(r, EncodeResult::Success);
+    ASSERT_EQ(out_size, sizeof(LdnHeader) + sizeof(PingMessage) + sizeof(extra));
+}
+
+TEST(encode_with_data_null_extra) {
+    uint8_t buffer[256];
+    PingMessage msg{};
+    size_t out_size = 0;
+    EncodeResult r = encode_with_data(buffer, sizeof(buffer), PacketId::Ping, msg, nullptr, 0, out_size);
+    ASSERT_EQ(r, EncodeResult::Success);
+}
+
+TEST(encode_raw_null_data_zero_size) {
+    uint8_t buffer[64];
+    size_t out_size = 0;
+    EncodeResult r = encode_raw(buffer, sizeof(buffer), PacketId::SetAdvertiseData, nullptr, 0, out_size);
+    ASSERT_EQ(r, EncodeResult::Success);
+    ASSERT_EQ(out_size, sizeof(LdnHeader));
+}
+
+TEST(encode_raw_buffer_too_small) {
+    uint8_t buffer[4];
+    uint8_t data[10] = {};
+    size_t out_size = 99;
+    EncodeResult r = encode_raw(buffer, sizeof(buffer), PacketId::ProxyData, data, sizeof(data), out_size);
+    ASSERT_EQ(r, EncodeResult::BufferTooSmall);
+    ASSERT_EQ(out_size, 0u);
+}
+
+TEST(encode_raw_with_data) {
+    uint8_t buffer[256];
+    uint8_t data[10] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
+    size_t out_size = 0;
+    EncodeResult r = encode_raw(buffer, sizeof(buffer), PacketId::ProxyData, data, sizeof(data), out_size);
+    ASSERT_EQ(r, EncodeResult::Success);
+    ASSERT_EQ(out_size, sizeof(LdnHeader) + sizeof(data));
+
+    // Verify data
+    ASSERT_EQ(std::memcmp(buffer + sizeof(LdnHeader), data, sizeof(data)), 0);
+}
+
+TEST(encode_convenience_functions) {
+    uint8_t buffer[2048];
+    size_t out_size = 0;
+    SessionId id{};
+    MacAddress mac{};
+    EncodeResult r;
+
+    r = encode_initialize(buffer, sizeof(buffer), id, mac, out_size);
+    ASSERT_EQ(r, EncodeResult::Success);
+    ASSERT_EQ(out_size, sizeof(LdnHeader) + sizeof(InitializeMessage));
+
+    r = encode_passphrase(buffer, sizeof(buffer), reinterpret_cast<const uint8_t*>("test"), 4, out_size);
+    ASSERT_EQ(r, EncodeResult::Success);
+
+    r = encode_passphrase(buffer, sizeof(buffer), nullptr, 0, out_size);
+    ASSERT_EQ(r, EncodeResult::Success);
+
+    r = encode_ping(buffer, sizeof(buffer), 1, 42, out_size);
+    ASSERT_EQ(r, EncodeResult::Success);
+
+    r = encode_disconnect(buffer, sizeof(buffer), 0xABCD1234, out_size);
+    ASSERT_EQ(r, EncodeResult::Success);
+
+    ScanFilterFull filter{};
+    r = encode_scan(buffer, sizeof(buffer), filter, out_size);
+    ASSERT_EQ(r, EncodeResult::Success);
+
+    ConnectRequest conn_req2{};
+    r = encode_connect(buffer, sizeof(buffer), conn_req2, out_size);
+    ASSERT_EQ(r, EncodeResult::Success);
+
+    CreateAccessPointRequest cap_req{};
+    uint8_t adv[16] = {};
+    r = encode_create_access_point(buffer, sizeof(buffer), cap_req, adv, sizeof(adv), out_size);
+    ASSERT_EQ(r, EncodeResult::Success);
+
+    r = encode_create_access_point(buffer, sizeof(buffer), cap_req, nullptr, 0, out_size);
+    ASSERT_EQ(r, EncodeResult::Success);
+
+    r = encode_set_accept_policy(buffer, sizeof(buffer), AcceptPolicy::RejectAll, out_size);
+    ASSERT_EQ(r, EncodeResult::Success);
+
+    r = encode_set_advertise_data(buffer, sizeof(buffer), adv, sizeof(adv), out_size);
+    ASSERT_EQ(r, EncodeResult::Success);
+
+    ProxyInfo info{};
+    r = encode_proxy_data(buffer, sizeof(buffer), info, adv, sizeof(adv), out_size);
+    ASSERT_EQ(r, EncodeResult::Success);
+}
+
+TEST(decode_header_buffer_too_small) {
+    uint8_t buffer[4] = {};
+    LdnHeader hdr;
+    DecodeResult r = decode_header(buffer, sizeof(buffer), hdr);
+    ASSERT_EQ(r, DecodeResult::BufferTooSmall);
+}
+
+TEST(decode_header_invalid_magic) {
+    uint8_t buffer[12] = {};
+    LdnHeader hdr{};
+    hdr.magic = 0xDEADBEEF;  // invalid
+    hdr.version = PROTOCOL_VERSION;
+    hdr.type = 1;
+    hdr.data_size = 0;
+    std::memcpy(buffer, &hdr, sizeof(hdr));
+    LdnHeader decoded;
+    DecodeResult r = decode_header(buffer, sizeof(buffer), decoded);
+    ASSERT_EQ(r, DecodeResult::InvalidMagic);
+}
+
+TEST(decode_header_invalid_version) {
+    uint8_t buffer[12] = {};
+    LdnHeader hdr{};
+    hdr.magic = PROTOCOL_MAGIC;
+    hdr.version = 99;  // invalid
+    hdr.type = 1;
+    hdr.data_size = 0;
+    std::memcpy(buffer, &hdr, sizeof(hdr));
+    LdnHeader decoded;
+    DecodeResult r = decode_header(buffer, sizeof(buffer), decoded);
+    ASSERT_EQ(r, DecodeResult::InvalidVersion);
+}
+
+TEST(decode_header_negative_data_size) {
+    uint8_t buffer[12] = {};
+    LdnHeader hdr{};
+    hdr.magic = PROTOCOL_MAGIC;
+    hdr.version = PROTOCOL_VERSION;
+    hdr.type = 1;
+    hdr.data_size = -1;  // negative
+    std::memcpy(buffer, &hdr, sizeof(hdr));
+    LdnHeader decoded;
+    DecodeResult r = decode_header(buffer, sizeof(buffer), decoded);
+    ASSERT_EQ(r, DecodeResult::PacketTooLarge);
+}
+
+TEST(check_complete_packet_buffer_too_small) {
+    uint8_t buffer[4] = {};
+    size_t pkt_size = 0;
+    DecodeResult r = check_complete_packet(buffer, sizeof(buffer), pkt_size);
+    ASSERT_EQ(r, DecodeResult::BufferTooSmall);
+}
+
+TEST(get_packet_type_from_buffer) {
+    uint8_t buffer[64];
+    LdnHeader hdr{};
+    hdr.magic = PROTOCOL_MAGIC;
+    hdr.type = static_cast<uint8_t>(PacketId::Connected);
+    hdr.version = PROTOCOL_VERSION;
+    hdr.data_size = 0;
+    std::memcpy(buffer, &hdr, sizeof(hdr));
+    PacketId t = get_packet_type(buffer);
+    ASSERT_EQ(t, PacketId::Connected);
+}
+
+TEST(get_payload_size_from_buffer) {
+    uint8_t buffer[64];
+    LdnHeader hdr{};
+    hdr.magic = PROTOCOL_MAGIC;
+    hdr.type = 1;
+    hdr.version = PROTOCOL_VERSION;
+    hdr.data_size = 42;
+    std::memcpy(buffer, &hdr, sizeof(hdr));
+    int32_t sz = get_payload_size(buffer);
+    ASSERT_EQ(sz, 42);
+}
+
+TEST(get_payload_ptr_offset) {
+    uint8_t buffer[64] = {};
+    const uint8_t* p = get_payload_ptr(buffer);
+    ASSERT_TRUE(p == buffer + sizeof(LdnHeader));
+}
+
+TEST(decode_convenience_functions) {
+    uint8_t buffer[2048];
+    size_t out_size = 0;
+
+    // Initialize round-trip
+    SessionId id{};
+    MacAddress mac{};
+    encode_initialize(buffer, sizeof(buffer), id, mac, out_size);
+    LdnHeader hdr;
+    InitializeMessage init_msg;
+    DecodeResult r = decode_initialize(buffer, out_size, hdr, init_msg);
+    ASSERT_EQ(r, DecodeResult::Success);
+
+    // Passphrase round-trip
+    PassphraseMessage pass_msg{};
+    encode(buffer, sizeof(buffer), PacketId::Passphrase, pass_msg, out_size);
+    PassphraseMessage dec_pass;
+    r = decode_passphrase(buffer, out_size, hdr, dec_pass);
+    ASSERT_EQ(r, DecodeResult::Success);
+
+    // Ping round-trip
+    PingMessage ping{};
+    ping.requester = 1;
+    ping.id = 42;
+    encode(buffer, sizeof(buffer), PacketId::Ping, ping, out_size);
+    PingMessage dec_ping;
+    r = decode_ping(buffer, out_size, hdr, dec_ping);
+    ASSERT_EQ(r, DecodeResult::Success);
+    ASSERT_EQ(dec_ping.requester, 1);
+    ASSERT_EQ(dec_ping.id, 42);
+
+    // Disconnect round-trip
+    DisconnectMessage disc{};
+    disc.disconnect_ip = 0x0A720001;
+    encode(buffer, sizeof(buffer), PacketId::Disconnect, disc, out_size);
+    DisconnectMessage dec_disc;
+    r = decode_disconnect(buffer, out_size, hdr, dec_disc);
+    ASSERT_EQ(r, DecodeResult::Success);
+    ASSERT_EQ(dec_disc.disconnect_ip, 0x0A720001u);
+
+    // NetworkInfo round-trip
+    NetworkInfo net_info{};
+    encode_network_info(buffer, sizeof(buffer), PacketId::Connected, net_info, out_size);
+    NetworkInfo dec_net;
+    r = decode_network_info(buffer, out_size, hdr, dec_net);
+    ASSERT_EQ(r, DecodeResult::Success);
+    ASSERT_EQ(hdr.type, static_cast<uint8_t>(PacketId::Connected));
+
+    // Scan round-trip
+    ScanFilterFull scan_filter{};
+    encode_scan(buffer, sizeof(buffer), scan_filter, out_size);
+    ScanFilterFull dec_scan;
+    r = decode_scan(buffer, out_size, hdr, dec_scan);
+    ASSERT_EQ(r, DecodeResult::Success);
+
+    // Connect round-trip
+    ConnectRequest conn_req{};
+    encode_connect(buffer, sizeof(buffer), conn_req, out_size);
+    ConnectRequest dec_conn;
+    r = decode_connect(buffer, out_size, hdr, dec_conn);
+    ASSERT_EQ(r, DecodeResult::Success);
+
+    // CreateAccessPoint round-trip with extra data
+    CreateAccessPointRequest cap_req{};
+    uint8_t adv[16] = {};
+    encode_create_access_point(buffer, sizeof(buffer), cap_req, adv, sizeof(adv), out_size);
+    CreateAccessPointRequest dec_cap;
+    const uint8_t* dec_adv;
+    size_t dec_adv_size;
+    r = decode_create_access_point(buffer, out_size, hdr, dec_cap, dec_adv, dec_adv_size);
+    ASSERT_EQ(r, DecodeResult::Success);
+    ASSERT_EQ(dec_adv_size, sizeof(adv));
+
+    // SetAcceptPolicy round-trip
+    SetAcceptPolicyRequest sap_req{};
+    encode(buffer, sizeof(buffer), PacketId::SetAcceptPolicy, sap_req, out_size);
+    SetAcceptPolicyRequest dec_sap;
+    r = decode_set_accept_policy(buffer, out_size, hdr, dec_sap);
+    ASSERT_EQ(r, DecodeResult::Success);
+
+    // SetAdvertiseData round-trip
+    uint8_t adv_data[32] = {};
+    encode_set_advertise_data(buffer, sizeof(buffer), adv_data, sizeof(adv_data), out_size);
+    const uint8_t* dec_adv_data;
+    size_t dec_adv_data_size;
+    r = decode_set_advertise_data(buffer, out_size, hdr, dec_adv_data, dec_adv_data_size);
+    ASSERT_EQ(r, DecodeResult::Success);
+    ASSERT_EQ(dec_adv_data_size, sizeof(adv_data));
+
+    // ProxyData round-trip
+    ProxyDataHeader proxy_hdr{};
+    proxy_hdr.data_length = sizeof(adv);
+    encode_proxy_data(buffer, sizeof(buffer), proxy_hdr.info, adv, sizeof(adv), out_size);
+    ProxyDataHeader dec_proxy_hdr;
+    const uint8_t* dec_proxy_data;
+    size_t dec_proxy_data_size;
+    r = decode_proxy_data(buffer, out_size, hdr, dec_proxy_hdr, dec_proxy_data, dec_proxy_data_size);
+    ASSERT_EQ(r, DecodeResult::Success);
+
+    // ProxyConnect round-trip
+    ProxyConnectRequest pc_req{};
+    encode(buffer, sizeof(buffer), PacketId::ProxyConnect, pc_req, out_size);
+    ProxyConnectRequest dec_pc;
+    r = decode_proxy_connect(buffer, out_size, hdr, dec_pc);
+    ASSERT_EQ(r, DecodeResult::Success);
+
+    // ProxyConnectReply round-trip
+    ProxyConnectResponse pc_resp{};
+    encode(buffer, sizeof(buffer), PacketId::ProxyConnectReply, pc_resp, out_size);
+    ProxyConnectResponse dec_pc_resp;
+    r = decode_proxy_connect_reply(buffer, out_size, hdr, dec_pc_resp);
+    ASSERT_EQ(r, DecodeResult::Success);
+
+    // ProxyDisconnect round-trip
+    ProxyDisconnectMessage pd_msg{};
+    encode(buffer, sizeof(buffer), PacketId::ProxyDisconnect, pd_msg, out_size);
+    ProxyDisconnectMessage dec_pd;
+    r = decode_proxy_disconnect(buffer, out_size, hdr, dec_pd);
+    ASSERT_EQ(r, DecodeResult::Success);
+
+    // Reject round-trip
+    RejectRequest rej_req{};
+    encode(buffer, sizeof(buffer), PacketId::Reject, rej_req, out_size);
+    RejectRequest dec_rej;
+    r = decode_reject(buffer, out_size, hdr, dec_rej);
+    ASSERT_EQ(r, DecodeResult::Success);
+}
+
+TEST(decode_with_data_buffer_too_small) {
+    // Use ConnectRequest (0x274 bytes) so that sizeof(LdnHeader) + sizeof(ConnectRequest)
+    // exceeds a small buffer
+    uint8_t buffer[64] = {};
+    LdnHeader hdr{};
+    hdr.magic = PROTOCOL_MAGIC;
+    hdr.version = PROTOCOL_VERSION;
+    hdr.type = static_cast<uint8_t>(PacketId::Connect);
+    hdr.data_size = sizeof(ConnectRequest);
+    std::memcpy(buffer, &hdr, sizeof(hdr));
+
+    LdnHeader dec_hdr;
+    ConnectRequest msg;
+    const uint8_t* extra;
+    size_t extra_size;
+    // Buffer has 64 bytes but needs sizeof(LdnHeader) + sizeof(ConnectRequest) = 12 + 636 = 648
+    DecodeResult r = decode_with_data(buffer, sizeof(buffer), dec_hdr, msg, extra, extra_size);
+    ASSERT_EQ(r, DecodeResult::BufferTooSmall);
+    ASSERT_TRUE(extra == nullptr);
+    ASSERT_EQ(extra_size, 0u);
+}
+
+TEST(decode_with_data_incomplete_extra) {
+    uint8_t buffer[256] = {};
+    LdnHeader hdr{};
+    hdr.magic = PROTOCOL_MAGIC;
+    hdr.version = PROTOCOL_VERSION;
+    hdr.type = static_cast<uint8_t>(PacketId::ProxyData);
+    hdr.data_size = sizeof(PingMessage) + 100;
+    std::memcpy(buffer, &hdr, sizeof(hdr));
+    PingMessage ping{};
+    std::memcpy(buffer + sizeof(hdr), &ping, sizeof(ping));
+
+    LdnHeader dec_hdr;
+    PingMessage dec_msg;
+    const uint8_t* extra;
+    size_t extra_size;
+    // Buffer only has header+struct, not the extra data
+    DecodeResult r = decode_with_data(buffer, sizeof(hdr) + sizeof(ping), dec_hdr, dec_msg, extra, extra_size);
+    ASSERT_EQ(r, DecodeResult::IncompletePacket);
+    ASSERT_TRUE(extra == nullptr);
+    ASSERT_EQ(extra_size, 0u);
+}
+
+TEST(decode_with_data_invalid_header) {
+    uint8_t buffer[256] = {};
+    LdnHeader dec_hdr;
+    PingMessage msg;
+    const uint8_t* extra;
+    size_t extra_size;
+    DecodeResult r = decode_with_data(buffer, sizeof(buffer), dec_hdr, msg, extra, extra_size);
+    ASSERT_TRUE(r != DecodeResult::Success);
+    ASSERT_TRUE(extra == nullptr);
+    ASSERT_EQ(extra_size, 0u);
+}
+
+TEST(decode_raw_zero_payload) {
+    uint8_t buffer[64] = {};
+    LdnHeader hdr{};
+    hdr.magic = PROTOCOL_MAGIC;
+    hdr.version = PROTOCOL_VERSION;
+    hdr.type = 1;
+    hdr.data_size = 0;
+    std::memcpy(buffer, &hdr, sizeof(hdr));
+    LdnHeader dec_hdr;
+    const uint8_t* data;
+    size_t data_size;
+    DecodeResult r = decode_raw(buffer, sizeof(hdr), dec_hdr, data, data_size);
+    ASSERT_EQ(r, DecodeResult::Success);
+    ASSERT_TRUE(data == nullptr);
+    ASSERT_EQ(data_size, 0u);
+}
+
+TEST(decode_raw_invalid_header) {
+    uint8_t buffer[64] = {};
+    LdnHeader dec_hdr;
+    const uint8_t* data;
+    size_t data_size;
+    DecodeResult r = decode_raw(buffer, sizeof(buffer), dec_hdr, data, data_size);
+    ASSERT_TRUE(r != DecodeResult::Success);
+    ASSERT_TRUE(data == nullptr);
+    ASSERT_EQ(data_size, 0u);
+}
+
+TEST(decode_raw_incomplete) {
+    uint8_t buffer[256] = {};
+    LdnHeader hdr{};
+    hdr.magic = PROTOCOL_MAGIC;
+    hdr.version = PROTOCOL_VERSION;
+    hdr.type = 1;
+    hdr.data_size = 50;
+    std::memcpy(buffer, &hdr, sizeof(hdr));
+    LdnHeader dec_hdr;
+    const uint8_t* data;
+    size_t data_size;
+    // Only provide header, not payload
+    DecodeResult r = decode_raw(buffer, sizeof(hdr), dec_hdr, data, data_size);
+    ASSERT_EQ(r, DecodeResult::IncompletePacket);
+    ASSERT_TRUE(data == nullptr);
+    ASSERT_EQ(data_size, 0u);
+}
+
+TEST(decode_struct_buffer_too_small) {
+    // Use ConnectRequest (0x274 bytes) which exceeds small buffer
+    uint8_t buffer[64] = {};
+    LdnHeader hdr{};
+    hdr.magic = PROTOCOL_MAGIC;
+    hdr.version = PROTOCOL_VERSION;
+    hdr.type = static_cast<uint8_t>(PacketId::Connect);
+    hdr.data_size = sizeof(ConnectRequest);
+    std::memcpy(buffer, &hdr, sizeof(hdr));
+
+    LdnHeader dec_hdr;
+    ConnectRequest msg;
+    DecodeResult r = decode(buffer, sizeof(buffer), dec_hdr, msg);
+    ASSERT_EQ(r, DecodeResult::BufferTooSmall);
+}
+
+TEST(result_to_string_all_values) {
+    // BufferResult
+    ASSERT_TRUE(strcmp(buffer_result_to_string(BufferResult::Success), "Success") == 0);
+    ASSERT_TRUE(strcmp(buffer_result_to_string(BufferResult::BufferFull), "BufferFull") == 0);
+    ASSERT_TRUE(strcmp(buffer_result_to_string(BufferResult::NoCompletePacket), "NoCompletePacket") == 0);
+    ASSERT_TRUE(strcmp(buffer_result_to_string(BufferResult::PacketTooLarge), "PacketTooLarge") == 0);
+    ASSERT_TRUE(strcmp(buffer_result_to_string(BufferResult::InvalidPacket), "InvalidPacket") == 0);
+
+    // DecodeResult
+    ASSERT_TRUE(strcmp(decode_result_to_string(DecodeResult::Success), "Success") == 0);
+    ASSERT_TRUE(strcmp(decode_result_to_string(DecodeResult::BufferTooSmall), "BufferTooSmall") == 0);
+    ASSERT_TRUE(strcmp(decode_result_to_string(DecodeResult::InvalidMagic), "InvalidMagic") == 0);
+    ASSERT_TRUE(strcmp(decode_result_to_string(DecodeResult::InvalidVersion), "InvalidVersion") == 0);
+    ASSERT_TRUE(strcmp(decode_result_to_string(DecodeResult::PacketTooLarge), "PacketTooLarge") == 0);
+    ASSERT_TRUE(strcmp(decode_result_to_string(DecodeResult::IncompletePacket), "IncompletePacket") == 0);
+
+    // EncodeResult
+    ASSERT_TRUE(strcmp(encode_result_to_string(EncodeResult::Success), "Success") == 0);
+    ASSERT_TRUE(strcmp(encode_result_to_string(EncodeResult::BufferTooSmall), "BufferTooSmall") == 0);
+    ASSERT_TRUE(strcmp(encode_result_to_string(EncodeResult::InvalidPacketId), "InvalidPacketId") == 0);
+
+    // PacketId
+    ASSERT_TRUE(strcmp(packet_id_to_string(PacketId::Initialize), "Initialize") == 0);
+    ASSERT_TRUE(strcmp(packet_id_to_string(PacketId::Connected), "Connected") == 0);
+    ASSERT_TRUE(strcmp(packet_id_to_string(PacketId::ProxyData), "ProxyData") == 0);
+    ASSERT_TRUE(strcmp(packet_id_to_string(PacketId::NetworkError), "NetworkError") == 0);
+}
+
+TEST(has_header_threshold) {
+    ASSERT_TRUE(has_header(12));
+    ASSERT_TRUE(has_header(100));
+    ASSERT_TRUE(!has_header(11));
+    ASSERT_TRUE(!has_header(0));
+}
+
+// ============================================================================
 // Main
 // ============================================================================
 

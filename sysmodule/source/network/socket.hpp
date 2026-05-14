@@ -228,6 +228,17 @@ bool socket_is_initialized();
 // ============================================================================
 
 /**
+ * @brief Convert errno to SocketResult (for testing)
+ *
+ * Maps POSIX errno codes to SocketResult values.
+ * @param err errno value
+ * @return Corresponding SocketResult
+ */
+#ifdef TEST_BUILD
+SocketResult errno_to_result(int err);
+#endif
+
+/**
  * @brief Convert SocketResult to string for debugging
  */
 inline const char* socket_result_to_string(SocketResult result) {

@@ -25,6 +25,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
+#include <cerrno>
 #include <vector>
 #include <functional>
 
@@ -821,6 +822,23 @@ TEST(result_to_string_all_values) {
     ASSERT_TRUE(std::strcmp(socket_result_to_string(SocketResult::Closed), "Closed") == 0);
     // Unknown value
     ASSERT_TRUE(std::strcmp(socket_result_to_string(static_cast<SocketResult>(99)), "Unknown") == 0);
+}
+
+TEST(errno_to_result_all_mappings) {
+    ASSERT_EQ(errno_to_result(EAGAIN), SocketResult::WouldBlock);
+#if EAGAIN != EWOULDBLOCK
+    ASSERT_EQ(errno_to_result(EWOULDBLOCK), SocketResult::WouldBlock);
+#endif
+    ASSERT_EQ(errno_to_result(ECONNREFUSED), SocketResult::ConnectionRefused);
+    ASSERT_EQ(errno_to_result(ECONNRESET), SocketResult::ConnectionReset);
+    ASSERT_EQ(errno_to_result(EHOSTUNREACH), SocketResult::HostUnreachable);
+    ASSERT_EQ(errno_to_result(ENETUNREACH), SocketResult::HostUnreachable);
+    ASSERT_EQ(errno_to_result(ENETDOWN), SocketResult::NetworkDown);
+    ASSERT_EQ(errno_to_result(ENOTCONN), SocketResult::NotConnected);
+    ASSERT_EQ(errno_to_result(EISCONN), SocketResult::AlreadyConnected);
+    ASSERT_EQ(errno_to_result(ETIMEDOUT), SocketResult::Timeout);
+    ASSERT_EQ(errno_to_result(999), SocketResult::SocketError);
+    ASSERT_EQ(errno_to_result(0), SocketResult::SocketError);
 }
 
 // =============================================================================
