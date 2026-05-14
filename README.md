@@ -1,6 +1,7 @@
 # ryu_ldn_nx
 
 [![Build Status](https://github.com/Ethiquema/ryu_ldn_nx/actions/workflows/build.yml/badge.svg)](https://github.com/Ethiquema/ryu_ldn_nx/actions)
+[![Coverage](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/Pikatsuto/4277995494c6874ebb238bdbc499d9d0/raw/coverage.json)](https://github.com/Ethiquema/ryu_ldn_nx/actions)
 [![License: GPL v2](https://img.shields.io/badge/License-GPLv2-blue.svg)](https://www.gnu.org/licenses/gpl-2.0)
 
 Nintendo Switch sysmodule enabling online multiplayer via Ryujinx LDN servers — no complex network setup required.

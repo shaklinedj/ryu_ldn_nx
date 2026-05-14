@@ -55,6 +55,40 @@ jobs:
       - name: Enforce per-file coverage ≥ 80%
         run: python3 scripts/check-coverage.py --min 80 --root .
 
+      - name: Compute average coverage
+        id: coverage
+        run: |
+          python3 scripts/check-coverage.py --min 0 --root . --json /tmp/cov.json || true
+          AVG=$(python3 -c "
+          import json
+          with open('/tmp/cov.json') as f:
+              d = json.load(f)
+          files = [f for f in d.get('files', []) if 'sysmodule/source/' in (f.get('file', f.get('filename', '')))]
+          total_lines = 0
+          total_covered = 0
+          for f in files:
+              lines = f.get('lines', [])
+              if isinstance(lines, list):
+                  total_lines += len(lines)
+                  total_covered += sum(1 for l in lines if l.get('count', 0) > 0)
+          avg = (total_covered / total_lines * 100) if total_lines > 0 else 0
+          print(f'{avg:.1f}')
+          ")
+          echo "percent=$AVG" >> $GITHUB_OUTPUT
+
+      - name: Update coverage badge
+        if: github.event_name == 'push'
+        uses: schneegans/dynamic-badges-action@v1.7.0
+        with:
+          auth: ${{ secrets.GIST_BADGE_SECRET }}
+          gistID: 4277995494c6874ebb238bdbc499d9d0
+          filename: coverage.json
+          label: coverage
+          message: ${{ steps.coverage.outputs.percent }}%
+          valColorRange: ${{ steps.coverage.outputs.percent }}
+          maxColorRange: 100
+          minColorRange: 0
+
   build:
     name: Build & Package
     runs-on: ubuntu-latest

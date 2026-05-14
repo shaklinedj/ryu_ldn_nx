@@ -46,6 +46,8 @@ def main():
                         help="Minimum coverage percentage (default: 80)")
     parser.add_argument("--root", default=".",
                         help="Project root directory (default: .)")
+    parser.add_argument("--json", dest="json_output", default=None,
+                        help="Write raw gcovr JSON to this file path")
     args = parser.parse_args()
 
     cmd = [
@@ -66,6 +68,10 @@ def main():
     except json.JSONDecodeError:
         print("ERROR: could not parse gcovr JSON output", file=sys.stderr)
         sys.exit(2)
+
+    if args.json_output:
+        with open(args.json_output, "w") as f:
+            json.dump(data, f, indent=2)
 
     failed = False
     files_checked = 0
