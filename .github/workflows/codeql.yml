@@ -18,6 +18,10 @@ jobs:
   analyze:
     name: CodeQL Analysis
     runs-on: ubuntu-latest
+    # Run the whole job in the official devkitPro image so host gcc AND
+    # devkitA64 cross-compile are both traced by CodeQL in the same process
+    # tree. Avoids apt.devkitpro.org / pkg.devkitpro.org (Cloudflare-blocked).
+    container: devkitpro/devkita64:latest
     timeout-minutes: 60
 
     strategy:
@@ -31,9 +35,6 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install host build dependencies
-        run: sudo apt-get update && sudo apt-get install -y g++ make python3-pip
-
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:
@@ -42,38 +43,6 @@ jobs:
 
       - name: Build host tests (CodeQL tracing)
         run: cd tests && make clean && make COVERAGE=1 test
-
-      - name: Install devkitPro (native) for cross-compilation
-        run: |
-          if command -v dkp-pacman &>/dev/null; then
-            echo "devkitPro already installed, skipping"
-            exit 0
-          fi
-          sudo dpkg --configure -a
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends wget
-          # devkitPro stopped shipping a Linux .deb on GitHub Releases and
-          # apt.devkitpro.org is blocked by Cloudflare bot protection from CI.
-          # Pin to the 6.0.1 .deb hosted on a community mirror, verified by
-          # SHA-256. The older 1.0.2 .deb depends on libssl1.1 which is gone
-          # from Ubuntu 24.04. dkp-pacman -Syyu works because Cloudflare lets
-          # the pacman client User-Agent through.
-          DKP_DEB_URL=https://wii.leseratte10.de/devkitPro/pacman/apt/devkitpro-pacman_6.0.1-2_amd64.deb
-          DKP_DEB_SHA256=88f4ec80e0d68615c7a40713ffe591b3ebac4ad5e5e944b2be88b3726cf4a97a
-          wget -O /tmp/devkitpro-pacman.deb "$DKP_DEB_URL"
-          echo "$DKP_DEB_SHA256  /tmp/devkitpro-pacman.deb" | sha256sum -c -
-          sudo apt-get install -y /tmp/devkitpro-pacman.deb
-          # The .deb post-install already runs `pacman -Syyu` once. Running it
-          # again triggers Cloudflare throttling on pkg.devkitpro.org, so just
-          # install the packages directly using the freshly synced DB.
-          sudo dkp-pacman -S --needed --noconfirm \
-            switch-dev \
-            libnx \
-            switch-curl \
-            switch-zlib \
-            switch-mbedtls \
-            switch-miniupnpc \
-            devkitA64-gdb
 
       - name: Build sysmodule (cross-compiled, tracked by CodeQL)
         env:
