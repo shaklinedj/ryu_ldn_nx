@@ -45,12 +45,13 @@ jobs:
 
       - name: Install devkitPro (native) for cross-compilation
         run: |
-          sudo dkp-pacman --version 2>/dev/null && exit 0
-          # Install devkitPro pacman repository
+          if command -v dkp-pacman &>/dev/null; then
+            echo "devkitPro already installed, skipping"
+            exit 0
+          fi
           sudo apt-get install -y wget
           wget -qO /tmp/devkitpro-pacman.deb https://github.com/devkitPro/pacman/releases/latest/download/devkitpro-pacman.deb
           sudo dpkg -i /tmp/devkitpro-pacman.deb
-          # Update repos and install Switch toolchain + libs
           sudo dkp-pacman -Syyu --noconfirm
           sudo dkp-pacman -S --noconfirm \
             switch-dev \
