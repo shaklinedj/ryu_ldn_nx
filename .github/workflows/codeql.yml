@@ -18,7 +18,7 @@ jobs:
   analyze:
     name: CodeQL Analysis
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
 
     strategy:
       fail-fast: false
@@ -31,14 +31,47 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Install host build dependencies
+        run: sudo apt-get update && sudo apt-get install -y g++ make python3-pip
+
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
           config-file: .github/codeql-config.yml
 
-      - name: Build
-        run: docker compose run --rm build
+      - name: Build host tests (CodeQL tracing)
+        run: cd tests && make clean && make COVERAGE=1 test
+
+      - name: Install devkitPro (native) for cross-compilation
+        run: |
+          sudo dkp-pacman --version 2>/dev/null && exit 0
+          # Install devkitPro pacman repository
+          sudo apt-get install -y wget
+          wget -qO /tmp/devkitpro-pacman.deb https://github.com/devkitPro/pacman/releases/latest/download/devkitpro-pacman.deb
+          sudo dpkg -i /tmp/devkitpro-pacman.deb
+          # Update repos and install Switch toolchain + libs
+          sudo dkp-pacman -Syyu --noconfirm
+          sudo dkp-pacman -S --noconfirm \
+            switch-dev \
+            libnx \
+            switch-curl \
+            switch-zlib \
+            switch-mbedtls \
+            switch-miniupnpc \
+            devkitA64-gdb
+
+      - name: Build sysmodule (cross-compiled, tracked by CodeQL)
+        env:
+          DEVKITPRO: /opt/devkitpro
+        run: |
+          export DEVKITPRO=/opt/devkitpro
+          export DEVKITARM=$DEVKITPRO/devkitARM
+          export DEVKITA64=$DEVKITPRO/devkitA64
+          export PATH=$DEVKITPRO/tools/bin:$DEVKITA64/bin:$PATH
+          cd sysmodule/Atmosphere-libs/libstratosphere && make -j4 nx_release
+          cd ../../..
+          cd sysmodule && make -j4 all
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4
