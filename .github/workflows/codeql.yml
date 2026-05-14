@@ -22,7 +22,9 @@ jobs:
     # devkitA64 cross-compile are both traced by CodeQL in the same process
     # tree. Avoids apt.devkitpro.org / pkg.devkitpro.org (Cloudflare-blocked).
     container: devkitpro/devkita64:latest
-    timeout-minutes: 60
+    # CodeQL's LD_PRELOAD tracer adds significant per-compile-unit overhead.
+    # Sysmodule + libstratosphere with LTO needs >60 min under tracing.
+    timeout-minutes: 180
 
     strategy:
       fail-fast: false
