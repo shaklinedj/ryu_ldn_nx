@@ -24,7 +24,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-pip \
     doxygen \
     graphviz \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && pip3 install --break-system-packages gcovr
 
 # Install Switch development libraries via dkp-pacman
 RUN dkp-pacman -Syyu --noconfirm && \

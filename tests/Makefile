@@ -95,7 +95,7 @@ TARGET_ALL := run_all_tests
 #---------------------------------------------------------------------------------
 # Build rules
 #---------------------------------------------------------------------------------
-.PHONY: all clean test test-protocol test-config test-config-manager test-log test-socket test-tcp-client test-connection-state test-reconnect test-client test-ldn-types test-ldn-state-machine test-ldn-proxy test-ldn-error test-ldn-integration test-overlay test-ipc-config test-config-ipc-service test-shared-state test-packet-dispatcher test-session-handler test-proxy-handler test-handler-integration test-upnp test-p2p-proxy test-p2p-client test-p2p-integration test-p2p-create-network coverage
+.PHONY: all clean test test-protocol test-config test-config-manager test-log test-socket test-tcp-client test-connection-state test-reconnect test-client test-ldn-types test-ldn-state-machine test-ldn-proxy test-ldn-error test-ldn-integration test-overlay test-ipc-config test-config-ipc-service test-shared-state test-packet-dispatcher test-session-handler test-proxy-handler test-handler-integration test-upnp test-p2p-proxy test-p2p-client test-p2p-integration test-p2p-create-network coverage coverage-enforce coverage-full-enforce
 
 all: $(TARGET_PROTOCOL) $(TARGET_CONFIG) $(TARGET_CONFIG_MANAGER) $(TARGET_LOG) $(TARGET_SOCKET) $(TARGET_TCP_CLIENT) $(TARGET_CONNECTION_STATE) $(TARGET_RECONNECT) $(TARGET_CLIENT) $(TARGET_LDN_TYPES) $(TARGET_LDN_STATE_MACHINE) $(TARGET_LDN_PROXY) $(TARGET_LDN_ERROR) $(TARGET_LDN_INTEGRATION) $(TARGET_OVERLAY) $(TARGET_IPC_CONFIG) $(TARGET_CONFIG_IPC_SERVICE) $(TARGET_SHARED_STATE) $(TARGET_PACKET_DISPATCHER) $(TARGET_SESSION_HANDLER) $(TARGET_PROXY_HANDLER) $(TARGET_HANDLER_INTEGRATION) $(TARGET_UPNP) $(TARGET_P2P_PROXY) $(TARGET_P2P_CLIENT) $(TARGET_P2P_INTEGRATION)
 
@@ -414,6 +414,16 @@ coverage: clean
 	gcov $(TEST_SOURCES)
 	@echo "Coverage report generated"
 
+# Enforce minimum coverage threshold (default 80%)
+# Requires: gcovr (pip install gcovr)
+# Usage: make COVERAGE=1 coverage-enforce
+#        make COVERAGE=1 coverage-enforce MIN_COVERAGE=90
+MIN_COVERAGE ?= 80
+
+coverage-enforce: coverage
+	@echo "=== Checking per-file coverage (minimum $(MIN_COVERAGE)%) ==="
+	cd .. && python3 scripts/check-coverage.py --min $(MIN_COVERAGE) --root .
+
 # Full coverage: unit tests + integration tests against Docker LDN server
 # Builds everything with --coverage, runs unit tests, then fires up the
 # Docker LdnServer and runs integration tests, finally reports per-file
@@ -431,7 +441,7 @@ coverage-full: clean
 	@echo ""
 	@echo "=== Phase 2: Integration tests with coverage ==="
 	$(MAKE) -C integration COV=1 clean all
-	$(MAKE) -C integration docker-compose
+	cd integration && bash prepare-compose.sh
 	docker compose -f integration/docker-compose.yml up -d
 	bash integration/wait-for-server.sh localhost 30456 60
 	sleep 2
@@ -439,20 +449,32 @@ coverage-full: clean
 		./integration/run_integration_tests localhost 30456 ; \
 		int_exit=$$? ; \
 	echo "" ; \
-	echo "=== Coverage Report ===" ; \
-	for src in $(COV_NETWORK_SOURCES); do \
-		echo "--- $$src ---" ; \
-		echo "  Unit:" ; \
-		gcov --branch-counts --branch-probabilities $${src%%.cpp}.gcno 2>/dev/null \
-			| grep -A1 "network/$$src" | grep "Lignes exécutées" | head -1 ; \
-		echo "  Integration:" ; \
-		gcov --branch-counts --branch-probabilities -o integration $${src%%.cpp}.gcno 2>/dev/null \
-			| grep -A1 "network/$$src" | grep "Lignes exécutées" | head -1 ; \
-	done ; \
-	echo "" ; \
 	echo "=== Stopping LdnServer ===" ; \
 	docker compose -f integration/docker-compose.yml down -v ; \
 	exit $$int_exit
+
+# Full coverage enforcement: unit + integration tests + per-file threshold check
+# Requires: Docker (for LdnServer), gcovr (pip install gcovr)
+# Usage: make coverage-full-enforce
+#        make coverage-full-enforce MIN_COVERAGE=90
+coverage-full-enforce: clean
+	@echo "=== Phase 1: Unit tests with coverage ==="
+	$(MAKE) COVERAGE=1 test
+	@echo ""
+	@echo "=== Phase 2: Integration tests with coverage ==="
+	$(MAKE) -C integration COV=1 clean all
+	cd integration && bash prepare-compose.sh
+	docker compose -f integration/docker-compose.yml up -d
+	bash integration/wait-for-server.sh localhost 30456 60
+	sleep 2
+	INTEGRATION_COMPOSE_FILE="$$(pwd)/integration/docker-compose.yml" \
+		./integration/run_integration_tests localhost 30456 || true
+	@echo ""
+	@echo "=== Phase 3: Stopping LdnServer ==="
+	docker compose -f integration/docker-compose.yml down -v
+	@echo ""
+	@echo "=== Phase 4: Checking per-file coverage (minimum $(MIN_COVERAGE)%) ==="
+	cd .. && python3 scripts/check-coverage.py --min $(MIN_COVERAGE) --root .
 
 clean:
 	rm -f *.o $(TARGET_PROTOCOL) $(TARGET_CONFIG) $(TARGET_CONFIG_MANAGER) $(TARGET_LOG) $(TARGET_SOCKET) $(TARGET_TCP_CLIENT) $(TARGET_CONNECTION_STATE) $(TARGET_RECONNECT) $(TARGET_CLIENT) $(TARGET_LDN_TYPES) $(TARGET_LDN_STATE_MACHINE) $(TARGET_LDN_PROXY) $(TARGET_LDN_ERROR) $(TARGET_LDN_INTEGRATION) $(TARGET_OVERLAY) $(TARGET_IPC_CONFIG) $(TARGET_CONFIG_IPC_SERVICE) $(TARGET_SHARED_STATE) $(TARGET_PACKET_DISPATCHER) $(TARGET_SESSION_HANDLER) $(TARGET_PROXY_HANDLER) $(TARGET_HANDLER_INTEGRATION) $(TARGET_UPNP) $(TARGET_P2P_PROXY) $(TARGET_P2P_CLIENT) $(TARGET_P2P_INTEGRATION) $(TARGET_P2P_CREATE_NETWORK)
