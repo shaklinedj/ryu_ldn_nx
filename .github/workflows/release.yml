@@ -135,7 +135,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: release-zip
-          path: sysmodule/ryu_ldn_nx-release.zip
+          path: ryu_ldn_nx-release.zip
 
       - name: Upload debug symbols
         uses: actions/upload-artifact@v4
@@ -187,7 +187,7 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
           PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
 
-          cat > CHANGELOG_RELEASE.md << EOF
+          cat > CHANGELOG_RELEASE.md << 'HEADER'
           ## ryu_ldn_nx ${VERSION}
 
           Nintendo Switch LDN sysmodule for online local multiplayer with Ryujinx servers.
@@ -202,7 +202,7 @@ jobs:
           ---
 
           ### Changelog
-          EOF
+          HEADER
 
           if [ -n "$PREV_TAG" ]; then
             echo "" >> CHANGELOG_RELEASE.md
@@ -218,12 +218,12 @@ jobs:
           cat CHANGELOG_RELEASE.md
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           name: ryu_ldn_nx ${{ steps.version.outputs.version }}
           body_path: CHANGELOG_RELEASE.md
           draft: false
-          prerelease: ${{ contains(steps.version.outputs.version, '-') }}
+          prerelease: false
           files: |
             ryu_ldn_nx-${{ steps.version.outputs.version }}.zip
             debug/ryu_ldn_nx.elf
