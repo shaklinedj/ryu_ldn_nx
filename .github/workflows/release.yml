@@ -15,9 +15,34 @@ permissions:
   contents: write
 
 jobs:
+  verify-branch:
+    name: Verify tag is on main
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Ensure tagged commit is on main
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "Workflow dispatch — skipping branch check"
+            exit 0
+          fi
+          git fetch origin main
+          TAG_COMMIT="${{ github.sha }}"
+          MAIN_TIP=$(git rev-parse origin/main)
+          if ! git merge-base --is-ancestor "$TAG_COMMIT" "$MAIN_TIP"; then
+            echo "::error::Tag ${{ github.ref_name }} is not on the main branch. Releases can only be created from main."
+            exit 1
+          fi
+          echo "Tag ${{ github.ref_name }} is on main ✓"
+
   test:
     name: Tests & Coverage ≥ 80%
     runs-on: ubuntu-latest
+    needs: verify-branch
 
     steps:
       - name: Checkout
