@@ -160,9 +160,6 @@ bool socket_is_initialized() {
 namespace {
 
 /**
- * @brief Resolve hostname to IPv4 address
-
-/**
  * @brief Map POSIX errno to SocketResult
  *
  * This function translates standard errno values to our SocketResult enum,

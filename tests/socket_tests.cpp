@@ -28,6 +28,11 @@
 #include <cerrno>
 #include <vector>
 #include <functional>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <arpa/inet.h>
+#include <unistd.h>
 
 // For test build, we mock the socket functions
 #define TEST_BUILD_SOCKET_MOCK
@@ -839,6 +844,219 @@ TEST(errno_to_result_all_mappings) {
     ASSERT_EQ(errno_to_result(ETIMEDOUT), SocketResult::Timeout);
     ASSERT_EQ(errno_to_result(999), SocketResult::SocketError);
     ASSERT_EQ(errno_to_result(0), SocketResult::SocketError);
+}
+
+// =============================================================================
+// Tests: Socket Options on Valid Socket
+// =============================================================================
+
+/**
+ * Helper: create a local TCP listener and return its port.
+ * Returns 0 on failure.
+ */
+static uint16_t create_local_listener(int& server_fd) {
+    server_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (server_fd < 0) return 0;
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    addr.sin_port = htons(0);  // Let OS pick a port
+
+    if (bind(server_fd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) < 0) {
+        ::close(server_fd);
+        server_fd = -1;
+        return 0;
+    }
+
+    if (listen(server_fd, 1) < 0) {
+        ::close(server_fd);
+        server_fd = -1;
+        return 0;
+    }
+
+    // Retrieve assigned port
+    socklen_t addrlen = sizeof(addr);
+    if (getsockname(server_fd, reinterpret_cast<struct sockaddr*>(&addr), &addrlen) < 0) {
+        ::close(server_fd);
+        server_fd = -1;
+        return 0;
+    }
+
+    return ntohs(addr.sin_port);
+}
+
+/**
+ * @test set_nodelay on a connected socket succeeds
+ */
+TEST(set_nodelay_valid) {
+    socket_init();
+    int server_fd = -1;
+    uint16_t port = create_local_listener(server_fd);
+    ASSERT_NE(port, static_cast<uint16_t>(0));
+
+    Socket sock;
+    // Start accept in background to complete the connection
+    // We need an accepted socket for the connection to succeed
+    // Try to connect — may need to accept on server side first
+    // Use a separate thread would be complex, so use blocking approach:
+    // connect() will SYN, and we accept on server side.
+    // Actually Socket::connect is synchronous with timeout, so we need
+    // the server to accept. Let's use a simple approach.
+
+    // Server accepts in a fork? No — simpler: just call connect
+    // and then accept on server_fd. But connect blocks...
+    // Let's use non-blocking on server side accept.
+    SocketResult cr = sock.connect("127.0.0.1", port, 2000);
+
+    // Accept the connection (regardless of connect result, drain the listener)
+    struct sockaddr_in client_addr;
+    socklen_t client_len = sizeof(client_addr);
+    int accepted = ::accept(server_fd, reinterpret_cast<struct sockaddr*>(&client_addr), &client_len);
+
+    if (cr == SocketResult::Success) {
+        SocketResult result = sock.set_nodelay(true);
+        ASSERT_EQ(result, SocketResult::Success);
+
+        result = sock.set_nodelay(false);
+        ASSERT_EQ(result, SocketResult::Success);
+    }
+
+    if (accepted >= 0) ::close(accepted);
+    ::close(server_fd);
+    sock.close();
+}
+
+/**
+ * @test set_recv_buffer_size on a connected socket succeeds
+ */
+TEST(set_recv_buffer_size_valid) {
+    socket_init();
+    int server_fd = -1;
+    uint16_t port = create_local_listener(server_fd);
+    ASSERT_NE(port, static_cast<uint16_t>(0));
+
+    Socket sock;
+    SocketResult cr = sock.connect("127.0.0.1", port, 2000);
+
+    struct sockaddr_in client_addr;
+    socklen_t client_len = sizeof(client_addr);
+    int accepted = ::accept(server_fd, reinterpret_cast<struct sockaddr*>(&client_addr), &client_len);
+
+    if (cr == SocketResult::Success) {
+        SocketResult result = sock.set_recv_buffer_size(65536);
+        ASSERT_EQ(result, SocketResult::Success);
+    }
+
+    if (accepted >= 0) ::close(accepted);
+    ::close(server_fd);
+    sock.close();
+}
+
+/**
+ * @test set_send_buffer_size on a connected socket succeeds
+ */
+TEST(set_send_buffer_size_valid) {
+    socket_init();
+    int server_fd = -1;
+    uint16_t port = create_local_listener(server_fd);
+    ASSERT_NE(port, static_cast<uint16_t>(0));
+
+    Socket sock;
+    SocketResult cr = sock.connect("127.0.0.1", port, 2000);
+
+    struct sockaddr_in client_addr;
+    socklen_t client_len = sizeof(client_addr);
+    int accepted = ::accept(server_fd, reinterpret_cast<struct sockaddr*>(&client_addr), &client_len);
+
+    if (cr == SocketResult::Success) {
+        SocketResult result = sock.set_send_buffer_size(65536);
+        ASSERT_EQ(result, SocketResult::Success);
+    }
+
+    if (accepted >= 0) ::close(accepted);
+    ::close(server_fd);
+    sock.close();
+}
+
+/**
+ * @test set_non_blocking on a connected socket toggles mode
+ */
+TEST(set_non_blocking_valid) {
+    socket_init();
+    int server_fd = -1;
+    uint16_t port = create_local_listener(server_fd);
+    ASSERT_NE(port, static_cast<uint16_t>(0));
+
+    Socket sock;
+    SocketResult cr = sock.connect("127.0.0.1", port, 2000);
+
+    struct sockaddr_in client_addr;
+    socklen_t client_len = sizeof(client_addr);
+    int accepted = ::accept(server_fd, reinterpret_cast<struct sockaddr*>(&client_addr), &client_len);
+
+    if (cr == SocketResult::Success) {
+        SocketResult result = sock.set_non_blocking(true);
+        ASSERT_EQ(result, SocketResult::Success);
+
+        result = sock.set_non_blocking(false);
+        ASSERT_EQ(result, SocketResult::Success);
+    }
+
+    if (accepted >= 0) ::close(accepted);
+    ::close(server_fd);
+    sock.close();
+}
+
+/**
+ * @test send and recv on a connected socket
+ */
+TEST(send_recv_connected) {
+    socket_init();
+    int server_fd = -1;
+    uint16_t port = create_local_listener(server_fd);
+    ASSERT_NE(port, static_cast<uint16_t>(0));
+
+    Socket sock;
+    SocketResult cr = sock.connect("127.0.0.1", port, 2000);
+
+    struct sockaddr_in client_addr;
+    socklen_t client_len = sizeof(client_addr);
+    int accepted = ::accept(server_fd, reinterpret_cast<struct sockaddr*>(&client_addr), &client_len);
+
+    if (cr == SocketResult::Success) {
+        uint8_t data[] = {0x01, 0x02, 0x03};
+        size_t sent = 0;
+        SocketResult sr = sock.send(data, sizeof(data), sent);
+        ASSERT_EQ(sr, SocketResult::Success);
+        ASSERT_TRUE(sent > 0);
+
+        (void)sent;
+        if (sent < sizeof(data)) {
+            sr = sock.send_all(data + sent, sizeof(data) - sent);
+            ASSERT_EQ(sr, SocketResult::Success);
+        }
+
+        // Read from server side to verify data arrived
+        uint8_t buf[64];
+        ssize_t n = ::recv(accepted, buf, sizeof(buf), 0);
+        ASSERT_TRUE(n > 0);
+
+        // Now server sends data back
+        uint8_t reply[] = {0xAA, 0xBB};
+        ::send(accepted, reply, sizeof(reply), MSG_NOSIGNAL);
+
+        uint8_t rbuf[64];
+        size_t received = 0;
+        sr = sock.recv(rbuf, sizeof(rbuf), received, 2000);
+        ASSERT_EQ(sr, SocketResult::Success);
+        ASSERT_TRUE(received > 0);
+    }
+
+    if (accepted >= 0) ::close(accepted);
+    ::close(server_fd);
+    sock.close();
 }
 
 // =============================================================================
