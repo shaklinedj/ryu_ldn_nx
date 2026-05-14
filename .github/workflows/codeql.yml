@@ -54,10 +54,12 @@ jobs:
           sudo apt-get install -y --no-install-recommends wget
           # devkitPro stopped shipping a Linux .deb on GitHub Releases and
           # apt.devkitpro.org is blocked by Cloudflare bot protection from CI.
-          # Pin to the last published .deb (1.0.2) hosted on a community mirror,
-          # verified by SHA-256 to detect tampering.
-          DKP_DEB_URL=https://wii.leseratte10.de/devkitPro/pacman/devkitpro-pacman-1.0.2.amd64.deb
-          DKP_DEB_SHA256=ebc9f199da9a685e5264c87578efe29309d5d90f44f99f3dad9dcd96323fece3
+          # Pin to the 6.0.1 .deb hosted on a community mirror, verified by
+          # SHA-256. The older 1.0.2 .deb depends on libssl1.1 which is gone
+          # from Ubuntu 24.04. dkp-pacman -Syyu works because Cloudflare lets
+          # the pacman client User-Agent through.
+          DKP_DEB_URL=https://wii.leseratte10.de/devkitPro/pacman/apt/devkitpro-pacman_6.0.1-2_amd64.deb
+          DKP_DEB_SHA256=88f4ec80e0d68615c7a40713ffe591b3ebac4ad5e5e944b2be88b3726cf4a97a
           wget -O /tmp/devkitpro-pacman.deb "$DKP_DEB_URL"
           echo "$DKP_DEB_SHA256  /tmp/devkitpro-pacman.deb" | sha256sum -c -
           sudo apt-get install -y /tmp/devkitpro-pacman.deb
