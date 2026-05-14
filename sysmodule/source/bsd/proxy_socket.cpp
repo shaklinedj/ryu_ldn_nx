@@ -326,31 +326,15 @@ void ProxySocket::IncomingData(const void* data, size_t len, const ryu_ldn::bsd:
         LOG_VERBOSE("ProxySocket IncomingData: %zu bytes, first %zu: %s", len, log_len, hex_buf);
     }
 
-    // Check if this is a broadcast packet and filter if SO_BROADCAST not set
-    // Broadcast packets have destination IP matching the broadcast address
-    // (e.g., 10.114.255.255 for LDN network)
-    if (m_broadcast_address != 0 && !m_broadcast) {
-        // Get local address to check if packet was sent to broadcast
-        uint32_t local_ip = m_local_addr.GetAddr();
-
-        // If we're bound to a specific IP and not the broadcast address,
-        // check if the packet came from broadcast (source would be broadcast addr)
-        // Actually, for UDP the check is: if packet destination was broadcast
-        // Since we receive based on our local port, we need to check if
-        // the packet was originally sent to broadcast address.
-        // The 'from' address is the source, not destination.
-        // We filter based on whether packet destination matched broadcast.
-        // Since IncomingData is called after routing, we check our local binding.
-
-        // If bound to INADDR_ANY (0.0.0.0), we accept packets to broadcast
-        // only if SO_BROADCAST is set
-        if (local_ip == 0) {
-            // We can't easily determine if this was a broadcast packet
-            // without the original destination. For safety, we use heuristic:
-            // If source IP matches broadcast pattern, it might be a broadcast response
-            // Skip filtering for now - proper filtering requires destination IP
-        }
-    }
+    // NOTE: Broadcast filtering is intentionally incomplete. When this socket
+    // is bound to INADDR_ANY (local_ip == 0), we cannot determine the
+    // original destination IP of an incoming packet, so filtering based on
+    // SO_BROADCAST is not feasible. Since ProxySocketManager::RouteIncomingData
+    // already delivers broadcast UDP to all matching sockets, and PIA mesh
+    // discovery requires that broadcast reach every listener, skipping the
+    // filter here is correct behaviour. The if-block is kept as a structural
+    // anchor for a future destination-aware implementation if the proxy
+    // protocol ever carries the destination address.
 
     // Clamp payload to fixed buffer size. UDP datagrams larger than our MTU
     // would already have been rejected by SendTo's MsgSize check on the

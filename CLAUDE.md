@@ -111,5 +111,5 @@ LDN IPs in `NetworkInfo`, `ProxyConfig`, `m_ipv4_address`, and `GetIpv4Address()
 - **Double-connect bug (fixed)**: `update()` must NOT call `try_connect()` when in `Connecting/Retrying` state. The connection attempt is synchronous — `connect()` already calls `try_connect()`. Calling it again from `update()` creates a duplicate connection that causes `EISCONN` errors and corrupts TCP state.
 - **WaitForResponse spurious timeout (fixed)**: When `WaitForResponse` receives an unexpected response-type packet (e.g., `ProxyConnectReply` while waiting for `Connected`), it must `continue` waiting — not fall through to a timeout break.
 - **`ping_interval` is unused**: The `ping_interval` config key is parsed and stored but never consumed by the network client.
-- **`[perf]` section is dead**: The perf config keys are in the example config but not parsed or consumed. They have zero runtime effect.
+- **`[perf]` section is dead**: The perf config keys are commented out and NOT parsed by the INI parser (no `Section::Perf`). They have zero runtime effect.
 - **`max_reconnect_attempts = 0` disables auto-reconnect**: It does not mean infinite retries — it means the client will not retry at all.

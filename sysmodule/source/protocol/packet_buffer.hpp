@@ -325,6 +325,9 @@ private:
 
 /**
  * @brief Convert BufferResult to string for debugging
+ *
+ * @param result BufferResult enum value to convert
+ * @return Human-readable string representation of the result code
  */
 inline const char* buffer_result_to_string(BufferResult result) {
     switch (result) {

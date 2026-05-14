@@ -35,7 +35,7 @@ namespace ams {
 
         /// Main malloc buffer size
         /// NOTE: Switch sysmodules share ~10MB total, keep this small!
-        /// 512KB is the minimum for TlsHeapCentral to initialize properly
+        /// 1 MB is sufficient for TlsHeapCentral and gameplay traffic
         constexpr size_t MallocBufferSize = 1_MB;
         alignas(os::MemoryPageSize) constinit u8 g_malloc_buffer[MallocBufferSize];
 
@@ -390,6 +390,10 @@ namespace ams {
         void FinalizeSystemModule() {
             LOG_INFO("ryu_ldn_nx sysmodule shutting down");
 
+            // Flush logs first, then tear down in reverse init order:
+            // socket → bsd → nifm. The socket layer must exit before BSD
+            // because libnx socket cleanup closes file descriptors that the
+            // BSD service still tracks.
             ryu_ldn::debug::g_logger.flush();
             socketExit();
             bsdExit();

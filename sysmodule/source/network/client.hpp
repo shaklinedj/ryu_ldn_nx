@@ -113,6 +113,7 @@ enum class ClientOpResult : uint8_t {
  *
  * @param old_state Previous state
  * @param new_state New state
+ * @param user_data User-provided context pointer
  */
 using ClientStateCallback = void (*)(ConnectionState old_state, ConnectionState new_state, void* user_data);
 

@@ -240,6 +240,9 @@ SocketResult errno_to_result(int err);
 
 /**
  * @brief Convert SocketResult to string for debugging
+ *
+ * @param result SocketResult enum value to convert
+ * @return Human-readable string representation of the result code
  */
 inline const char* socket_result_to_string(SocketResult result) {
     switch (result) {

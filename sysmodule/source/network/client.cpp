@@ -60,8 +60,8 @@ namespace network {
  * - Host: "127.0.0.1" (localhost)
  * - Port: 30456 (default ryu_ldn port)
  * - Connect timeout: 5000ms
- * - Recv timeout: 100ms (for non-blocking poll)
- * - Ping interval: 30000ms (30 seconds)
+ * - Recv timeout: 20ms (short poll for quick burst draining)
+ * - Ping interval: 0ms (disabled — server-initiated pings only)
  * - Auto reconnect: enabled
  */
 RyuLdnClientConfig::RyuLdnClientConfig()
@@ -1241,12 +1241,17 @@ ClientOpResult RyuLdnClient::send_initialize() {
 /**
  * @brief Generate a unique MAC address
  *
- * Generates a locally administered MAC address.
+ * Generates a statically assigned locally administered MAC address.
  * Format: X2:XX:XX:XX:XX:XX where X2 indicates locally administered.
+ *
+ * The address (02:00:5E:00:53:01) is hardcoded rather than random — every
+ * session gets the same MAC. This matches the Ryujinx emulator behaviour
+ * where all clients use the same MAC, and the server uses the node ID
+ * (not the MAC) for identification.
  */
 void RyuLdnClient::generate_mac_address() {
-    // Use some pseudo-random values
-    // In real implementation, you might use system tick or other entropy
+    // Statically assigned MAC matching Ryujinx convention.
+    // The server identifies nodes by ID, not by MAC.
     m_mac_address.data[0] = 0x02;  // Locally administered
     m_mac_address.data[1] = 0x00;
     m_mac_address.data[2] = 0x5E;

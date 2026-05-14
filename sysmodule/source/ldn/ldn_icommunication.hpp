@@ -233,7 +233,7 @@ public:
     /**
      * @brief Connect to a network
      *
-     * @param dat Connection data
+     * @param dat Connection parameters (security config, user config, version, option)
      * @param data Network to connect to
      * @return Result code
      */

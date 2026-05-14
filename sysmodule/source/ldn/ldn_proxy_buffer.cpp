@@ -74,7 +74,7 @@ bool LdnProxyBuffer::Write(const ryu_ldn::protocol::ProxyDataHeader& header,
     }
 
     // Calculate available data space
-    // For simplicity, use linear space check (no wrap for single packet)
+    // If not enough contiguous space at end, wrap to start if space is available
     size_t available = BufferSize - m_data_write_pos;
     if (available < size) {
         // Not enough contiguous space, wrap to start if possible

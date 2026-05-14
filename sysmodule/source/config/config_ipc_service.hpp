@@ -115,69 +115,104 @@ class ConfigService {
 public:
     ConfigService() = default;
 
-    // Version
+    /** @brief Get the sysmodule version string */
     /// @gdb{tag="CONFIG:IPC", msg="GetVersion"}
     ams::Result GetVersion(ams::sf::Out<std::array<char, 32>> out);
 
-    // Connection status (0 = service running)
+    /** @brief Get connection status (0 = service running) */
     /// @gdb{tag="CONFIG:IPC", msg="GetConnectionStatus"}
     ams::Result GetConnectionStatus(ams::sf::Out<u32> out);
 
-    // Passphrase
+    /** @brief Get the current LDN room passphrase */
     /// @gdb{tag="CONFIG:IPC", msg="GetPassphrase"}
     ams::Result GetPassphrase(ams::sf::Out<std::array<char, 64>> out);
+    /** @brief Set the LDN room passphrase
+     *  @param passphrase Null-terminated passphrase string (max 63 chars)
+     */
     /// @gdb{tag="CONFIG:IPC", msg="SetPassphrase"}
     ams::Result SetPassphrase(std::array<char, 64> passphrase);
 
-    // Server address
+    /** @brief Get the configured server address (host + port) */
     /// @gdb{tag="CONFIG:IPC", msg="GetServerAddress"}
     ams::Result GetServerAddress(ams::sf::Out<ServerAddressIpc> out);
+    /** @brief Set the server address (host + port)
+     *  @param address New server address to use
+     */
     /// @gdb{tag="CONFIG:IPC", msg="SetServerAddress"}
     ams::Result SetServerAddress(ServerAddressIpc address);
 
-    // LDN enabled
+    /** @brief Get whether LDN emulation is enabled */
     /// @gdb{tag="CONFIG:IPC", msg="GetLdnEnabled"}
     ams::Result GetLdnEnabled(ams::sf::Out<u32> out);
+    /** @brief Enable or disable LDN emulation
+     *  @param enabled 1 to enable, 0 to disable
+     */
     /// @gdb{tag="CONFIG:IPC", msg="SetLdnEnabled"}
     ams::Result SetLdnEnabled(u32 enabled);
 
-    // TLS
+    /** @brief Get TLS setting (NOT IMPLEMENTED — always plain TCP) */
     /// @gdb{tag="CONFIG:IPC", msg="GetUseTls"}
     ams::Result GetUseTls(ams::sf::Out<u32> out);
+    /** @brief Set TLS setting (NOT IMPLEMENTED — has no effect)
+     *  @param enabled 1 for TLS, 0 for plain (no effect either way)
+     */
     /// @gdb{tag="CONFIG:IPC", msg="SetUseTls"}
     ams::Result SetUseTls(u32 enabled);
 
-    // Debug
+    /** @brief Get whether debug logging is enabled */
     /// @gdb{tag="CONFIG:IPC", msg="GetDebugEnabled"}
     ams::Result GetDebugEnabled(ams::sf::Out<u32> out);
+    /** @brief Enable or disable debug logging
+     *  @param enabled 1 to enable, 0 to disable
+     */
     /// @gdb{tag="CONFIG:IPC", msg="SetDebugEnabled"}
     ams::Result SetDebugEnabled(u32 enabled);
+    /** @brief Get the debug log level (0=errors, 1=warnings, 2=info, 3=verbose) */
     /// @gdb{tag="CONFIG:IPC", msg="GetDebugLevel"}
     ams::Result GetDebugLevel(ams::sf::Out<u32> out);
+    /** @brief Set the debug log level
+     *  @param level 0=errors, 1=warnings, 2=info, 3=verbose
+     */
     /// @gdb{tag="CONFIG:IPC", msg="SetDebugLevel"}
     ams::Result SetDebugLevel(u32 level);
+    /** @brief Get whether file logging is enabled */
     /// @gdb{tag="CONFIG:IPC", msg="GetLogToFile"}
     ams::Result GetLogToFile(ams::sf::Out<u32> out);
+    /** @brief Enable or disable file logging
+     *  @param enabled 1 to enable, 0 to disable
+     */
     /// @gdb{tag="CONFIG:IPC", msg="SetLogToFile"}
     ams::Result SetLogToFile(u32 enabled);
 
-    // Timeouts
+    /** @brief Get the TCP connection timeout in milliseconds */
     /// @gdb{tag="CONFIG:IPC", msg="GetConnectTimeout"}
     ams::Result GetConnectTimeout(ams::sf::Out<u32> out);
+    /** @brief Set the TCP connection timeout
+     *  @param timeout_ms Timeout in milliseconds
+     */
     /// @gdb{tag="CONFIG:IPC", msg="SetConnectTimeout"}
     ams::Result SetConnectTimeout(u32 timeout_ms);
+    /** @brief Get the keepalive ping interval in milliseconds (parsed but unused — server drives pings) */
     /// @gdb{tag="CONFIG:IPC", msg="GetPingInterval"}
     ams::Result GetPingInterval(ams::sf::Out<u32> out);
+    /** @brief Set the keepalive ping interval (parsed but unused)
+     *  @param interval_ms Interval in milliseconds
+     */
     /// @gdb{tag="CONFIG:IPC", msg="SetPingInterval"}
     ams::Result SetPingInterval(u32 interval_ms);
 
-    // Config file operations
+    /** @brief Save current configuration to disk
+     *  @param out Result of the save operation
+     */
     /// @gdb{tag="CONFIG:IPC", msg="SaveConfig"}
     ams::Result SaveConfig(ams::sf::Out<ConfigResult> out);
+    /** @brief Reload configuration from disk
+     *  @param out Result of the reload operation
+     */
     /// @gdb{tag="CONFIG:IPC", msg="ReloadConfig"}
     ams::Result ReloadConfig(ams::sf::Out<ConfigResult> out);
 
-    // Service check
+    /** @brief Check if the LDN service is actively running */
     /// @gdb{tag="CONFIG:IPC", msg="IsServiceActive"}
     ams::Result IsServiceActive(ams::sf::Out<u32> out);
 
@@ -185,27 +220,37 @@ public:
     // Runtime LDN State (read from SharedState singleton)
     // =========================================================================
 
-    /// Returns 1 if a game is actively using LDN, 0 otherwise
+    /** @brief Check if a game is actively using LDN
+     *  @param out 1 if a game is using LDN, 0 otherwise
+     */
     /// @gdb{tag="CONFIG:IPC", msg="IsGameActive"}
     ams::Result IsGameActive(ams::sf::Out<u32> out);
 
-    /// Returns current LDN CommState (0=None, 1=Initialized, etc.)
+    /** @brief Get current LDN CommState
+     *  @param out CommState value (0=None, 1=Initialized, 2=AccessPoint, 3=AccessPointCreated, 4=Station, 5=StationConnected)
+     */
     /// @gdb{tag="CONFIG:IPC", msg="GetLdnState"}
     ams::Result GetLdnState(ams::sf::Out<u32> out);
 
-    /// Returns session information (node count, max, local id, is_host)
+    /** @brief Get session information
+     *  @param out SessionInfoIpc struct (node count, max, local ID, is_host)
+     */
     /// @gdb{tag="CONFIG:IPC", msg="GetSessionInfo"}
     ams::Result GetSessionInfo(ams::sf::Out<SessionInfoIpc> out);
 
-    /// Returns last measured RTT in milliseconds
+    /** @brief Get last measured RTT
+     *  @param out RTT in milliseconds
+     */
     /// @gdb{tag="CONFIG:IPC", msg="GetLastRtt"}
     ams::Result GetLastRtt(ams::sf::Out<u32> out);
 
-    /// Requests the MITM service to reconnect
+    /** @brief Request the MITM service to reconnect to the LDN server */
     /// @gdb{tag="CONFIG:IPC", msg="ForceReconnect"}
     ams::Result ForceReconnect();
 
-    /// Returns the process ID of the active game (for debugging)
+    /** @brief Get the process ID of the active game
+     *  @param out Process ID (for debugging)
+     */
     /// @gdb{tag="CONFIG:IPC", msg="GetActiveProcessId"}
     ams::Result GetActiveProcessId(ams::sf::Out<u64> out);
 
@@ -213,11 +258,15 @@ public:
     // P2P Proxy Control
     // =========================================================================
 
-    /// Returns 1 if P2P proxy is disabled
+    /** @brief Get whether P2P proxy is disabled
+     *  @param out 1 if P2P proxy is disabled, 0 if enabled
+     */
     /// @gdb{tag="CONFIG:IPC", msg="GetDisableP2p"}
     ams::Result GetDisableP2p(ams::sf::Out<u32> out);
 
-    /// Sets P2P proxy disabled state (like Ryujinx MultiplayerDisableP2p)
+    /** @brief Set P2P proxy disabled state
+     *  @param disabled 1 to disable P2P proxy, 0 to enable
+     */
     /// @gdb{tag="CONFIG:IPC", msg="SetDisableP2p"}
     ams::Result SetDisableP2p(u32 disabled);
 };
@@ -231,9 +280,10 @@ public:
 /**
  * @brief SF interface macro for ryu:cfg service
  *
- * Defines all IPC commands (0-28) for the configuration service.
+ * Defines all IPC commands (0-30) for the configuration service.
  * Commands 0-22: Configuration commands
  * Commands 23-28: Runtime LDN state commands
+ * Commands 29-30: P2P proxy control commands
  * Uses 9-arg form of AMS_SF_METHOD_INFO with explicit version range.
  */
 #define AMS_RYU_CFG_SERVICE_INTERFACE(C, H)                                                                                        \

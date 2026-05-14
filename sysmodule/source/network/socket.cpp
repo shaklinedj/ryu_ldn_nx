@@ -19,9 +19,11 @@
  *
  * ## Switch-Specific Notes
  *
- * On Nintendo Switch:
- * - Must call socketInitializeDefault() before using sockets
- * - DNS resolution requires network to be connected (use nifm service)
+ * On Switch, socket_init() is called during sysmodule startup (main.cpp) and only
+ * sets a global flag — socketInitializeDefault() is called separately by the host.
+ * On POSIX (test builds), socket_init() is a no-op.
+ *
+ * - DNS resolution via getaddrinfo() requires an active network connection
  * - Transfer memory is allocated automatically by libnx
  * - Maximum concurrent sockets is limited by system resources
  *
@@ -96,21 +98,17 @@ static bool s_initialized = false;
 /**
  * @brief Initialize the socket subsystem
  *
- * This function MUST be called before any socket operations are performed.
+ * Sets a global flag to indicate that sockets are available.
+ * On Switch, the actual socketInitializeDefault() call happens in main.cpp
+ * before any MITM services are created — this function only sets the flag.
  *
- * On Nintendo Switch:
- * - Calls socketInitializeDefault() which sets up the BSD socket service
- * - Allocates transfer memory for socket buffers
- * - Initializes DNS resolver
- *
- * On host systems:
+ * On host systems (test builds):
  * - No-op, sockets are always available
  *
- * @return SocketResult::Success on success
- * @return SocketResult::NotInitialized if Switch socket service fails
+ * @return SocketResult::Success always (on Switch, actual init is in main.cpp)
  *
  * @note Safe to call multiple times (subsequent calls are no-ops)
- * @note Must call socket_exit() when done to free resources on Switch
+ * @note Must call socket_exit() when done to clear the flag on Switch
  */
 SocketResult socket_init() {
     // Idempotent - safe to call multiple times
@@ -857,19 +855,20 @@ SocketResult Socket::wait_ready(uint32_t timeout_ms, bool for_write) {
 
     // Check for error conditions in revents.
     //
-    // Sans ce traitement, retourner SocketError ici (et garder m_connected=true)
-    // faisait spinner process_packets — receive_packet retournait
-    // ClientResult::InternalError (générique), process_packets log+break sans
-    // toucher au state machine, et le background thread reboucle pour toujours
-    // sur un socket qui ne reverra jamais de Success. Quand POLLHUP/POLLERR/
-    // POLLNVAL est signalé, le peer side est mort (ou le fd invalide) : on
-    // marque la socket comme déconnectée — comme on le fait pour recv() == 0
-    // ou ECONNRESET — et on map à ConnectionReset pour que la stack TcpClient
-    // propage ConnectionLost et déclenche le auto-reconnect.
+    // Without this treatment, returning SocketError here (and keeping
+    // m_connected=true) caused process_packets to spin — receive_packet
+    // returned ClientResult::InternalError (generic), process_packets
+    // logged + broke without touching the state machine, and the background
+    // thread re-looped forever on a socket that would never see Success.
+    // When POLLHUP/POLLERR/POLLNVAL is signaled, the peer side is dead
+    // (or the fd is invalid): mark the socket as disconnected — same as
+    // we do for recv() == 0 or ECONNRESET — and map to ConnectionReset so
+    // the TcpClient stack propagates ConnectionLost and triggers
+    // auto-reconnect.
     if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) {
-        // Flush — ce log est l'événement-clé du diagnostic "master TCP meurt
-        // pendant que l'IPC game tourne". Sans flush on le perd si un KP
-        // suit (le idle-flush de 2 s du logger ne s'est pas encore déclenché).
+        // Flush — this log is the key diagnostic event for "master TCP dies
+        // while game IPC is still running". Without flushing we lose it if
+        // a KP follows (the logger's 2s idle-flush hasn't triggered yet).
         LOG_INFO("Socket::wait_ready: peer-side close on fd=%d (revents=0x%X: %s%s%s) — marking disconnected",
                  m_fd, static_cast<unsigned>(pfd.revents),
                  (pfd.revents & POLLERR)  ? "POLLERR " : "",

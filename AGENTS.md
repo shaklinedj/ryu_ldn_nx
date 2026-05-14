@@ -161,8 +161,8 @@ Games on Switch use Nintendo's PIA (Protocol Independent Application) library fo
 The sysmodule runs on Switch hardware with aggressive constraints:
 
 - **Heap**: 384 KB expanded heap (`g_heap_memory` in `main.cpp:143`). Previously 96 KB, saturated under real gameplay traffic causing DABRT 0x101 on allocation failure.
-- **Malloc buffer**: 1 MB (`MallocBufferSize`) for the TLS heap central. Minimum for `TlsHeapCentral` to initialize properly.
-- **Thread stacks**: 2×32 KB (MITM server threads), 16 KB (receive), 8 KB (config), 16 KB (P2P connect), 4 KB (log). Total: ~108 KB in thread stacks alone.
+- **Malloc buffer**: 1 MB (`MallocBufferSize`) for the TLS heap central. Sufficient for gameplay traffic.
+- **Thread stacks**: 2×32 KB (MITM), 16 KB (background receive), 16 KB (P2P connect), 16 KB (P2P accept), 16 KB (P2P client recv), 8 KB (P2P lease), 8 KB (config), 4 KB (log). Total: ~148 KB in permanent thread stacks, plus up to 8×16 KB (128 KB) P2P session stacks allocated dynamically.
 - **BSD sessions**: 14 (`ConcurrencyLimitMax` in libstratosphere). The default of 3 saturated with P2P loopback sessions.
 - **Total sysmodule budget**: ~10 MB across all Switch sysmodules — don't grow buffers without proof it's needed.
 - Use fixed buffers, `constinit` statics, and stack-allocated work areas. Avoid `std::vector`/`std::deque`/`new` in hot paths.
@@ -232,7 +232,7 @@ The network client (`RyuLdnClient` in `sysmodule/source/network/`) handles recon
 - **Graceful disconnect**: Socket `close()` calls `shutdown(SHUT_WR)` before `close()` so the server sees FIN instead of RST.
 - **Auto-reconnect**: When `ConnectionLost` fires, the state machine transitions through `Backoff` → `Retrying` → `Connecting` automatically if `max_reconnect_attempts != 0`. Setting `max_reconnect_attempts = 0` **disables** auto-reconnect entirely — it does not mean infinite retries.
 - **`ping_interval` is unused**: The `ping_interval` config key is parsed and stored but never consumed by the network client. Server-side pings drive keepalive behavior.
-- **`[perf]` section is dead**: The perf config keys (`enable_larger_socket_buffers`, `enable_tight_drain_loop`, etc.) are in the example config but not parsed or consumed by the sysmodule. They have zero runtime effect.
+- **`[perf]` section is dead**: The perf config keys are commented out in the example config and NOT parsed by the INI parser (no `Section::Perf` exists). They have zero runtime effect.
 
 ## Known Issues & Pitfalls
 

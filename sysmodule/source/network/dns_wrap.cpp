@@ -12,7 +12,7 @@
  * panics inside libnx before getting back to us.
  *
  * This compilation unit defines `__wrap_*` versions and the Makefile
- * adds `-Wl,--wrap=getaddrinfo,--wrap=freeaddrinfo,--wrap=getnameinfo`.
+ * adds `-Wl,--wrap=getaddrinfo,--wrap=freeaddrinfo,--wrap=getnameinfo,--wrap=gai_strerror`.
  * The linker redirects every call (including those baked into
  * `libminiupnpc.a`) to these implementations, so miniupnpc's SSDP
  * discovery + HTTP control flow can run without ever touching sfdnsres.

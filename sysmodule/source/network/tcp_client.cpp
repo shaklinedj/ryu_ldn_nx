@@ -745,6 +745,10 @@ ClientResult TcpClient::set_nodelay(bool enable) {
  * @brief Convert SocketResult to ClientResult
  *
  * Maps low-level socket errors to appropriate client-level results.
+ * WouldBlock is mapped to Success because in non-blocking mode a
+ * recv/send returning EAGAIN/EWOULDBLOCK means "no data yet, try
+ * later" — the caller's polling loop treats this the same as a
+ * successful zero-byte read and retries on the next iteration.
  */
 ClientResult TcpClient::socket_to_client_result(SocketResult socket_result) {
     switch (socket_result) {

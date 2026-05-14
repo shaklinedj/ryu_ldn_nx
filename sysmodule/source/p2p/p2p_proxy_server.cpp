@@ -754,9 +754,9 @@ void P2pProxyServer::ReleaseNatPunch() {
     }
 
     LOG_INFO("ReleaseNatPunch: EXIT");
-    // Flush — ReleaseNatPunch est dans le chemin critique de StopP2pProxyServer.
-    // Si le ConnectionLost / KP/ chargement infini suit, on veut être sûr de
-    // savoir EN QUEL TEMPS on a quitté ReleaseNatPunch.
+    // Flush — ReleaseNatPunch is in the critical path of StopP2pProxyServer.
+    // If ConnectionLost / KP / infinite loading follows, we want to be sure we
+    // can tell WHEN we left ReleaseNatPunch.
     ryu_ldn::debug::g_logger.flush();
 }
 
@@ -811,10 +811,10 @@ void P2pProxyServer::LeaseRenewalLoop() {
     // can join us within ~ChunkMs of asking instead of waiting up to the full
     // renew period (the previous code did `SleepThread(50s)` and any Stop()
     // call landing during that nap blocked WaitThread for up to 50 s — game
-    // IPC sat there and the lobby never advanced past "Création de partie".
-    // Sémantique externe identique au upstream Ryujinx
+    // IPC sat there and the lobby never advanced past "Creating session".
+    // Same external semantics as upstream Ryujinx
     // (P2pProxyServer.cs ExecuteAfterDelayAsync + _disposedCancellation.Cancel()):
-    // Stop annule la task de renew et retourne immédiatement.
+    // Stop cancels the renew task and returns immediately.
     constexpr int64_t ChunkMs   = 250;
     const int64_t total_ms = static_cast<int64_t>(PORT_LEASE_RENEW) * 1000;
 

@@ -11,13 +11,17 @@
  *
  * The exponential backoff works as follows:
  *
- * 1. **First failure**: Wait `initial_delay_ms` (default 1 second)
- * 2. **Second failure**: Wait `initial_delay_ms * multiplier` (default 2 seconds)
- * 3. **Third failure**: Wait `initial_delay_ms * multiplier^2` (default 4 seconds)
- * 4. **Continue**: Until reaching `max_delay_ms` (default 30 seconds)
+ * 1. **First fast retries**: Wait `fast_delay_ms` (default 200ms) for the
+ *    first `fast_retries` attempts (default 1). Brief network blips often
+ *    recover on the first retry.
+ * 2. **Initial delay**: Wait `initial_delay_ms` (default 1 second)
+ * 3. **Subsequent failures**: Wait `initial_delay_ms * multiplier^attempt`
+ *    (default 2s, 4s, 8s, ...)
+ * 4. **Cap**: Delay never exceeds `max_delay_ms` (default 30 seconds)
  *
- * The delay is capped at `max_delay_ms` to ensure reconnection attempts
- * continue at a reasonable rate even after many failures.
+ * Jitter (default ±10%) is added to each delay to prevent thundering herd
+ * after server restarts. The delay is capped at `max_delay_ms` to ensure
+ * reconnection attempts continue at a reasonable rate.
  *
  * ## Jitter Implementation
  *

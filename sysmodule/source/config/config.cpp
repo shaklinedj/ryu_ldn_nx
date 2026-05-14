@@ -280,7 +280,7 @@ size_t format_config_content(char* buffer, size_t buffer_size, const Config& con
     WRITE_LINE("ping_interval = %u", config.network.ping_interval_ms);
     WRITE_LINE("; Reconnect delay in milliseconds");
     WRITE_LINE("reconnect_delay = %u", config.network.reconnect_delay_ms);
-    WRITE_LINE("; Max reconnect attempts (0 = infinite)");
+    WRITE_LINE("; Max reconnect attempts (0 = disable auto-reconnect)");
     WRITE_LINE("max_reconnect_attempts = %u", config.network.max_reconnect_attempts);
     WRITE_LINE("");
 
@@ -599,7 +599,7 @@ ConfigResult save_config(const char* path, const Config& config) {
     std::fprintf(file, "ping_interval = %u\n", config.network.ping_interval_ms);
     std::fprintf(file, "; Reconnect delay in milliseconds\n");
     std::fprintf(file, "reconnect_delay = %u\n", config.network.reconnect_delay_ms);
-    std::fprintf(file, "; Max reconnect attempts (0 = infinite)\n");
+    std::fprintf(file, "; Max reconnect attempts (0 = disable auto-reconnect)\n");
     std::fprintf(file, "max_reconnect_attempts = %u\n\n", config.network.max_reconnect_attempts);
 
     std::fprintf(file, "[ldn]\n");

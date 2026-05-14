@@ -261,7 +261,11 @@ bool P2pProxyClient::Connect(const uint8_t* ip_bytes, size_t ip_len, uint16_t po
         return false;
     }
 
-    // Wait for connection with timeout using select()
+    // Wait for connection with timeout using select().
+    // select() is used here instead of poll() because this is a one-shot
+    // connect-timeout on a single descriptor, where select() avoids the
+    // struct pollfd setup overhead and the 1024 (FD_SETSIZE) limit is
+    // irrelevant — m_socket_fd is always << 1024 on Switch.
     if (result < 0) {
         fd_set write_fds;
         FD_ZERO(&write_fds);

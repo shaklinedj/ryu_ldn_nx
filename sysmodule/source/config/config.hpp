@@ -124,8 +124,8 @@ constexpr const char* DEFAULT_HOST = "ldn.ryujinx.app";
 /** @brief Default server port */
 constexpr uint16_t DEFAULT_PORT = 30456;
 
-/** @brief Default TLS setting (recommended for security) */
-constexpr bool DEFAULT_USE_TLS = true;
+/** @brief Default TLS setting — NOT IMPLEMENTED, always plain TCP regardless of this value */
+constexpr bool DEFAULT_USE_TLS = false;
 
 // -----------------------------------------------------------------------------
 // Default Values - Network
@@ -150,8 +150,8 @@ constexpr uint32_t DEFAULT_MAX_RECONNECT_ATTEMPTS = 5;
 /** @brief Default LDN enabled state */
 constexpr bool DEFAULT_LDN_ENABLED = true;
 
-/** @brief Default P2P proxy disabled state (like Ryujinx MultiplayerDisableP2p) */
-constexpr bool DEFAULT_DISABLE_P2P = false;
+/** @brief Default P2P proxy disabled state (matches config.ini.example: disable_p2p = 1) */
+constexpr bool DEFAULT_DISABLE_P2P = true;
 
 // -----------------------------------------------------------------------------
 // Default Values - Debug
@@ -211,13 +211,13 @@ struct ServerConfig {
  * - `connect_timeout`: Connection timeout in milliseconds
  * - `ping_interval`: Keepalive ping interval in milliseconds
  * - `reconnect_delay`: Initial delay before reconnection attempt
- * - `max_reconnect_attempts`: Maximum reconnect attempts (0 = infinite)
+ * - `max_reconnect_attempts`: Maximum reconnect attempts (0 = disable auto-reconnect)
  */
 struct NetworkConfig {
     uint32_t connect_timeout_ms;       ///< TCP connection timeout
     uint32_t ping_interval_ms;         ///< Keepalive ping interval
     uint32_t reconnect_delay_ms;       ///< Initial reconnect delay
-    uint32_t max_reconnect_attempts;   ///< Max reconnect attempts (0 = disable auto-reconnect)
+    uint32_t max_reconnect_attempts;   ///< Max reconnect attempts (0 disables auto-reconnect)
 };
 
 /**
