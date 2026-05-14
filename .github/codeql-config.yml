@@ -4,6 +4,5 @@ paths-ignore:
   - overlay/**
   - docs/**
   - scripts/**
-query-filters:
-  - security-extended
-  - security-and-quality
+queries:
+  - uses: security-and-quality
