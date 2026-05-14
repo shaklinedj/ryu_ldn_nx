@@ -107,7 +107,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ryu_ldn_nx-release-${{ github.sha }}
-          path: sysmodule/ryu_ldn_nx-release.zip
+          path: ryu_ldn_nx-release.zip
 
       - name: Upload debug symbols
         uses: actions/upload-artifact@v4
