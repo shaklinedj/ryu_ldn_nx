@@ -75,8 +75,17 @@ jobs:
             cat > "$real" <<'EOF'
           #!/bin/bash
           self="${0}.real"
+          name="$(basename "$0")"
           if [ -n "${LD_PRELOAD:-}" ]; then
-            echo "[codeql-wrapper] $(basename "$0"): stripping LD_PRELOAD=$LD_PRELOAD" >&2
+            echo "[codeql-wrapper] $name: stripping LD_PRELOAD=$LD_PRELOAD" >&2
+          fi
+          # Diagnostic: log args and, for npdmtool, dump the input json so we
+          # can confirm what it actually receives in CI vs locally.
+          echo "[codeql-wrapper] $name args: $*" >&2
+          if [ "$name" = "npdmtool" ] && [ -f "$1" ]; then
+            echo "[codeql-wrapper] $name input: $1 (size=$(wc -c < "$1") bytes)" >&2
+            echo "[codeql-wrapper] $name input first 8 lines:" >&2
+            head -8 "$1" >&2 || true
           fi
           unset LD_PRELOAD
           exec "$self" "$@"
