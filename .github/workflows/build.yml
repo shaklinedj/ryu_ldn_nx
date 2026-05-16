@@ -60,7 +60,7 @@ jobs:
         id: coverage
         run: |
           python3 scripts/check-coverage.py --min 0 --root . --json /tmp/cov.json || true
-          AVG=$(python3 -c "
+          python3 <<'PYEOF' > /tmp/avg.txt
           import json
           with open('/tmp/cov.json') as f:
               d = json.load(f)
@@ -74,8 +74,8 @@ jobs:
                   total_covered += sum(1 for l in lines if l.get('count', 0) > 0)
           avg = (total_covered / total_lines * 100) if total_lines > 0 else 0
           print(f'{avg:.1f}')
-          ')
-          echo "percent=$AVG" >> $GITHUB_OUTPUT
+          PYEOF
+          echo "percent=$(cat /tmp/avg.txt)" >> $GITHUB_OUTPUT
 
       - name: Update coverage badge
         if: github.event_name == 'push'
@@ -104,7 +104,9 @@ jobs:
           submodules: recursive
 
       - name: Fix git safe directory
-        run: git config --global --add safe.directory '*'
+        run: |
+          git config --global --add safe.directory '*'
+          git symbolic-ref HEAD refs/heads/"${GITHUB_REF_NAME:-develop}" 2>/dev/null || true
 
       - name: Link pre-built libraries
         run: |

@@ -37,7 +37,11 @@ jobs:
           submodules: recursive
 
       - name: Fix git safe directory
-        run: git config --global --add safe.directory '*'
+        run: |
+          git config --global --add safe.directory '*'
+          # Detached HEAD in containers causes 'fatal: ref HEAD is not a symbolic ref'
+          # for tools like git-describe. Create a symbolic ref to suppress the warning.
+          git symbolic-ref HEAD refs/heads/"${GITHUB_REF_NAME:-develop}" 2>/dev/null || true
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
