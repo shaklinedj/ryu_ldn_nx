@@ -76,18 +76,18 @@ jobs:
           #!/bin/bash
           self="${0}.real"
           name="$(basename "$0")"
-          if [ -n "${LD_PRELOAD:-}" ]; then
-            echo "[codeql-wrapper] $name: stripping LD_PRELOAD=$LD_PRELOAD" >&2
-          fi
-          # Diagnostic: log args and, for npdmtool, dump the input json so we
-          # can confirm what it actually receives in CI vs locally.
-          echo "[codeql-wrapper] $name args: $*" >&2
-          if [ "$name" = "npdmtool" ] && [ -f "$1" ]; then
-            echo "[codeql-wrapper] $name input: $1 (size=$(wc -c < "$1") bytes)" >&2
-            echo "[codeql-wrapper] $name input first 8 lines:" >&2
-            head -8 "$1" >&2 || true
-          fi
           unset LD_PRELOAD
+          # npdmtool fails to parse the input JSON when it lives on the
+          # GitHub Actions workspace bind-mount (/__w/...) inside the
+          # container, even though the file content is byte-identical to
+          # what works elsewhere. Workaround: copy input to /tmp (container-
+          # native fs) and rewrite arg before exec.
+          if [ "$name" = "npdmtool" ] && [ -f "$1" ]; then
+            staged="/tmp/$(basename "$1").$$"
+            cp "$1" "$staged"
+            shift
+            set -- "$staged" "$@"
+          fi
           exec "$self" "$@"
           EOF
             chmod +x "$real"
