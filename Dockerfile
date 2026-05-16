@@ -57,18 +57,17 @@ RUN git config --global --add safe.directory '*'
 
 # ---------------------------------------------------------------------------
 # Pre-build Atmosphere-libs (libstratosphere.a)
-# The submodule sources are COPY'd in from the host checkout so that the
-# Docker image contains the compiled library. CI workflows that use this
-# image never need to rebuild it.
+# The submodule sources are COPY'd in a layout matching the repo structure
+# so that the Atmosphere build system (which uses __FILE__-relative paths)
+# can find libvapours, config templates, etc.
 #
-# Build happens in /tmp/build to keep /workspace clean for volume mounts.
 # After building, the compiled library is installed to /opt/ryu_ldn_nx/
-# where the sysmodule Makefile can find it, and the build artifacts are
-# cleaned up.
+# where CI workflows symlink it into the checkout. Build artifacts in
+# /workspace are cleaned up afterwards.
 # ---------------------------------------------------------------------------
-COPY sysmodule/Atmosphere-libs/ /tmp/Atmosphere-libs-build/
+COPY sysmodule/Atmosphere-libs/ /workspace/sysmodule/Atmosphere-libs/
 
-RUN cd /tmp/Atmosphere-libs-build/libstratosphere && \
+RUN cd /workspace/sysmodule/Atmosphere-libs/libstratosphere && \
     make -j$(nproc) nx_release && \
     echo "libstratosphere.a built successfully"
 
@@ -79,24 +78,27 @@ RUN mkdir -p /opt/ryu_ldn_nx/libstratosphere/lib/nintendo_nx_arm64_armv8a/releas
     mkdir -p /opt/ryu_ldn_nx/libstratosphere/include && \
     mkdir -p /opt/ryu_ldn_nx/libvapours/include && \
     mkdir -p /opt/ryu_ldn_nx/config/templates && \
-    mkdir -p /opt/ryu_ldn_nx/libstratosphere && \
-    cp /tmp/Atmosphere-libs-build/libstratosphere/lib/nintendo_nx_arm64_armv8a/release/libstratosphere.a \
+    cp /workspace/sysmodule/Atmosphere-libs/libstratosphere/lib/nintendo_nx_arm64_armv8a/release/libstratosphere.a \
        /opt/ryu_ldn_nx/libstratosphere/lib/nintendo_nx_arm64_armv8a/release/ && \
-    cp -r /tmp/Atmosphere-libs-build/libstratosphere/include/* \
+    cp -r /workspace/sysmodule/Atmosphere-libs/libstratosphere/include/* \
           /opt/ryu_ldn_nx/libstratosphere/include/ && \
-    cp /tmp/Atmosphere-libs-build/libstratosphere/stratosphere.specs \
+    cp /workspace/sysmodule/Atmosphere-libs/libstratosphere/stratosphere.specs \
        /opt/ryu_ldn_nx/libstratosphere/ 2>/dev/null || true && \
-    cp /tmp/Atmosphere-libs-build/libstratosphere/discard-ehframe.ld \
+    cp /workspace/sysmodule/Atmosphere-libs/libstratosphere/discard-ehframe.ld \
        /opt/ryu_ldn_nx/libstratosphere/ 2>/dev/null || true && \
-    cp -r /tmp/Atmosphere-libs-build/libvapours/include/* \
+    cp -r /workspace/sysmodule/Atmosphere-libs/libvapours/include/* \
           /opt/ryu_ldn_nx/libvapours/include/ && \
-    cp -r /tmp/Atmosphere-libs-build/config/templates/* \
+    cp -r /workspace/sysmodule/Atmosphere-libs/config/templates/* \
           /opt/ryu_ldn_nx/config/templates/ && \
     echo "Installed pre-built libs to /opt/ryu_ldn_nx/" && \
     ls -la /opt/ryu_ldn_nx/libstratosphere/lib/nintendo_nx_arm64_armv8a/release/libstratosphere.a
 
-# Clean up build directory
-RUN rm -rf /tmp/Atmosphere-libs-build
+# Clean up build artifacts from /workspace (will be volume-mounted at runtime)
+RUN rm -rf /workspace/sysmodule/Atmosphere-libs/libstratosphere/build && \
+    rm -rf /workspace/sysmodule/Atmosphere-libs/libstratosphere/lib/nintendo_nx_arm64_armv8a && \
+    rm -rf /workspace/sysmodule/Atmosphere-libs/libstratosphere/out && \
+    rm -rf /workspace/sysmodule/Atmosphere-libs/libvapours/build 2>/dev/null || true && \
+    rm -rf /workspace/sysmodule/Atmosphere-libs/libvapours/out 2>/dev/null || true
 
 # Create workspace directory (will be mounted over at runtime)
 WORKDIR /workspace
