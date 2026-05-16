@@ -5,7 +5,7 @@ services:
   # Uses the pre-built image from GHCR which contains libstratosphere.a
   # and all devkitPro packages. No lib rebuilding needed.
   build:
-    image: ghcr.io/ethiquema/ryu_ldn_nx/dev:latest
+    image: ghcr.io/ethiquema/ryu_ldn_nx:latest
     build:
       context: .
       dockerfile: Dockerfile
@@ -41,7 +41,7 @@ services:
   # Clean all build artifacts + output
   # Usage: docker compose run --rm clean
   clean:
-    image: ghcr.io/ethiquema/ryu_ldn_nx/dev:latest
+    image: ghcr.io/ethiquema/ryu_ldn_nx:latest
     build:
       context: .
       dockerfile: Dockerfile
@@ -63,7 +63,7 @@ services:
   # NOTE: tests run on the host, not in the dev container — they use
   # g++ and don't need cross-compilation. This is kept as a fallback.
   test:
-    image: ghcr.io/ethiquema/ryu_ldn_nx/dev:latest
+    image: ghcr.io/ethiquema/ryu_ldn_nx:latest
     build:
       context: .
       dockerfile: Dockerfile
@@ -75,7 +75,7 @@ services:
   # GDB debugger for Switch (interactive)
   # Usage: docker compose run --rm debugger <SWITCH_IP> [PROCESS_ID]
   debugger:
-    image: ghcr.io/ethiquema/ryu_ldn_nx/dev:latest
+    image: ghcr.io/ethiquema/ryu_ldn_nx:latest
     build:
       context: .
       dockerfile: Dockerfile
@@ -88,7 +88,7 @@ services:
     entrypoint: ["/workspace/scripts/debugger/debug.sh"]
 
   shell:
-    image: ghcr.io/ethiquema/ryu_ldn_nx/dev:latest
+    image: ghcr.io/ethiquema/ryu_ldn_nx:latest
     build:
       context: .
       dockerfile: Dockerfile

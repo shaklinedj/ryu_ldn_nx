@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     # Use the pre-built dev container from GHCR so that libstratosphere
     # and all devkitPro packages are already available — no lib rebuild.
-    container: ghcr.io/ethiquema/ryu_ldn_nx/dev:latest
+    container: ghcr.io/ethiquema/ryu_ldn_nx:latest
     # CodeQL's LD_PRELOAD tracer adds significant per-compile-unit overhead.
     # Sysmodule build under tracing needs time.
     timeout-minutes: 180
