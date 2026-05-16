@@ -50,6 +50,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+          fetch-depth: 0
 
       - name: Install dependencies
         run: |
@@ -129,6 +130,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+          fetch-depth: 0
 
       - name: Fix git safe directory
         run: |
@@ -183,9 +185,14 @@ jobs:
           export DEVKITA64=$DEVKITPRO/devkitA64
           export PATH=$DEVKITPRO/tools/bin:$DEVKITA64/bin:$PATH
 
-          cd ${GITHUB_WORKSPACE}/sysmodule && make -j4 all
+          # Copy NPDM descriptor to /tmp to avoid filesystem issues on
+          # the GitHub Actions workspace bind-mount inside the container.
+          # npdmtool cannot parse JSON from the /__w/... bind-mount.
+          cp "${GITHUB_WORKSPACE}/sysmodule/res/app.json" /tmp/app.json
+
+          cd ${GITHUB_WORKSPACE}/sysmodule && make -j4 all APP_JSON=/tmp/app.json
           cd ${GITHUB_WORKSPACE}/overlay && make -j4 all
-          cd ${GITHUB_WORKSPACE}/sysmodule && make dist
+          cd ${GITHUB_WORKSPACE}/sysmodule && make dist APP_JSON=/tmp/app.json
 
       - name: Upload release ZIP
         uses: actions/upload-artifact@v4

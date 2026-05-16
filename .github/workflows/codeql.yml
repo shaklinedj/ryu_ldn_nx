@@ -35,6 +35,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+          fetch-depth: 0
 
       - name: Fix git safe directory
         run: |
@@ -103,7 +104,12 @@ jobs:
             exit 1
           fi
 
-          cd "${GITHUB_WORKSPACE}/sysmodule" && make -j4 all
+          # Copy NPDM descriptor to /tmp to avoid filesystem issues on
+          # the GitHub Actions workspace bind-mount inside the container.
+          # npdmtool cannot parse JSON from the /__w/... bind-mount.
+          cp "${GITHUB_WORKSPACE}/sysmodule/res/app.json" /tmp/app.json
+
+          cd "${GITHUB_WORKSPACE}/sysmodule" && make -j4 all APP_JSON=/tmp/app.json
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4
