@@ -149,6 +149,29 @@ jobs:
             exit 1
           fi
 
+      - name: Detach devkitPro packaging tools from LD_PRELOAD
+        run: |
+          for tool in npdmtool elf2nso build_pfs0 nacptool; do
+            real="/opt/devkitpro/tools/bin/$tool"
+            if [ ! -f "$real.real" ]; then
+              mv "$real" "$real.real"
+            fi
+            cat > "$real" <<'WRAPPER'
+          #!/bin/bash
+          self="${0}.real"
+          name="$(basename "$0")"
+          unset LD_PRELOAD
+          if [ "$name" = "npdmtool" ] && [ -f "$1" ]; then
+            staged="/tmp/$(basename "$1").$$"
+            cp "$1" "$staged"
+            shift
+            set -- "$staged" "$@"
+          fi
+          exec "$self" "$@"
+          WRAPPER
+            chmod +x "$real"
+          done
+
       - name: Build sysmodule + overlay + dist ZIP
         env:
           DEVKITPRO: /opt/devkitpro
