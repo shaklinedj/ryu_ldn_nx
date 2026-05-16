@@ -1,0 +1,29 @@
+# Only include what's needed for building the dev container image.
+# The Dockerfile builds libstratosphere.a from Atmosphere-libs sources,
+# so only the Atmosphere-libs submodule directory is needed in the context.
+# Everything else will be volume-mounted at runtime.
+
+# Exclude development files not needed in the build context
+.git
+.github
+docs
+overlay
+tests
+scripts
+tmp
+output
+*.zip
+*.log
+
+# Exclude build artifacts
+sysmodule/build
+sysmodule/*.elf
+sysmodule/*.nso
+sysmodule/*.nsp
+sysmodule/*.npdm
+overlay/build
+
+# Keep Atmosphere-libs (needed for libstratosphere.a build)
+# Docker's .dockerignore doesn't support "exclude everything except X"
+# well, so we use an allowlist approach — exclude everything we don't need
+# rather than trying to exclude all then include one directory.

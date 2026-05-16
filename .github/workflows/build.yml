@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: write
+  packages: read
 
 jobs:
   test:
@@ -73,7 +74,7 @@ jobs:
                   total_covered += sum(1 for l in lines if l.get('count', 0) > 0)
           avg = (total_covered / total_lines * 100) if total_lines > 0 else 0
           print(f'{avg:.1f}')
-          ")
+          ')
           echo "percent=$AVG" >> $GITHUB_OUTPUT
 
       - name: Update coverage badge
@@ -94,6 +95,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    container: ghcr.io/ethiquema/ryu_ldn_nx/dev:latest
 
     steps:
       - name: Checkout
@@ -101,8 +103,34 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Link pre-built libraries
+        run: |
+          # Symlink pre-built libstratosphere.a from the container image
+          # so the sysmodule Makefile finds it without rebuilding libs.
+          LIB_DIR="${GITHUB_WORKSPACE}/sysmodule/Atmosphere-libs/libstratosphere/lib/nintendo_nx_arm64_armv8a/release"
+          PREBUILT="/opt/ryu_ldn_nx/libstratosphere/lib/nintendo_nx_arm64_armv8a/release/libstratosphere.a"
+
+          if [ -f "$PREBUILT" ]; then
+            mkdir -p "$LIB_DIR"
+            ln -s "$PREBUILT" "$LIB_DIR/libstratosphere.a"
+            echo "Linked pre-built libstratosphere.a from container image"
+          else
+            echo "::error::Pre-built libstratosphere.a not found at $PREBUILT"
+            exit 1
+          fi
+
       - name: Build sysmodule + overlay + dist ZIP
-        run: docker compose run --rm build
+        env:
+          DEVKITPRO: /opt/devkitpro
+        run: |
+          export DEVKITPRO=/opt/devkitpro
+          export DEVKITARM=$DEVKITPRO/devkitARM
+          export DEVKITA64=$DEVKITPRO/devkitA64
+          export PATH=$DEVKITPRO/tools/bin:$DEVKITA64/bin:$PATH
+
+          cd ${GITHUB_WORKSPACE}/sysmodule && make -j4 all
+          cd ${GITHUB_WORKSPACE}/overlay && make -j4 all
+          cd ${GITHUB_WORKSPACE}/sysmodule && make dist
 
       - name: Upload release ZIP
         uses: actions/upload-artifact@v4
