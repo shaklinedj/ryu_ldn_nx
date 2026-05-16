@@ -130,6 +130,9 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Fix git safe directory
+        run: git config --global --add safe.directory '*'
+
       - name: Link pre-built libraries
         run: |
           # Symlink pre-built libstratosphere.a from the container image

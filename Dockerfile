@@ -53,7 +53,7 @@ RUN mkdir -p /root/.config/gdb && \
 RUN useradd -m -s /bin/bash devuser
 
 # Allow git to work with mounted volumes (different ownership inside Docker)
-RUN git config --global --add safe.directory '*'
+RUN git config --system --add safe.directory '*'
 
 # ---------------------------------------------------------------------------
 # Pre-build Atmosphere-libs (libstratosphere.a)
