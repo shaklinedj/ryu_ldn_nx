@@ -64,7 +64,13 @@ jobs:
           export DEVKITPRO=/opt/devkitpro
           export PATH=$DEVKITPRO/tools/bin:$PATH
           cp "${GITHUB_WORKSPACE}/sysmodule/res/app.json" /tmp/app.json
-          env -u LD_PRELOAD npdmtool /tmp/app.json "${GITHUB_WORKSPACE}/sysmodule/ryu_ldn_nx.npdm"
+          # LD_PRELOAD must be set to empty string, not unset. Setting it to
+          # empty prevents the dynamic linker from attempting to preload
+          # anything, which avoids polluting errno with ENOENT/EINVAL from the
+          # failed dlopen. Unsetting or -u leaves the inherited CodeQL LD_PRELOAD
+          # in the process image — the linker still tries and fails, leaving
+          # errno stale for npdmtool's strtoull() calls.
+          LD_PRELOAD="" npdmtool /tmp/app.json "${GITHUB_WORKSPACE}/sysmodule/ryu_ldn_nx.npdm"
 
       - name: Detach CodeQL tracer from non-compiler devkitPro packaging tools
         run: |
@@ -83,7 +89,7 @@ jobs:
             shift
             set -- "$staged" "$@"
           fi
-          exec env -u LD_PRELOAD "$self" "$@"
+          exec LD_PRELOAD="" "$self" "$@"
           EOF
             chmod +x "$real"
           done

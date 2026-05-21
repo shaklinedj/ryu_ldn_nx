@@ -147,7 +147,7 @@ jobs:
             shift
             set -- "$staged" "$@"
           fi
-          exec env -u LD_PRELOAD "$self" "$@"
+          exec LD_PRELOAD="" "$self" "$@"
           WRAPPER
             chmod +x "$real"
           done
