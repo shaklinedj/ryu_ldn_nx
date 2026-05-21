@@ -44,6 +44,18 @@ jobs:
           # for tools like git-describe. Create a symbolic ref to suppress the warning.
           git symbolic-ref HEAD refs/heads/"${GITHUB_REF_NAME:-develop}" 2>/dev/null || true
 
+      # Pre-generate the .npdm BEFORE Initialize CodeQL injects LD_PRELOAD.
+      # npdmtool uses strtoull() without resetting errno first. CodeQL's
+      # LD_PRELOAD sets errno to a nonzero value in every child process (even
+      # after env -u or LD_PRELOAD=""), so any step after init gets polluted
+      # errno. Running before init ensures a clean process environment.
+      - name: Pre-generate NPDM descriptor
+        run: |
+          export DEVKITPRO=/opt/devkitpro
+          export PATH=$DEVKITPRO/tools/bin:$PATH
+          cp "${GITHUB_WORKSPACE}/sysmodule/res/app.json" /tmp/app.json
+          npdmtool /tmp/app.json "${GITHUB_WORKSPACE}/sysmodule/ryu_ldn_nx.npdm"
+
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:
@@ -52,25 +64,6 @@ jobs:
 
       - name: Build host tests (CodeQL tracing)
         run: cd tests && make clean && make COVERAGE=1 test
-
-      - name: Pre-generate NPDM descriptor outside CodeQL tracing
-        # npdmtool uses strtoull() to parse hex fields from JSON, but does NOT
-        # reset errno before the call. CodeQL's LD_PRELOAD (with unresolved
-        # ${LIB}_${PLATFORM}_trace.so) leaves errno polluted after the dynamic
-        # linker fails to preload it. The stale errno triggers npdmtool's
-        # error branch even though strtoull succeeds. Pre-generating the .npdm
-        # file in a clean environment sidesteps this entirely.
-        run: |
-          export DEVKITPRO=/opt/devkitpro
-          export PATH=$DEVKITPRO/tools/bin:$PATH
-          cp "${GITHUB_WORKSPACE}/sysmodule/res/app.json" /tmp/app.json
-          # LD_PRELOAD must be set to empty string, not unset. Setting it to
-          # empty prevents the dynamic linker from attempting to preload
-          # anything, which avoids polluting errno with ENOENT/EINVAL from the
-          # failed dlopen. Unsetting or -u leaves the inherited CodeQL LD_PRELOAD
-          # in the process image — the linker still tries and fails, leaving
-          # errno stale for npdmtool's strtoull() calls.
-          LD_PRELOAD="" npdmtool /tmp/app.json "${GITHUB_WORKSPACE}/sysmodule/ryu_ldn_nx.npdm"
 
       - name: Detach CodeQL tracer from non-compiler devkitPro packaging tools
         run: |
