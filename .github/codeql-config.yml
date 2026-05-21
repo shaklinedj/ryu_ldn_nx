@@ -1,0 +1,8 @@
+name: CodeQL strict configuration
+paths-ignore:
+  - tests/**
+  - overlay/**
+  - docs/**
+  - scripts/**
+queries:
+  - uses: security-and-quality

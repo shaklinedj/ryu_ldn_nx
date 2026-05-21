@@ -1,7 +1,11 @@
 services:
   # Build everything + package into output/ and ZIP
   # Usage: docker compose run --rm build
+  #
+  # Uses the pre-built image from GHCR which contains libstratosphere.a
+  # and all devkitPro packages. No lib rebuilding needed.
   build:
+    image: ghcr.io/ethiquema/ryu_ldn_nx:latest
     build:
       context: .
       dockerfile: Dockerfile
@@ -12,8 +16,16 @@ services:
     command:
       - |
         set -e
-        echo "[build] 🔨 Building libstratosphere..."
-        cd /workspace/sysmodule/Atmosphere-libs/libstratosphere && make -j4 nx_release
+        # Symlink pre-built libstratosphere.a from the container image
+        # into the checked-out workspace so the sysmodule Makefile finds it
+        # without rebuilding from source.
+        LIB_DIR="/workspace/sysmodule/Atmosphere-libs/libstratosphere/lib/nintendo_nx_arm64_armv8a/release"
+        PREBUILT="/opt/ryu_ldn_nx/libstratosphere/lib/nintendo_nx_arm64_armv8a/release/libstratosphere.a"
+        if [ -f "$PREBUILT" ] && [ ! -f "$LIB_DIR/libstratosphere.a" ]; then
+          mkdir -p "$LIB_DIR"
+          ln -s "$PREBUILT" "$LIB_DIR/libstratosphere.a"
+          echo "[build] Linked pre-built libstratosphere.a"
+        fi
 
         echo "[build] 🔨 Building sysmodule..."
         cd /workspace/sysmodule && make -j4 all
@@ -29,6 +41,7 @@ services:
   # Clean all build artifacts + output
   # Usage: docker compose run --rm clean
   clean:
+    image: ghcr.io/ethiquema/ryu_ldn_nx:latest
     build:
       context: .
       dockerfile: Dockerfile
@@ -47,7 +60,10 @@ services:
         echo "[clean] ✅ Done"
 
   # Run tests (host binary with g++)
+  # NOTE: tests run on the host, not in the dev container — they use
+  # g++ and don't need cross-compilation. This is kept as a fallback.
   test:
+    image: ghcr.io/ethiquema/ryu_ldn_nx:latest
     build:
       context: .
       dockerfile: Dockerfile
@@ -59,6 +75,7 @@ services:
   # GDB debugger for Switch (interactive)
   # Usage: docker compose run --rm debugger <SWITCH_IP> [PROCESS_ID]
   debugger:
+    image: ghcr.io/ethiquema/ryu_ldn_nx:latest
     build:
       context: .
       dockerfile: Dockerfile
@@ -71,6 +88,7 @@ services:
     entrypoint: ["/workspace/scripts/debugger/debug.sh"]
 
   shell:
+    image: ghcr.io/ethiquema/ryu_ldn_nx:latest
     build:
       context: .
       dockerfile: Dockerfile
