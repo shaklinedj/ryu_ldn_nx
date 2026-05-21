@@ -53,6 +53,19 @@ jobs:
       - name: Build host tests (CodeQL tracing)
         run: cd tests && make clean && make COVERAGE=1 test
 
+      - name: Pre-generate NPDM descriptor outside CodeQL tracing
+        # npdmtool uses strtoull() to parse hex fields from JSON, but does NOT
+        # reset errno before the call. CodeQL's LD_PRELOAD (with unresolved
+        # ${LIB}_${PLATFORM}_trace.so) leaves errno polluted after the dynamic
+        # linker fails to preload it. The stale errno triggers npdmtool's
+        # error branch even though strtoull succeeds. Pre-generating the .npdm
+        # file in a clean environment sidesteps this entirely.
+        run: |
+          export DEVKITPRO=/opt/devkitpro
+          export PATH=$DEVKITPRO/tools/bin:$PATH
+          cp "${GITHUB_WORKSPACE}/sysmodule/res/app.json" /tmp/app.json
+          env -u LD_PRELOAD npdmtool /tmp/app.json "${GITHUB_WORKSPACE}/sysmodule/ryu_ldn_nx.npdm"
+
       - name: Detach CodeQL tracer from non-compiler devkitPro packaging tools
         run: |
           for tool in npdmtool elf2nso build_pfs0 nacptool; do
@@ -64,11 +77,6 @@ jobs:
           #!/bin/bash
           self="${0}.real"
           name="$(basename "$0")"
-          # npdmtool fails to parse the input JSON when it lives on the
-          # GitHub Actions workspace bind-mount (/__w/...) inside the
-          # container, even though the file content is byte-identical to
-          # what works elsewhere. Workaround: copy input to /tmp (container-
-          # native fs) and rewrite arg before exec.
           if [ "$name" = "npdmtool" ] && [ -f "$1" ]; then
             staged="/tmp/$(basename "$1").$$"
             cp "$1" "$staged"
@@ -102,11 +110,6 @@ jobs:
             echo "::error::Pre-built libstratosphere.a not found at $PREBUILT — container image may be outdated"
             exit 1
           fi
-
-          # Copy NPDM descriptor to /tmp to avoid filesystem issues on
-          # the GitHub Actions workspace bind-mount inside the container.
-          # npdmtool cannot parse JSON from the /__w/... bind-mount.
-          cp "${GITHUB_WORKSPACE}/sysmodule/res/app.json" /tmp/app.json
 
           cd "${GITHUB_WORKSPACE}/sysmodule" && make -j4 all APP_JSON=/tmp/app.json
 
