@@ -164,14 +164,13 @@ jobs:
           #!/bin/bash
           self="${0}.real"
           name="$(basename "$0")"
-          unset LD_PRELOAD
           if [ "$name" = "npdmtool" ] && [ -f "$1" ]; then
             staged="/tmp/$(basename "$1").$$"
             cp "$1" "$staged"
             shift
             set -- "$staged" "$@"
           fi
-          exec "$self" "$@"
+          exec env -u LD_PRELOAD "$self" "$@"
           WRAPPER
             chmod +x "$real"
           done

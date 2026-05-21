@@ -136,7 +136,6 @@ jobs:
           #!/bin/bash
           self="${0}.real"
           name="$(basename "$0")"
-          unset LD_PRELOAD
           # npdmtool fails to parse the input JSON when it lives on the
           # GitHub Actions workspace bind-mount (/__w/...) inside the
           # container, even though the file content is byte-identical to
@@ -148,7 +147,7 @@ jobs:
             shift
             set -- "$staged" "$@"
           fi
-          exec "$self" "$@"
+          exec env -u LD_PRELOAD "$self" "$@"
           WRAPPER
             chmod +x "$real"
           done
