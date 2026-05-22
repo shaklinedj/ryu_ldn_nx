@@ -190,7 +190,7 @@ $(OUTPUT).elf :	$(OFILES)
 
 $(OFILES) : $(ATMOSPHERE_LIBRARIES_DIR)/libstratosphere/$(ATMOSPHERE_LIBRARY_DIR)/libstratosphere.a
 
-%.npdm  :   %.npdm.json
+%.npdm  :   $(APP_JSON)
 	@echo built ... $< $@
 	@npdmtool $< $@
 	@echo built ... $(notdir $@)
