@@ -34,16 +34,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && pip3 install --break-system-packages gcovr
 
-# Install Switch development libraries via dkp-pacman
-RUN dkp-pacman -Syyu --noconfirm && \
-    dkp-pacman -S --noconfirm \
-    switch-dev \
-    libnx \
-    switch-curl \
-    switch-zlib \
-    switch-mbedtls \
-    switch-miniupnpc \
-    devkitA64-gdb
+# Switch development libraries are pre-installed in the devkitpro/devkita64
+# base image. No dkp-pacman install step is needed — the base image already
+# contains switch-dev (meta package), libnx, switch-curl, switch-zlib,
+# switch-mbedtls, switch-miniupnpc, and devkitA64-gdb along with all
+# dependencies. Running dkp-pacman -Syyu would attempt to re-download
+# package databases from pkg.devkitpro.org, which is behind Cloudflare
+# and returns 403 to non-browser requests, breaking the build.
 
 # Configure GDB to allow auto-loading scripts from any path
 RUN mkdir -p /root/.config/gdb && \
