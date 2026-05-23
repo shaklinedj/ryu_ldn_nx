@@ -118,8 +118,8 @@ constexpr const char* LOG_PATH = "sdmc:/config/ryu_ldn_nx/ryu_ldn_nx.log";
 // Default Values - Server
 // -----------------------------------------------------------------------------
 
-/** @brief Default server hostname (official Ryujinx LDN server) */
-constexpr const char* DEFAULT_HOST = "ldn.ryujinx.app";
+/** @brief Default server hostname (Temporary private RyuLDN server for development and testing) */
+constexpr const char* DEFAULT_HOST = "90.93.156.13";
 
 /** @brief Default server port */
 constexpr uint16_t DEFAULT_PORT = 30456;
@@ -286,10 +286,10 @@ struct Config {
  * Returns a Config struct populated with sensible defaults.
  * Use this as a starting point before calling load_config().
  *
- * @return Config struct with default values
+ * @return Config struct with default values on production release
  *
  * ## Default Values
- * - server.host: "ldn.ryujinx.app"
+ * - server.host: "90.93.156.13"
  * - server.port: 30456
  * - server.use_tls: true
  * - network.connect_timeout_ms: 5000
@@ -308,7 +308,6 @@ struct Config {
  * - server.use_tls: parsed and stored but not consumed (no TLS implementation)
  * - network.ping_interval_ms: parsed and stored but forced to 0 in client (server drives pings)
  * - ldn.interface_name: parsed and stored but not consumed (always uses auto-detect)
- * - [perf] section: parsed but entirely ignored (no PerfConfig struct, no runtime consumption)
  *
  * ## Bool Parsing
  * Accepts: 0, f, F, n, N → false; anything else → true (1, true, yes, etc.)
