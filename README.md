@@ -35,13 +35,11 @@ ryu_ldn_nx registers **three IPC services** simultaneously:
 
 3. **`ryu:cfg`** — Custom IPC service the Tesla overlay talks to for live configuration and status display.
 
-## Features
+## Planned Features
 
 - **Plug and Play**: Install like any sysmodule, no configuration required
 - **Automatic Connection**: Connects to Ryujinx servers automatically
 - **All LDN Games**: Works with any game supporting local wireless multiplayer
-- **PIA Compatible**: Broadcast delivery ensures mesh discovery works (Smash Bros, MK8DX, etc.)
-- **Low Overhead**: Minimal impact on system performance (384 KB shared heap)
 - **Tesla Overlay**: Live status, configuration, and connection management
 - **P2P Support**: Optional direct peer-to-peer via UPnP to reduce server load
 
