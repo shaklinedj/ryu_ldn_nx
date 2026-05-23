@@ -2,13 +2,14 @@ name: Build
 
 on:
   push:
-    branches: [main, master, develop]
+    branches: [develop]
   pull_request:
-    branches: [main, master]
+    branches: [main, develop]
   workflow_dispatch:
 
 permissions:
   contents: write
+  packages: read
 
 jobs:
   test:
@@ -59,7 +60,7 @@ jobs:
         id: coverage
         run: |
           python3 scripts/check-coverage.py --min 0 --root . --json /tmp/cov.json || true
-          AVG=$(python3 -c "
+          python3 <<'PYEOF' > /tmp/avg.txt
           import json
           with open('/tmp/cov.json') as f:
               d = json.load(f)
@@ -73,8 +74,8 @@ jobs:
                   total_covered += sum(1 for l in lines if l.get('count', 0) > 0)
           avg = (total_covered / total_lines * 100) if total_lines > 0 else 0
           print(f'{avg:.1f}')
-          ")
-          echo "percent=$AVG" >> $GITHUB_OUTPUT
+          PYEOF
+          echo "percent=$(cat /tmp/avg.txt)" >> $GITHUB_OUTPUT
 
       - name: Update coverage badge
         if: github.event_name == 'push'
@@ -93,15 +94,81 @@ jobs:
     name: Build & Package
     runs-on: ubuntu-latest
     needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    container: ghcr.io/ethiquema/ryu_ldn_nx:latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           submodules: recursive
+          fetch-depth: 0
+
+      - name: Fix git safe directory
+        run: |
+          git config --global --add safe.directory '*'
+          git symbolic-ref HEAD refs/heads/"${GITHUB_REF_NAME:-develop}" 2>/dev/null || true
+
+      - name: Link pre-built libraries
+        run: |
+          # Symlink pre-built libstratosphere.a from the container image
+          # so the sysmodule Makefile finds it without rebuilding libs.
+          LIB_DIR="${GITHUB_WORKSPACE}/sysmodule/Atmosphere-libs/libstratosphere/lib/nintendo_nx_arm64_armv8a/release"
+          PREBUILT="/opt/ryu_ldn_nx/libstratosphere/lib/nintendo_nx_arm64_armv8a/release/libstratosphere.a"
+
+          if [ -f "$PREBUILT" ]; then
+            mkdir -p "$LIB_DIR"
+            ln -s "$PREBUILT" "$LIB_DIR/libstratosphere.a"
+            echo "Linked pre-built libstratosphere.a from container image"
+          else
+            echo "::error::Pre-built libstratosphere.a not found at $PREBUILT"
+            exit 1
+          fi
+
+      - name: Detach devkitPro packaging tools from CodeQL LD_PRELOAD
+        run: |
+          for tool in npdmtool elf2nso build_pfs0 nacptool; do
+            real="/opt/devkitpro/tools/bin/$tool"
+            if [ ! -f "$real.real" ]; then
+              mv "$real" "$real.real"
+            fi
+            cat > "$real" <<'WRAPPER'
+          #!/bin/bash
+          self="${0}.real"
+          name="$(basename "$0")"
+          # npdmtool fails to parse the input JSON when it lives on the
+          # GitHub Actions workspace bind-mount (/__w/...) inside the
+          # container, even though the file content is byte-identical to
+          # what works elsewhere. Workaround: copy input to /tmp (container-
+          # native fs) and rewrite arg before exec.
+          if [ "$name" = "npdmtool" ] && [ -f "$1" ]; then
+            staged="/tmp/$(basename "$1").$$"
+            cp "$1" "$staged"
+            shift
+            set -- "$staged" "$@"
+          fi
+          exec env -u LD_PRELOAD "$self" "$@"
+          WRAPPER
+            chmod +x "$real"
+          done
 
       - name: Build sysmodule + overlay + dist ZIP
-        run: docker compose run --rm build
+        env:
+          DEVKITPRO: /opt/devkitpro
+        run: |
+          export DEVKITPRO=/opt/devkitpro
+          export DEVKITARM=$DEVKITPRO/devkitARM
+          export DEVKITA64=$DEVKITPRO/devkitA64
+          export PATH=$DEVKITPRO/tools/bin:$DEVKITA64/bin:$PATH
+
+          # Copy NPDM descriptor to /tmp to avoid filesystem issues on
+          # the GitHub Actions workspace bind-mount inside the container.
+          # npdmtool cannot parse JSON from the /__w/... bind-mount.
+          cp "${GITHUB_WORKSPACE}/sysmodule/res/app.json" /tmp/app.json
+
+          cd ${GITHUB_WORKSPACE}/sysmodule && make -j4 all APP_JSON=/tmp/app.json
+          cd ${GITHUB_WORKSPACE}/overlay && make -j4 all
+          cd ${GITHUB_WORKSPACE}/sysmodule && make dist APP_JSON=/tmp/app.json
 
       - name: Upload release ZIP
         uses: actions/upload-artifact@v4
@@ -122,7 +189,6 @@ jobs:
     name: Create Pre-Release
     runs-on: ubuntu-latest
     needs: build
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
     steps:
       - name: Checkout
@@ -152,7 +218,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create Pre-Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: dev
           name: "Development Build (${{ steps.sha.outputs.short }})"
@@ -161,7 +227,7 @@ jobs:
             ## Development Build
 
             **Commit:** ${{ github.sha }}
-            **Branch:** main
+            **Branch:** develop
             **Date:** ${{ github.event.head_commit.timestamp }}
 
             ---
@@ -170,7 +236,7 @@ jobs:
 
             This is an automatic development build. **No guarantee of functionality.**
 
-            These builds are automatically generated on each commit to the main branch and may
+            These builds are automatically generated on each commit to the develop branch and may
             contain bugs, incomplete features, or regressions.
 
             **Use at your own risk.**
