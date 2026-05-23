@@ -6,6 +6,15 @@
 
 Nintendo Switch sysmodule enabling online multiplayer via Ryujinx LDN servers — no complex network setup required.
 
+
+## 🚧 Work in Progress
+
+This project is still under development and is not ready for release yet.
+
+If you want to test the project and contribute, please use a private RyuLDN server, please DO NOT USE the official Ryujinx LDN servers with this project (ldn.ryujinx.app).
+
+A hosted testing instance is also available via IP address at 90.93.156.13.
+
 ## What is ryu_ldn_nx?
 
 ryu_ldn_nx is an Atmosphere sysmodule that intercepts local wireless (LDN) game traffic and routes it through Ryujinx's LDN servers over TCP. This allows Switch users with CFW to play online multiplayer games without:
@@ -25,21 +34,6 @@ ryu_ldn_nx registers **three IPC services** simultaneously:
 2. **`bsd:u` MITM** — Intercepts BSD socket calls. Sockets that `bind`/`connect` to the LDN subnet `10.114.x.x` are tracked as proxy sockets and their traffic is tunneled through `ProxyData` packets to the Ryujinx server. This is how gameplay UDP/TCP traffic (PIA mesh protocol) reaches other peers without pcap.
 
 3. **`ryu:cfg`** — Custom IPC service the Tesla overlay talks to for live configuration and status display.
-
-### PIA Protocol Support
-
-Games use Nintendo's PIA library for peer-to-peer mesh networking on top of LDN. PIA sends broadcast UDP packets for mesh discovery and unicast UDP/TCP for game data. ryu_ldn_nx ensures PIA compatibility by:
-
-- Delivering broadcast UDP packets to **all** matching proxy sockets (not just the first one)
-- Maintaining IP address consistency between `GetIpv4Address()` and `NetworkInfo.ldn.nodes[].ipv4Address`
-- Supporting both relay (via master server) and P2P (via UPnP) proxy modes
-
-### Connection Resilience
-
-- **Fast retry**: First reconnection attempt uses 200ms delay, then exponential backoff (3s → 30s cap)
-- **TCP keepalive**: 30s idle / 10s interval / 5 probes — detects dead connections
-- **Graceful disconnect**: `shutdown(SHUT_WR)` before `close()` for clean TCP teardowns
-- **Auto-reconnect**: Configurable retries (`0` disables) with jitter to prevent thundering herd
 
 ## Features
 
@@ -72,7 +66,7 @@ Create `sdmc:/config/ryu_ldn_nx/config.ini` (or let the sysmodule auto-create it
 
 ```ini
 [server]
-host = 150.230.119.252
+host = 90.93.156.13
 port = 30456
 use_tls = 0                      ; NOT IMPLEMENTED — no TLS code exists
 
@@ -83,7 +77,7 @@ max_reconnect_attempts = 5       ; 0 = disable auto-reconnect
 
 [ldn]
 enabled = 1
-disable_p2p = 0
+disable_p2p = 1
 
 [debug]
 enabled = 0
