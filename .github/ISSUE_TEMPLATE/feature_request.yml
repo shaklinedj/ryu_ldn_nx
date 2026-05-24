@@ -1,0 +1,91 @@
+name: Feature Suggestion
+description: "Suggest a feature or improvement for ryu\_ldn\_nx (sysmodule, overlay, or documentation)"
+title: "[FEATURE] "
+labels: [enhancement]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: "This form is for `ryu_ldn_nx` only"
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: "Which component would this affect?"
+      options:
+        - Sysmodule
+        - Overlay
+        - Documentation
+        - Build / CI
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: "What problem are you trying to solve?"
+      description: "What you cannot do today, or what is frustrating about the current behavior."
+      placeholder: |
+        I'm always frustrated when [...]. Currently, the only workaround is [...], which doesn't handle [...].
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed_solution
+    attributes:
+      label: "What should ryu\_ldn\_nx do instead?"
+      description: "Describe the ideal behavior clearly."
+      placeholder: |
+        ryu_ldn_nx should support [...], which would allow [...].
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: "Alternatives you have considered"
+      description: "What other approaches or workarounds have you tried?"
+      placeholder: |
+        I considered using [...], but it doesn't work because [...].
+    validations:
+      required: false
+
+  - type: textarea
+    id: use_case
+    attributes:
+      label: "Concrete use case"
+      description: "A specific scenario where this feature would help."
+      placeholder: |
+        When playing [Game] with [N players], currently [problem]. With this feature, [improvement].
+    validations:
+      required: true
+
+  - type: dropdown
+    id: impact
+    attributes:
+      label: "How impactful would this feature be?"
+      options:
+        - "Critical — Cannot use ryu\_ldn\_nx without it"
+        - High — Major improvement to everyday use
+        - Medium — Nice to have, workaround exists
+        - Low — Minor convenience
+    validations:
+      required: true
+
+  - type: textarea
+    id: implementation_notes
+    attributes:
+      label: "Implementation Notes (optional)"
+      description: "Technical suggestions for how this could be implemented. Pointers to relevant source files welcome."
+      placeholder: |
+        This could be implemented in [module] by [...].
+    validations:
+      required: false
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: "Additional Context"
+      description: "Mockups, screenshots, links to related issues, or any other information."
+    validations:
+      required: false

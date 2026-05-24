@@ -1,0 +1,59 @@
+name: Whitelist Request
+description: "Request that a game be added to the LDN whitelist in ryu\_ldn\_nx so it can use Local Wireless multiplayer"
+title: "[WHITELIST] "
+labels: [whitelist-request]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form to request that a game be **added to the LDN whitelist** so it can use Local Wireless multiplayer via `ryu_ldn_nx`.
+
+        Games not in the whitelist cannot connect to LDN sessions at all. This is different from a game that connects but has issues — use **Game Compatibility Report** for that.
+
+        > 💡 **How to find your Title ID:**
+        > Check `sdmc:/atmosphere/contents/` on your SD card. Each game has a folder named with its Title ID (e.g., `0100152000022000`).
+
+        **Not for:**
+        - A game that connects but has bugs → **Game Compatibility Report**
+        - A game version with a known security vulnerability → **Vulnerable Game Version**
+        - A sysmodule bug unrelated to a specific game → **Bug Report**
+
+  - type: input
+    id: game_title
+    attributes:
+      label: "Game Title"
+      description: "Full official game title."
+      placeholder: "e.g., Mario Kart 8 Deluxe"
+    validations:
+      required: true
+
+  - type: input
+    id: game_title_id
+    attributes:
+      label: "Title ID (Program ID)"
+      description: "Hexadecimal Title ID from `sdmc:/atmosphere/contents/`. Required — this is what goes in the whitelist."
+      placeholder: "e.g., 0x0100152000022000"
+    validations:
+      required: true
+
+  - type: input
+    id: game_version
+    attributes:
+      label: "Game Version"
+      description: "The version you are running. Some games only support LDN in specific versions."
+      placeholder: "e.g., v2.4.0"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: "Pre-submission"
+      options:
+        - label: "I searched existing whitelist requests and issues for this game"
+          required: true
+        - label: "I confirmed this game is not already in the whitelist"
+          required: true
+        - label: "I verified the Title ID is correct"
+          required: true

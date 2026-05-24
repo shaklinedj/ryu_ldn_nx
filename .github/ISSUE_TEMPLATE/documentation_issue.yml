@@ -1,0 +1,68 @@
+name: Documentation Issue
+description: "Report an error, inaccuracy, or missing information in ryu\_ldn\_nx documentation"
+title: "[DOCS] "
+labels: [documentation, bug]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form to report errors, inaccuracies, or missing information in `ryu_ldn_nx` documentation (README, Astro docs site, config example, overlay guide, etc.).
+
+        **Not for:**
+        - Bug reports → use **Bug Report**
+        - Feature requests → use **Feature Suggestion**
+        - Game compatibility → use **Game Compatibility Report**
+
+  - type: dropdown
+    id: doc_location
+    attributes:
+      label: "Where is the documentation issue?"
+      options:
+        - README.md
+        - Astro docs site (docs/)
+        - Config example (config.ini.example)
+        - Overlay guide
+        - CONTRIBUTING.md
+        - Code comments / Doxygen
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: doc_url
+    attributes:
+      label: "Link to the documentation page (if applicable)"
+      description: "URL or file path where the issue is located."
+      placeholder: "e.g., https://ethiquema.github.io/ryu_ldn_nx/guides/configuration/"
+    validations:
+      required: false
+
+  - type: textarea
+    id: current_state
+    attributes:
+      label: "What does the documentation currently say?"
+      description: "Copy-paste the current text that is wrong or incomplete."
+      placeholder: |
+        The configuration page says `ping_interval` controls keepalive frequency.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected_state
+    attributes:
+      label: "What should it say instead?"
+      description: "The correct information, or what should be added."
+      placeholder: |
+        `ping_interval` is parsed but not consumed — the server drives keepalive pings.
+        This should be noted with a warning like the other unused settings.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: "Pre-submission"
+      options:
+        - label: "I searched existing issues for this documentation issue"
+          required: true

@@ -1,0 +1,127 @@
+name: Pull Request
+description: "Submit a change to ryu_ldn_nx"
+title: ""
+labels: []
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for your contribution! Please fill out this form completely.
+        All commits should be DCO-signed (`git commit -s`).
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: Brief description of what this PR changes and why.
+      placeholder: |
+        This PR [adds/fixes/changes/removes] [what] in order to [why].
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: change_type
+    attributes:
+      label: Type of Change
+      options:
+        - label: Bug fix (non-breaking change that fixes an issue)
+          required: false
+        - label: New feature (non-breaking change that adds functionality)
+          required: false
+        - label: Breaking change (fix or feature that would cause existing behavior to change)
+          required: false
+        - label: Documentation update
+          required: false
+        - label: Code refactoring
+          required: false
+        - label: Build/CI changes
+          required: false
+
+  - type: input
+    id: related_issues
+    attributes:
+      label: Related Issues
+      description: "Reference related issue numbers (e.g., Fixes #123, Related to #456)."
+      placeholder: "Fixes #"
+    validations:
+      required: false
+
+  - type: textarea
+    id: changes
+    attributes:
+      label: Changes Made
+      description: List the key changes in this PR.
+      placeholder: |
+        -
+    validations:
+      required: true
+
+  - type: textarea
+    id: test_steps
+    attributes:
+      label: How to Test
+      description: Step-by-step instructions for verifying this change.
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: tested_on
+    attributes:
+      label: Tested on
+      options:
+        - label: Nintendo Switch with Atmosphere
+          required: false
+        - label: Connection to LDN server (relay mode)
+          required: false
+        - label: Connection to LDN server (P2P mode)
+          required: false
+        - label: Game tested (specify title and version)
+          required: false
+        - label: Build succeeds (`docker compose run --rm build`)
+          required: false
+        - label: Unit tests pass (`docker compose run --rm test`)
+          required: false
+
+  - type: checkboxes
+    id: code_quality
+    attributes:
+      label: Code Quality
+      options:
+        - label: Code follows project style (4-space indent, same-line braces, Doxygen `/** */` on public symbols)
+          required: false
+        - label: No dynamic allocations in hot paths (fixed buffers, `constinit` statics, or stack-allocated work areas)
+          required: false
+        - label: Protocol structures maintain binary compatibility with C# server (12-byte `LdnHeader`, no `Pack=1`)
+          required: false
+
+  - type: checkboxes
+    id: testing_docs
+    attributes:
+      label: Testing & Documentation
+      options:
+        - label: Changes are tested thoroughly
+          required: false
+        - label: No new compiler warnings introduced
+          required: false
+        - label: Documentation updated if needed (comments, README, docs/)
+          required: false
+
+  - type: checkboxes
+    id: dco
+    attributes:
+      label: DCO
+      options:
+        - label: All commits are signed off using `git commit -s`
+          required: false
+
+  - type: markdown
+    attributes:
+      value: |
+        By submitting this pull request, I confirm that my contribution is made under the terms of the GPLv3 license and that I have the right to submit it under the open source license indicated in the file.
+
+        **Note**: Use `git commit -s` to add the `Signed-off-by:` line automatically from your git config. Never hardcode a developer name or email.
