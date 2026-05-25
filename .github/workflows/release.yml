@@ -280,7 +280,7 @@ jobs:
           cat CHANGELOG_RELEASE.md
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           name: ryu_ldn_nx ${{ steps.version.outputs.version }}
           body_path: CHANGELOG_RELEASE.md
