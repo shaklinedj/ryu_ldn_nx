@@ -4,7 +4,7 @@
 
 [server]
 ; Server hostname or IP address
-host = 150.230.119.252
+host = 90.93.156.13
 ; Server port
 port = 30456
 ; Use TLS encryption (0/1) — NOT IMPLEMENTED: always plain TCP regardless of this setting
@@ -27,7 +27,7 @@ enabled = 1
 passphrase =
 ; Network interface (empty = auto)
 interface =
-; Disable P2P proxy (0/1/true/false/yes/no)
+; Disable P2P proxy (0 = false | 1 = true) : DO NOT SET at 0 / false (P2P is not fully implemented and in development)
 disable_p2p = 1
 
 [debug]
@@ -37,18 +37,3 @@ enabled = 0
 level = 1
 ; Log to file (0/1/true/false/yes/no)
 log_to_file = 0
-
-[perf]
-; NOT YET WIRED — these settings are parsed but not consumed by the runtime.
-; They have no effect. Kept for future implementation.
-
-; enable_larger_socket_buffers = 0
-; socket_recv_buffer_kb = 64
-; socket_send_buffer_kb = 64
-; enable_bg_thread_high_priority = 0
-; bg_thread_priority = 8
-; enable_tight_drain_loop = 0
-; recv_timeout_ms = 20
-; bg_thread_sleep_ms = 10
-; enable_manager_mutex_release = 0
-; enable_async_send_queue = 0

@@ -77,7 +77,7 @@ ryu_ldn_nx est un sysmodule Atmosphere qui remplace ldn_mitm pour permettre aux 
                                              ▼
                               ┌──────────────────────────┐
                               │    Serveur ryu_ldn       │
-                              │   (ldn.ryujinx.app)      │
+                              │   (90.93.156.13)      │
                               │                          │
                               │  - Matchmaking           │
                               │  - Session management    │
@@ -184,7 +184,7 @@ class IUserLocalCommunicationService {
 ```ini
 [server]
 ; Adresse du serveur ryu_ldn
-host = ldn.ryujinx.app
+host = 90.93.156.13
 port = 30456
 
 ; Serveur de fallback (optionnel)
