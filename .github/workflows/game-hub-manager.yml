@@ -1,0 +1,623 @@
+name: Game Hub Manager
+
+on:
+  issues:
+    types: [opened, edited, closed, reopened, labeled, unlabeled]
+  release:
+    types: [published]
+  schedule:
+    - cron: '0 2 * * *'
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  label-new-report:
+    name: Tag new reports as pending review
+    runs-on: ubuntu-latest
+    if: >
+      github.event_name == 'issues' &&
+      contains(fromJSON('["opened", "reopened"]'), github.event.action) &&
+      (contains(github.event.issue.labels.*.name, 'game-issue') ||
+       contains(github.event.issue.labels.*.name, 'vulnerable-game'))
+    steps:
+      - name: Ensure required labels exist on repo
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+            for label in "game-report:e1f5fe:Auto-maintained hub for game reports" "game-issue:fef2e2:Game problem report - awaiting review" "pending-review:fef2e2:Awaiting maintainer review" "confirmed:d4f5d4:Verified by maintainer" "needs-retest:fff3cd:Retest requested after new release" "stale:f0f0f0:No response after 7 days" "wontfix:e2e2e2:Will not be fixed"; do
+            NAME=$(echo "$label" | cut -d: -f1)
+            COLOR=$(echo "$label" | cut -d: -f2)
+            DESC=$(echo "$label" | cut -d: -f3)
+            gh label create "$NAME" --color "$COLOR" --description "$DESC" 2>/dev/null || true
+            done
+
+      - name: Add pending-review label
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          gh issue edit "$ISSUE_NUMBER" --add-label "pending-review"
+
+  find-or-create-hub:
+    name: Find or create game hub
+    runs-on: ubuntu-latest
+    if: >
+      github.event_name == 'issues' &&
+      github.event.action == 'opened' &&
+      (contains(github.event.issue.labels.*.name, 'game-issue') ||
+       contains(github.event.issue.labels.*.name, 'vulnerable-game'))
+    steps:
+      - name: Extract Title ID from issue body
+        id: game
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.issue.body || '';
+            const titleIdMatch = body.match(/### Title ID\s*\n\s*\n(.+)/);
+            const gameTitleMatch = body.match(/### Game Title\s*\n\s*\n(.+)/);
+            let titleId = (titleIdMatch ? titleIdMatch[1].trim() : '').toLowerCase().replace(/^0x/, '');
+            const gameTitle = gameTitleMatch ? gameTitleMatch[1].trim() : '';
+            core.setOutput('title_id', titleId);
+            core.setOutput('game_title', gameTitle);
+
+      - name: Search for existing hub
+        id: search
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TITLE_ID: ${{ steps.game.outputs.title_id }}
+          GAME_TITLE: ${{ steps.game.outputs.game_title }}
+        run: |
+          TITLE_ID_CLEAN=$(echo "$TITLE_ID" | sed 's/^0x//; s/^0X//')
+
+          HUB_NUMBER=""
+          if [ -n "$TITLE_ID_CLEAN" ]; then
+            HUB_NUMBER=$(gh issue list \
+              --label "game-report" \
+              --state all \
+              --search "title_id:${TITLE_ID_CLEAN}" \
+              --json number \
+              --jq '.[0].number // empty' 2>/dev/null || echo "")
+          fi
+
+          if [ -z "$HUB_NUMBER" ] && [ -n "$GAME_TITLE" ]; then
+            HUB_NUMBER=$(gh issue list \
+              --label "game-report" \
+              --state all \
+              --search "${GAME_TITLE}" \
+              --json number,title \
+              --jq ".[] | select(.title | test(\"${GAME_TITLE}\"; \"i\")) | .number" 2>/dev/null | head -1 || echo "")
+          fi
+
+          if [ -n "$HUB_NUMBER" ]; then
+            echo "hub_exists=true" >> "$GITHUB_OUTPUT"
+            echo "hub_number=$HUB_NUMBER" >> "$GITHUB_OUTPUT"
+          else
+            echo "hub_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create hub issue
+        if: steps.search.outputs.hub_exists == 'false'
+        id: create
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GAME_TITLE: ${{ steps.game.outputs.game_title }}
+          TITLE_ID: ${{ steps.game.outputs.title_id }}
+        run: |
+          gh label create "game-report" --description "Auto-maintained hub for a game's problem and vulnerability reports" 2>/dev/null || true
+
+          HUB_BODY="## Game Hub: ${GAME_TITLE}
+
+Title ID: \`${TITLE_ID}\`
+
+title_id:${TITLE_ID}
+
+---
+
+## Severity: New
+
+          | Metric | Value |
+          |--------|-------|
+          | Confirmed open | 0 |
+          | Resolved | 0 |
+          | Vulnerable versions | None |
+
+          ## Confirmed Reports
+
+          _No confirmed reports yet._
+
+          ## Vulnerable Versions
+
+          _None reported._"
+
+          HUB_NUMBER=$(gh issue create \
+            --title "🎮 ${GAME_TITLE}" \
+            --body "$HUB_BODY" \
+            --label "game-report" \
+            --json number \
+            --jq '.number')
+
+          echo "hub_number=$HUB_NUMBER" >> "$GITHUB_OUTPUT"
+
+      - name: Create bidirectional relation to hub
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issueNumber = context.payload.issue.number;
+            const hubNumber = parseInt('${{ steps.search.outputs.hub_number || steps.create.outputs.hub_number }}');
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const MARKER = '<!-- RELATIONS -->';
+
+            async function getRelationComment(issueNum) {
+              const { data: comments } = await github.rest.issues.listComments({
+                owner, repo, issue_number: issueNum, per_page: 100
+              });
+              return comments.find(c =>
+                c.user.login === 'github-actions[bot]' && c.body.includes(MARKER)
+              );
+            }
+
+            function parseRelations(body) {
+              const result = { parents: [], children: [], related: [] };
+              if (!body) return result;
+              const parentMatch = body.match(/- 🔗 Parent: (.+)/);
+              if (parentMatch) {
+                for (const m of parentMatch[1].matchAll(/#(\d+)/g)) {
+                  result.parents.push(parseInt(m[1]));
+                }
+              }
+              const childMatch = body.match(/- 🔗 Children?: (.+)/);
+              if (childMatch) {
+                for (const m of childMatch[1].matchAll(/#(\d+)/g)) {
+                  result.children.push(parseInt(m[1]));
+                }
+              }
+              const relatedMatch = body.match(/- 🔗 Related: (.+)/);
+              if (relatedMatch) {
+                for (const m of relatedMatch[1].matchAll(/#(\d+)/g)) {
+                  result.related.push(parseInt(m[1]));
+                }
+              }
+              return result;
+            }
+
+            async function getIssueTitle(number) {
+              try {
+                const { data } = await github.rest.issues.get({ owner, repo, issue_number: number });
+                return data.title;
+              } catch { return 'Unknown'; }
+            }
+
+            async function formatIssueRef(number) {
+              const title = await getIssueTitle(number);
+              return `#${number} (${title})`;
+            }
+
+            async function writeRelationComment(issueNum, rels) {
+              const existing = await getRelationComment(issueNum);
+              let body = MARKER + '\n📋 **Relationships**\n';
+
+              if (rels.parents.length > 0) {
+                const refs = await Promise.all(rels.parents.map(n => formatIssueRef(n)));
+                body += `- 🔗 Parent: ${refs.join(', ')}\n`;
+              }
+              if (rels.children.length > 0) {
+                const refs = await Promise.all(rels.children.map(n => formatIssueRef(n)));
+                body += `- 🔗 Children: ${refs.join(', ')}\n`;
+              }
+              if (rels.related.length > 0) {
+                const refs = await Promise.all(rels.related.map(n => formatIssueRef(n)));
+                body += `- 🔗 Related: ${refs.join(', ')}\n`;
+              }
+              body += '\n*Auto-maintained. Use `parent #N`, `child #N`, `related #N` to add relations.*';
+
+              if (existing) {
+                await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+              } else {
+                await github.rest.issues.createComment({ owner, repo, issue_number: issueNum, body });
+              }
+            }
+
+            // Hub becomes parent of sub-issue
+            // Update hub: add sub-issue as child
+            const hubRelComment = await getRelationComment(hubNumber);
+            const hubRels = hubRelComment ? parseRelations(hubRelComment.body) : { parents: [], children: [], related: [] };
+            if (!hubRels.children.includes(issueNumber)) {
+              hubRels.children.push(issueNumber);
+            }
+            await writeRelationComment(hubNumber, hubRels);
+
+            // Update sub-issue: add hub as parent
+            const subRelComment = await getRelationComment(issueNumber);
+            const subRels = subRelComment ? parseRelations(subRelComment.body) : { parents: [], children: [], related: [] };
+            if (!subRels.parents.includes(hubNumber)) {
+              subRels.parents.push(hubNumber);
+            }
+            await writeRelationComment(issueNumber, subRels);
+
+      - name: Leave review notice on sub-issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          gh issue comment "$ISSUE_NUMBER" \
+            --body "📋 **Your report is awaiting maintainer review.** Once a maintainer confirms this report, it will appear on the game hub and affect the severity score.
+
+          A maintainer will check:
+          - Is this a duplicate?
+          - Is the Title ID correct?
+          - Does the report contain enough detail?
+
+          You don't need to do anything else — this comment will be updated when reviewed."
+
+  update-hub:
+    name: Recalculate hub status
+    runs-on: ubuntu-latest
+    if: >
+      github.event_name == 'issues' &&
+      contains(fromJSON('["closed", "reopened", "labeled", "unlabeled"]'), github.event.action) &&
+      (contains(github.event.issue.labels.*.name, 'game-issue') ||
+       contains(github.event.issue.labels.*.name, 'vulnerable-game')) &&
+      (github.event.action != 'labeled' && github.event.action != 'unlabeled' ||
+       contains(fromJSON('["confirmed", "pending-review", "wontfix"]'), github.event.label.name))
+    steps:
+      - name: Find hub for this sub-issue
+        id: find-hub
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.issue.body || '';
+            const titleIdMatch = body.match(/### Title ID\s*\n\s*\n(.+)/);
+            const titleId = titleIdMatch ? titleIdMatch[1].trim().toLowerCase().replace(/^0x/, '') : '';
+            const gameTitleMatch = body.match(/### Game Title\s*\n\s*\n(.+)/);
+            const gameTitle = gameTitleMatch ? gameTitleMatch[1].trim() : '';
+
+            if (!titleId && !gameTitle) {
+              core.setOutput('hub_found', 'false');
+              return;
+            }
+
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: 'game-report',
+              state: 'all',
+              per_page: 100
+            });
+
+            let hub = null;
+            if (titleId) {
+              hub = issues.find(i => i.body && i.body.includes(`title_id:${titleId}`));
+            }
+            if (!hub && gameTitle) {
+              hub = issues.find(i => i.title.toLowerCase().includes(gameTitle.toLowerCase()));
+            }
+
+            if (hub) {
+              core.setOutput('hub_found', 'true');
+              core.setOutput('hub_number', String(hub.number));
+            } else {
+              core.setOutput('hub_found', 'false');
+            }
+
+      - name: Recalculate and update hub body
+        if: steps.find-hub.outputs.hub_found == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const hubNumber = parseInt('${{ steps.find-hub.outputs.hub_number }}');
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            // Get hub issue body to extract title_id and game title
+            const { data: hub } = await github.rest.issues.get({
+              owner, repo, issue_number: hubNumber
+            });
+
+            const titleIdMatch = hub.body.match(/title_id:([a-f0-9]+)/i);
+            const gameTitleMatch = hub.body.match(/## Game Hub: (.+)/);
+            const titleId = titleIdMatch ? titleIdMatch[1].toLowerCase().replace(/^0x/, '') : '';
+            const gameTitle = gameTitleMatch ? gameTitleMatch[1] : hub.title.replace(/^🎮\s*/, '');
+
+            // Collect children from relation comments on hub
+            const { data: comments } = await github.rest.issues.listComments({
+              owner, repo, issue_number: hubNumber, per_page: 100
+            });
+
+            const MARKER = '<!-- RELATIONS -->';
+            const subIssueNumbers = new Set();
+
+            // Parse bidirectional relation comments
+            const relComment = comments.find(c =>
+              c.user.login === 'github-actions[bot]' && c.body.includes(MARKER)
+            );
+            if (relComment) {
+              const rels = parseRelations(relComment.body);
+              for (const n of rels.children) {
+                subIssueNumbers.add(n);
+              }
+            }
+
+            // Fallback: legacy "📎 Linked report: #N" comments
+            for (const comment of comments) {
+              const match = comment.body.match(/📎 Linked report: #(\d+)/g);
+              if (match) {
+                for (const m of match) {
+                  subIssueNumbers.add(parseInt(m.match(/#(\d+)/)[1]));
+                }
+              }
+            }
+
+            // Also try sub-issues API
+            try {
+              const { data: subIssues } = await github.request(
+                'GET /repos/{owner}/{repo}/issues/{issue_number}/sub_issues',
+                { owner, repo, issue_number: hubNumber }
+              );
+              for (const si of subIssues) {
+                subIssueNumbers.add(si.number);
+              }
+            } catch (e) { /* API not available, fallbacks already populated */ }
+
+            let confirmedOpen = 0;
+            let confirmedClosed = 0;
+            let totalImpact = 0;
+            const reportRows = [];
+            const vulnRows = [];
+
+            for (const num of subIssueNumbers) {
+              let issue;
+              try {
+                const { data } = await github.rest.issues.get({ owner, repo, issue_number: num });
+                issue = data;
+              } catch (e) { continue; }
+
+              const labels = issue.labels.map(l => l.name || l);
+              const isPending = labels.includes('pending-review');
+              const isWontfix = labels.includes('wontfix');
+              const isGameIssue = labels.includes('game-issue');
+              const isVuln = labels.includes('vulnerable-game');
+              const isOpen = issue.state === 'open';
+
+              if (isPending) continue;
+
+              if (isGameIssue) {
+                // Extract rating from body
+                const ratingMatch = issue.body ? issue.body.match(/### How severe is the problem\?\s*\n\s*\n(.+)/) : null;
+                const ratingLine = ratingMatch ? ratingMatch[1].trim() : 'N/A';
+
+                let impact = 2; // default "Limited"
+                if (ratingLine.startsWith('4')) impact = 4;
+                else if (ratingLine.startsWith('3')) impact = 3;
+                else if (ratingLine.startsWith('2')) impact = 2;
+                else if (ratingLine.startsWith('1')) impact = 1;
+
+                let status;
+                if (!isOpen) {
+                  status = '✅ Resolved';
+                  confirmedClosed++;
+                } else if (isWontfix) {
+                  status = '⛔ Wontfix';
+                  impact = 4; // maximum impact, never resolved
+                  confirmedOpen++;
+                  totalImpact += impact;
+                } else {
+                  if (impact === 4) status = '🔴 Unplayable';
+                  else if (impact === 3) status = '🟠 Broken';
+                  else if (impact === 2) status = '🟡 Limited';
+                  else status = '🟢 Minor';
+                  confirmedOpen++;
+                  totalImpact += impact;
+                }
+                reportRows.push(`| #${num} | ${status} | ${ratingLine} | Severity: ${impact}/4 |`);
+
+              } else if (isVuln) {
+                const versionMatch = issue.body ? issue.body.match(/### Vulnerable Game Version\s*\n\s*\n(.+)/) : null;
+                const typeMatch = issue.body ? issue.body.match(/### Type of vulnerability\s*\n\s*\n(.+)/) : null;
+                const urgencyMatch = issue.body ? issue.body.match(/### How urgently should this version be blocked\?\s*\n\s*\n(.+)/) : null;
+
+                const vulnVersion = versionMatch ? versionMatch[1].trim() : 'N/A';
+                const vulnType = typeMatch ? typeMatch[1].trim() : 'N/A';
+                const urgency = urgencyMatch ? urgencyMatch[1].trim() : 'N/A';
+                const vulnStatus = isOpen ? '⚠️ Active' : '✅ Patched';
+
+                vulnRows.push(`| #${num} | ${vulnVersion} | ${vulnType} | ${urgency} | ${vulnStatus} |`);
+              }
+            }
+
+            // Determine severity label
+            let severityLabel, severityEmoji;
+            if (confirmedOpen === 0) {
+              severityLabel = 'No open issues';
+              severityEmoji = '🟢';
+            } else {
+              const avgImpact = totalImpact / confirmedOpen;
+              if (avgImpact >= 3.5) { severityLabel = 'Unplayable'; severityEmoji = '⛔'; }
+              else if (avgImpact >= 2.5) { severityLabel = 'Broken'; severityEmoji = '🔴'; }
+              else if (avgImpact >= 1.5) { severityLabel = 'Limited'; severityEmoji = '🟠'; }
+              else if (avgImpact >= 0.5) { severityLabel = 'Minor issues'; severityEmoji = '🟡'; }
+              else { severityLabel = 'Working well'; severityEmoji = '🟢'; }
+            }
+
+            const activeVulns = vulnRows.filter(r => r.includes('⚠️')).length;
+            const reportSection = reportRows.length > 0
+              ? `| Issue | Status | Severity | Rating |\n|-------|--------|----------|--------|\n${reportRows.join('\n')}`
+              : '_No confirmed reports yet._';
+            const vulnSection = vulnRows.length > 0
+              ? `| Issue | Version | Type | Urgency | Status |\n|-------|---------|------|---------|--------|\n${vulnRows.join('\n')}`
+              : '_None reported._';
+
+            const newBody = `## Game Hub: ${gameTitle}
+
+Title ID: \`${titleId}\`
+
+title_id:${titleId}
+
+---
+
+## Severity: ${severityEmoji} ${severityLabel}
+
+| Metric | Value |
+|--------|-------|
+| Confirmed open | ${confirmedOpen} |
+| Resolved | ${confirmedClosed} |
+| Vulnerable versions | ${activeVulns} |
+
+## Confirmed Reports
+
+${reportSection}
+
+## Vulnerable Versions
+
+${vulnSection}
+
+---
+
+*This hub is auto-maintained. Do not edit manually.*
+*Severity is based on average impact of open confirmed reports. Resolved issues do not lower the score.*`;
+
+            await github.rest.issues.update({
+              owner, repo, issue_number: hubNumber, body: newBody
+            });
+
+  request-retest:
+    name: Request retest on new release
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release' && github.event.action == 'published'
+    steps:
+      - name: Comment on confirmed issues requesting retest
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tagName = context.payload.release.tag_name;
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: 'confirmed',
+              state: 'open',
+              per_page: 100
+            });
+
+            for (const issue of issues) {
+              // Check if we already asked for a retest on this release
+              const { data: comments } = await github.rest.issues.listComments({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                per_page: 100
+              });
+              const alreadyAsked = comments.some(c =>
+                c.user.login === 'github-actions[bot]' &&
+                c.body.includes(`retest requested for \`${tagName}\``)
+              );
+              if (alreadyAsked) continue;
+
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                labels: ['needs-retest']
+              });
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body: `🔄 **Retest requested for \`${tagName}\`.** Can you re-test and confirm whether this issue still occurs?\n\n- If the issue is **resolved**, close this issue.\n- If the issue **still occurs**, comment below.\n- If there is no response within 7 days, this issue will be marked stale.`
+              });
+            }
+
+  manage-stale:
+    name: Mark stale and close abandoned issues
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+    steps:
+      - name: Mark needs-retest issues stale after 7 days
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: 'needs-retest',
+              state: 'open',
+              per_page: 100
+            });
+
+            const now = Date.now();
+            const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
+
+            for (const issue of issues) {
+              const { data: comments } = await github.rest.issues.listComments({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                per_page: 100
+              });
+              const retestComments = comments.filter(c =>
+                c.user.login === 'github-actions[bot]' &&
+                c.body.includes('Retest requested')
+              );
+              if (retestComments.length === 0) continue;
+              const lastRetest = new Date(Math.max(...retestComments.map(c => new Date(c.created_at).getTime())));
+              if (now - lastRetest.getTime() >= SEVEN_DAYS) {
+                await github.rest.issues.addLabels({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issue.number,
+                  labels: ['stale']
+                });
+                await github.rest.issues.removeLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issue.number,
+                  name: 'needs-retest'
+                }).catch(() => {});
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issue.number,
+                  body: '⚠️ **No response for 7 days.** Marking as stale. This issue will be auto-closed in 14 days if there is no update.'
+                });
+              }
+            }
+
+      - name: Close stale issues after 14 more days
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: 'stale',
+              state: 'open',
+              per_page: 100
+            });
+
+            const now = Date.now();
+            const FOURTEEN_DAYS = 14 * 24 * 60 * 60 * 1000;
+
+            for (const issue of issues) {
+              const updatedAt = new Date(issue.updated_at).getTime();
+              if (now - updatedAt >= FOURTEEN_DAYS) {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issue.number,
+                  body: '🔒 **Closing for inactivity.** No response after 14 days. If this issue persists in the latest version, please reopen with updated information.'
+                });
+                await github.rest.issues.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issue.number,
+                  state: 'closed'
+                });
+                await github.rest.issues.removeLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issue.number,
+                  name: 'stale'
+                }).catch(() => {});
+              }
+            }

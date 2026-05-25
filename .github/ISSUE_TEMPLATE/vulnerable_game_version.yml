@@ -1,7 +1,7 @@
 name: Vulnerable Game Version
 description: "Report a Switch game version with a known vulnerability (RCE, exploit) that should be blocked in the ryu\_ldn\_nx whitelist"
 title: "[GAME-VULN] "
-labels: [vulnerable-game, game-compatibility]
+labels: [vulnerable-game]
 assignees: []
 body:
   - type: markdown
@@ -9,7 +9,7 @@ body:
       value: |
         Use this form to flag a **Switch game version with a known vulnerability** (RCE, exploit, etc.) that should be blocked in the `ryu_ldn_nx` game whitelist.
 
-        This is **not** for general game compatibility or connectivity issues — use **Game Compatibility Report** for those.
+        This is **not** for general game problems or connectivity issues — use **Game Problem Report** for those.
 
         **This form is for:**
         - Game versions with known RCE (Remote Code Execution) vulnerabilities
@@ -17,8 +17,8 @@ body:
         - Game versions that should be blocked from connecting for security reasons
 
         **Examples that belong elsewhere:**
-        - A game that disconnects sometimes → Game Compatibility Report
-        - A game where multiplayer doesn't work → Game Compatibility Report
+        - A game that disconnects sometimes → Game Problem Report
+        - A game where multiplayer doesn't work → Game Problem Report
         - A sysmodule crash that happens regardless of the game → Bug Report
 
   - type: input
@@ -42,9 +42,9 @@ body:
   - type: input
     id: game_title_id
     attributes:
-      label: "Title ID"
-      description: "Hexadecimal Title ID from `sdmc:/atmosphere/contents/`. Required for the whitelist to identify and block this version."
-      placeholder: "e.g., 0x0100152000022000"
+      label: "Title ID (Program ID)"
+      description: "Hexadecimal 16-character Title ID. Look it up on homebrews with title managers (GoldLeaf, Spharia ...) or on a public database."
+      placeholder: "e.g., 0100152000022000"
     validations:
       required: true
 

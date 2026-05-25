@@ -7,16 +7,21 @@ body:
   - type: markdown
     attributes:
       value: |
-        Use this form to request that a game be **added to the LDN whitelist** so it can use Local Wireless multiplayer via `ryu_ldn_nx`.
+        Use this form to request that a game be **added to the LDN whitelist** so it can use Local Wireless multiplayer via `ryu ldn nx`.
 
-        Games not in the whitelist cannot connect to LDN sessions at all. This is different from a game that connects but has issues — use **Game Compatibility Report** for that.
+        Games not in the whitelist cannot connect to LDN sessions at all. 
+        
+        This is different from a game that connects but has issues — use **Game Problem Report** for that.
 
-        > 💡 **How to find your Title ID:**
-        > Check `sdmc:/atmosphere/contents/` on your SD card. Each game has a folder named with its Title ID (e.g., `0100152000022000`).
+        💡 **How to find your Title ID:**
+        > Look it up on homebrews with title managers (GoldLeaf, Spharia ...) or on a public database.
 
         **Not for:**
-        - A game that connects but has bugs → **Game Compatibility Report**
+        
+        - A game that connects but has bugs → **Game Problem Report**
+        
         - A game version with a known security vulnerability → **Vulnerable Game Version**
+        
         - A sysmodule bug unrelated to a specific game → **Bug Report**
 
   - type: input
@@ -32,19 +37,20 @@ body:
     id: game_title_id
     attributes:
       label: "Title ID (Program ID)"
-      description: "Hexadecimal Title ID from `sdmc:/atmosphere/contents/`. Required — this is what goes in the whitelist."
-      placeholder: "e.g., 0x0100152000022000"
+      description: "Hexadecimal 16-character Title ID. Look it up on homebrews with title managers (GoldLeaf, Spharia ...) or on a public database."
+      placeholder: "e.g., 0100152000022000"
     validations:
       required: true
 
-  - type: input
-    id: game_version
+  - type: textarea
+    id: informations
     attributes:
-      label: "Game Version"
-      description: "The version you are running. Some games only support LDN in specific versions."
-      placeholder: "e.g., v2.4.0"
+      label: "Additional informations"
+      description: "Explain why this game should be whitelisted. For example: the game doesn't support Local Wireless natively but a mod adds it, or this is a regional variant of an already-whitelisted title."
+      placeholder: |
+        This game does not support Local Wireless by default, but the [mod name] mod adds local multiplayer support via LDN.
     validations:
-      required: true
+      required: false
 
   - type: checkboxes
     id: checklist
@@ -54,6 +60,8 @@ body:
         - label: "I searched existing whitelist requests and issues for this game"
           required: true
         - label: "I confirmed this game is not already in the whitelist"
+          required: true
+        - label: "I confirmed this game support Local Communication (Not LAN Mode or Online Multiplayer)"
           required: true
         - label: "I verified the Title ID is correct"
           required: true
