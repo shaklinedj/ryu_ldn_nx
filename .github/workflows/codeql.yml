@@ -1,0 +1,118 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [develop]
+  pull_request:
+    branches: [main, develop]
+  schedule:
+    - cron: '0 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+  security-events: write
+
+jobs:
+  analyze:
+    name: CodeQL Analysis
+    runs-on: ubuntu-latest
+    # Use the pre-built dev container from GHCR so that libstratosphere
+    # and all devkitPro packages are already available — no lib rebuild.
+    container: ghcr.io/ethiquema/ryu_ldn_nx:latest
+    # CodeQL's LD_PRELOAD tracer adds significant per-compile-unit overhead.
+    # Sysmodule build under tracing needs time.
+    timeout-minutes: 180
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [cpp]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Fix git safe directory
+        run: |
+          git config --global --add safe.directory '*'
+          # Detached HEAD in containers causes 'fatal: ref HEAD is not a symbolic ref'
+          # for tools like git-describe. Create a symbolic ref to suppress the warning.
+          git symbolic-ref HEAD refs/heads/"${GITHUB_REF_NAME:-develop}" 2>/dev/null || true
+
+      # Pre-generate the .npdm BEFORE Initialize CodeQL injects LD_PRELOAD.
+      # npdmtool uses strtoull() without resetting errno first. CodeQL's
+      # LD_PRELOAD sets errno to a nonzero value in every child process (even
+      # after env -u or LD_PRELOAD=""), so any step after init gets polluted
+      # errno. Running before init ensures a clean process environment.
+      - name: Pre-generate NPDM descriptor
+        run: |
+          export DEVKITPRO=/opt/devkitpro
+          export PATH=$DEVKITPRO/tools/bin:$PATH
+          cp "${GITHUB_WORKSPACE}/sysmodule/res/app.json" /tmp/app.json
+          npdmtool /tmp/app.json "${GITHUB_WORKSPACE}/sysmodule/ryu_ldn_nx.npdm"
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          config-file: .github/codeql-config.yml
+
+      - name: Build host tests (CodeQL tracing)
+        run: cd tests && make clean && make COVERAGE=1 test
+
+      - name: Detach CodeQL tracer from non-compiler devkitPro packaging tools
+        run: |
+          for tool in npdmtool elf2nso build_pfs0 nacptool; do
+            real="/opt/devkitpro/tools/bin/$tool"
+            if [ ! -f "$real.real" ]; then
+              mv "$real" "$real.real"
+            fi
+            cat > "$real" <<'EOF'
+          #!/bin/bash
+          self="${0}.real"
+          name="$(basename "$0")"
+          if [ "$name" = "npdmtool" ] && [ -f "$1" ]; then
+            staged="/tmp/$(basename "$1").$$"
+            cp "$1" "$staged"
+            shift
+            set -- "$staged" "$@"
+          fi
+          exec env -u LD_PRELOAD "$self" "$@"
+          EOF
+            chmod +x "$real"
+          done
+
+      - name: Build sysmodule (cross-compiled, tracked by CodeQL)
+        env:
+          DEVKITPRO: /opt/devkitpro
+        run: |
+          export DEVKITPRO=/opt/devkitpro
+          export DEVKITARM=$DEVKITPRO/devkitARM
+          export DEVKITA64=$DEVKITPRO/devkitA64
+          export PATH=$DEVKITPRO/tools/bin:$DEVKITA64/bin:$PATH
+
+          # Symlink pre-built libstratosphere.a from the container image
+          # so the sysmodule Makefile finds it without rebuilding libs.
+          LIB_DIR="${GITHUB_WORKSPACE}/sysmodule/Atmosphere-libs/libstratosphere/lib/nintendo_nx_arm64_armv8a/release"
+          PREBUILT="/opt/ryu_ldn_nx/libstratosphere/lib/nintendo_nx_arm64_armv8a/release/libstratosphere.a"
+
+          if [ -f "$PREBUILT" ]; then
+            mkdir -p "$LIB_DIR"
+            ln -s "$PREBUILT" "$LIB_DIR/libstratosphere.a"
+            echo "[codeql] Linked pre-built libstratosphere.a from container image"
+          else
+            echo "::error::Pre-built libstratosphere.a not found at $PREBUILT — container image may be outdated"
+            exit 1
+          fi
+
+          cd "${GITHUB_WORKSPACE}/sysmodule" && make -j4 all APP_JSON=/tmp/app.json
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:${{ matrix.language }}"
