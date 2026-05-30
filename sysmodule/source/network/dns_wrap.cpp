@@ -92,7 +92,7 @@ int __wrap_getaddrinfo(const char* node, const char* service,
     ai->ai_socktype = hints ? hints->ai_socktype : 0;
     ai->ai_protocol = hints ? hints->ai_protocol : 0;
     ai->ai_addrlen  = sizeof(struct sockaddr_in);
-    ai->ai_addr     = reinterpret_cast<struct sockaddr*>(sa_buf);
+    ai->ai_addr     = reinterpret_cast<struct sockaddr*>(static_cast<void*>(sa_buf));
     ai->ai_canonname = nullptr;
     ai->ai_next      = nullptr;
 
