@@ -77,17 +77,22 @@ int __wrap_getaddrinfo(const char* node, const char* service,
     }
 
     auto* ai = static_cast<struct addrinfo*>(
-        std::malloc(sizeof(struct addrinfo) + sizeof(struct sockaddr_in)));
+        std::malloc(sizeof(struct addrinfo)));
     if (!ai) return EAI_MEMORY;
+    auto* sa_buf = static_cast<struct sockaddr_in*>(
+        std::malloc(sizeof(struct sockaddr_in)));
+    if (!sa_buf) {
+        std::free(ai);
+        return EAI_MEMORY;
+    }
 
     std::memset(ai, 0, sizeof(struct addrinfo));
+    std::memcpy(sa_buf, &sa, sizeof(sa));
     ai->ai_family   = AF_INET;
     ai->ai_socktype = hints ? hints->ai_socktype : 0;
     ai->ai_protocol = hints ? hints->ai_protocol : 0;
     ai->ai_addrlen  = sizeof(struct sockaddr_in);
-    ai->ai_addr     = reinterpret_cast<struct sockaddr*>(
-        reinterpret_cast<char*>(ai) + sizeof(struct addrinfo));
-    std::memcpy(ai->ai_addr, &sa, sizeof(sa));
+    ai->ai_addr     = reinterpret_cast<struct sockaddr*>(sa_buf);
     ai->ai_canonname = nullptr;
     ai->ai_next      = nullptr;
 
@@ -98,6 +103,7 @@ int __wrap_getaddrinfo(const char* node, const char* service,
 void __wrap_freeaddrinfo(struct addrinfo* res) {
     while (res) {
         struct addrinfo* next = res->ai_next;
+        std::free(res->ai_addr);
         std::free(res);
         res = next;
     }

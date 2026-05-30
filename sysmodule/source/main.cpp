@@ -48,7 +48,7 @@ namespace ams {
             const u32 sum = tcp_tx_buf_max_size + tcp_rx_buf_max_size +
                             config->udp_tx_buf_size + config->udp_rx_buf_size;
 
-            return config->sb_efficiency * util::AlignUp(sum, os::MemoryPageSize);
+            return static_cast<size_t>(config->sb_efficiency) * util::AlignUp(sum, os::MemoryPageSize);
         }
 
         /// Socket initialization configuration
