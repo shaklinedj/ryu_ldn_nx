@@ -1,0 +1,225 @@
+name: Game Problem Report
+description: "Report a problem you experienced with a specific game on ryu\_ldn\_nx"
+title: "[GAME] "
+labels: [game-issue]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ⚠️ **Does the same problem happen with every game?** > that's a **systemic issue** — open a **Bug Report** instead.
+
+        🔒 **Want to report a dangerous game version (RCE, exploit)?**
+        > Use **Vulnerable Game Version** instead.
+
+        🆕 **Game not in the whitelist at all?**
+        > Use **Whitelist Request** instead — this form is for games already in the whitelist.
+
+        **How to fill this form**: Describe the problem you encountered. Select your connection mode and role, rate severity, and provide details.
+
+  - type: input
+    id: game_title
+    attributes:
+      label: "Game Title"
+      description: "Full official game title."
+      placeholder: "e.g., Mario Kart 8 Deluxe"
+    validations:
+      required: true
+
+  - type: input
+    id: game_title_id
+    attributes:
+      label: "Title ID (Program ID)"
+      description: "Hexadecimal 16-character Title ID. Look it up on homebrews with title managers (GoldLeaf, Spharia ...) or on a public database."
+      placeholder: "e.g., 0100152000022000"
+    validations:
+      required: true
+
+  - type: input
+    id: game_version
+    attributes:
+      label: "Game Version"
+      description: "The exact version you tested (shown in the game's title screen or update history)."
+      placeholder: "e.g., v2.4.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: connection_mode
+    attributes:
+      label: "Connection mode"
+      description: "Which mode did you use for this session? Relay connects through the server, P2P connects directly between players."
+      options:
+        - Relay
+        - P2P
+    validations:
+      required: true
+
+  - type: dropdown
+    id: host_join
+    attributes:
+      label: "Your role in the session"
+      description: "Were you hosting the room or joining someone else's?"
+      options:
+        - Host
+        - Client
+    validations:
+      required: true
+
+  - type: input
+    id: number_of_players
+    attributes:
+      label: "Number of players in session"
+      placeholder: "e.g., 2, 4, 8"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: "How severe is the problem?"
+      description: "Rate the impact on your gameplay experience."
+      options:
+        - "1 — Minor: Small issues, fully playable"
+        - "2 — Limited: Works with noticeable problems"
+        - "3 — Broken: Major issues, barely playable"
+        - "4 — Unplayable: Multiplayer does not work at all"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: problem_type
+    attributes:
+      label: "What type of problem did you experience?"
+      options:
+        - Lobby creation / hosting
+        - Room discovery / scanning
+        - Joining a room
+        - In-match stability (disconnects)
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem_details
+    attributes:
+      label: "Describe the problem"
+      description: "What happened? What did you expect to happen? Steps to reproduce if possible."
+      placeholder: |
+        **What happened**:
+        - Joined a room via Relay, got disconnected after ~2 min
+
+        **Steps to reproduce**:
+        1. Start ryu_ldn_nx with config.ini set to...
+        2. Launch game, select Local Wireless
+        3. Join a room
+        4. After ~2 min, connection drops
+
+        **Notes**:
+        - Works fine when hosting
+        - P2P not tested
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        ## Environment
+
+  - type: input
+    id: switch_firmware
+    attributes:
+      label: "Switch Firmware Version"
+      placeholder: "e.g., 19.0.1"
+    validations:
+      required: true
+
+  - type: input
+    id: atmosphere_version
+    attributes:
+      label: "Atmosphere Version"
+      placeholder: "e.g., 1.7.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: ryu_ldn_nx_build
+    attributes:
+      label: "ryu_ldn_nx build"
+      description: "Select the build you installed."
+      options:
+        - Latest release
+        - Latest dev build
+        - Other (specify below)
+    validations:
+      required: true
+
+  - type: input
+    id: ryu_ldn_nx_version_other
+    attributes:
+      label: "Version or commit (if Other)"
+      description: "Only fill if you selected \"Other\" above."
+      placeholder: "e.g., v1.1.0 or abc1234"
+    validations:
+      required: false
+
+  - type: textarea
+    id: config
+    attributes:
+      label: "Your config.ini"
+      description: |
+        Paste the **full contents** of `sdmc:/config/ryu_ldn_nx/config.ini`.
+        Required — connection mode, server, and P2P settings are all in this file.
+      placeholder: |
+        [server]
+        host = ...
+        port = ...
+        use_tls = ...
+
+        [network]
+        connect_timeout = ...
+        reconnect_delay = ...
+        max_reconnect_attempts = ...
+
+        [ldn]
+        enabled = ...
+        passphrase = ...
+        disable_p2p = ...
+
+        [debug]
+        enabled = ...
+        level = ...
+        log_to_file = ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: "Sysmodule Logs"
+      description: |
+        1. Set `[debug] enabled = 1` and `[debug] log_to_file = 1` in config.ini
+        2. Reboot or reload `ryu_ldn_nx`
+        3. Reproduce the issue
+        4. Paste relevant lines from `sdmc:/config/ryu_ldn_nx/ryu_ldn_nx.log`
+
+        Logs are required for game problem reports. Without logs, it is very difficult to diagnose the issue.
+      placeholder: |
+        [YYYY-MM-DD HH:MM:SS] [ERROR] ...
+        [YYYY-MM-DD HH:MM:SS] [WARN]  ...
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: "Pre-submission"
+      options:
+        - label: "I searched existing game-issue reports for this game"
+          required: true
+        - label: "I tested the connection mode selected above"
+          required: true
+        - label: "I pasted my full config.ini"
+          required: true
+        - label: "I pasted my sysmodule logs"
+          required: true

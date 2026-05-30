@@ -2,17 +2,17 @@
 # These owners will be requested for review when PRs touch these paths
 
 # Default owners for everything
-* @ryubing/ryu-ldn-nx-maintainers
+* @MH13-YT @Ethiquema
 
 # Sysmodule core
-/sysmodule/ @ryubing/ryu-ldn-nx-maintainers
+/sysmodule/ @MH13-YT @Ethiquema
 
 # Build system
-/Makefile @ryubing/ryu-ldn-nx-maintainers
-/Dockerfile @ryubing/ryu-ldn-nx-maintainers
-/docker-compose.yml @ryubing/ryu-ldn-nx-maintainers
-/.github/workflows/ @ryubing/ryu-ldn-nx-maintainers
+/Makefile @MH13-YT @Ethiquema
+/Dockerfile @MH13-YT @Ethiquema
+/docker-compose.yml @MH13-YT @Ethiquema
+/.github/workflows/ @MH13-YT @Ethiquema
 
 # Documentation
-/*.md @ryubing/ryu-ldn-nx-maintainers
-/docs/ @ryubing/ryu-ldn-nx-maintainers
+/*.md @MH13-YT @Ethiquema
+/docs/ @MH13-YT @Ethiquema
