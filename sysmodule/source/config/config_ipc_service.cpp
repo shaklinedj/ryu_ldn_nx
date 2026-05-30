@@ -275,7 +275,7 @@ ams::Result ConfigService::GetServerAddress(ams::sf::Out<ServerAddressIpc> out) 
  * @param address New server address structure
  * @return Always succeeds
  */
-ams::Result ConfigService::SetServerAddress(ServerAddressIpc address) {
+ams::Result ConfigService::SetServerAddress(const ServerAddressIpc &address) {
     std::scoped_lock lk(g_config_mutex);
 
     safe_strcpy(g_config.server.host, address.host, config::MAX_HOST_LENGTH);
