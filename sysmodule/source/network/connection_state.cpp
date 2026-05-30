@@ -101,7 +101,6 @@ bool ConnectionStateMachine::is_valid_transition(ConnectionState from,
     // This table replaces the 9-case switch to reduce cyclomatic complexity
     // flagged by CodeQL cpp/complex-block.
     using T = ConnectionState;
-    using E = ConnectionEvent;
     static constexpr struct { T target; bool valid; } table[9][11] = {
         // State: Disconnected
         {
