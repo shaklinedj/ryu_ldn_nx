@@ -1,0 +1,206 @@
+name: Bug Report
+description: "Systemic issue affecting ryu\_ldn\_nx regardless of which game is played"
+title: "[BUG] "
+labels: [bug]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ⚠️ **Is this bug specific to one game?**
+        
+        If the problem only happens with a particular game but works fine with others, **do not use this form**.
+        > Open a **Game Problem Report** instead — it captures game-specific details this form doesn't.
+
+        This form is for **systemic issues**: bugs that occur regardless of which game is played, or that affect the overlay, build, or documentation directly.
+
+        **Before opening**, verify:
+
+        - You searched existing issues for duplicates
+        
+        - You are running the **latest version** or the **latest dev build**
+
+        - The same issue is reproductible on other games
+
+        - This issue concerns the sysmodule or the overlay (not the Ryujinx LDN Server itself)
+
+  - type: markdown
+    attributes:
+      value: |
+        ## Bug description
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: "Which component is affected?"
+      options:
+        - Sysmodule
+        - Overlay
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: "What went wrong?"
+      description: "What did you expect? What happened instead?"
+      placeholder: |
+        When I [action], I expected [result] but instead [actual behavior].
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: "Steps to reproduce"
+      description: "Be specific — include game title, menu path, timing."
+      placeholder: |
+        1. Start ryu_ldn_nx with config.ini set to...
+        2. Launch [Game Title]
+        3. Select Local Wireless → [option]
+        4. After ~30 seconds, observe error / disconnect / crash
+    validations:
+      required: true
+
+  - type: dropdown
+    id: game_scope
+    attributes:
+      label: "Does this happen with all games or only one?"
+      description: >-
+        If the bug only happens with one specific game, close this issue and open a Game Problem Report instead.
+      options:
+        - Happens with all games / no game involved
+        - Happens with multiple games (not just one)
+        - Only one specific game (⚠️ use Game Problem Report instead)
+        - Haven't tested other games yet (⚠️ Please try to reproduce the bug on other games)
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        ## Environment
+
+  - type: input
+    id: switch_firmware
+    attributes:
+      label: "Switch Firmware Version"
+      placeholder: "e.g., 19.0.1"
+    validations:
+      required: true
+
+  - type: input
+    id: atmosphere_version
+    attributes:
+      label: "Atmosphere Version"
+      placeholder: "e.g., 1.7.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: version_channel
+    attributes:
+      label: "Which build are you running?"
+      description: >-
+        Select the build you installed. A GitHub Action will verify your selection and add the exact version info as a comment.
+        Choose "Other" if you built from source or are running an older release.
+      options:
+        - Latest release
+        - Latest dev build
+        - Other (specify below)
+    validations:
+      required: true
+
+  - type: input
+    id: version_other
+    attributes:
+      label: "Version or commit (if Other)"
+      description: "Only fill this if you selected \"Other\" above. Enter a release tag (e.g., v1.2.0) or a commit hash (e.g., abc1234)."
+      placeholder: "e.g., v1.1.0 or abc1234"
+    validations:
+      required: false
+
+  - type: markdown
+    attributes:
+      value: |
+        ## Additional data required for analysis
+
+  - type: textarea
+    id: config
+    attributes:
+      label: "Your config.ini"
+      description: |
+        Paste the **full contents** of `sdmc:/config/ryu_ldn_nx/config.ini`.
+        
+        Required — connection mode, server, timeouts, and P2P settings are all in this file.
+      placeholder: |
+        [server]
+        host = ...
+        port = ...
+        use_tls = ...
+
+        [network]
+        connect_timeout = ...
+        reconnect_delay = ...
+        max_reconnect_attempts = ...
+
+        [ldn]
+        enabled = ...
+        passphrase = ...
+        disable_p2p = ...
+
+        [debug]
+        enabled = ...
+        level = ...
+        log_to_file = ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: "Sysmodule Logs"
+      description: |
+        1. Set `[debug] enabled = 1`,  `[debug] log_to_file = 1` and `[debug] level = 2` in config.ini
+        
+        2. Reboot or reload `ryu_ldn_nx`
+        
+        3. Reproduce the bug
+        
+        4. Paste the relevant lines from `sdmc:/config/ryu_ldn_nx/ryu_ldn_nx.log`
+
+        If you cannot get logs, explain why.
+      placeholder: |
+        [YYYY-MM-DD HH:MM:SS] [ERROR] ...
+        [YYYY-MM-DD HH:MM:SS] [WARN]  ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: crash
+    attributes:
+      label: "Crash Report (if applicable)"
+      description: |
+        If `ryu_ldn_nx` crashed, include the crash dump from `atmosphere/crash_reports/`.
+        Look for files containing `4200000000000010` (`ryu_ldn_nx` Title ID).
+        Key fields: error type, faulting address, stack trace.
+        Leave empty if no crash occurred.
+      placeholder: |
+        Error type: DATA ABORT (DABRT)
+        Faulting address: 0x...
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: "Pre-submission"
+      options:
+        - label: "I searched existing issues for duplicates"
+          required: true
+        - label: "I am running the latest version of ryu_ldn_nx"
+          required: true
+        - label: "I pasted my full config.ini"
+          required: true
+        - label: "I included sysmodule logs"
+          required: true

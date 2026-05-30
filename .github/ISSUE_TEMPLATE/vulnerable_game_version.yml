@@ -1,0 +1,136 @@
+name: Vulnerable Game Version
+description: "Report a Switch game version with a known vulnerability (RCE, exploit) that should be blocked in the ryu\_ldn\_nx whitelist"
+title: "[GAME-VULN] "
+labels: [vulnerable-game]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form to flag a **Switch game version with a known vulnerability** (RCE, exploit, etc.) that should be blocked in the `ryu_ldn_nx` game whitelist.
+
+        This is **not** for general game problems or connectivity issues — use **Game Problem Report** for those.
+
+        **This form is for:**
+        - Game versions with known RCE (Remote Code Execution) vulnerabilities
+        - Game versions with known exploits that could compromise LDN sessions
+        - Game versions that should be blocked from connecting for security reasons
+
+        **Examples that belong elsewhere:**
+        - A game that disconnects sometimes → Game Problem Report
+        - A game where multiplayer doesn't work → Game Problem Report
+        - A sysmodule crash that happens regardless of the game → Bug Report
+
+  - type: input
+    id: game_title
+    attributes:
+      label: "Game Title"
+      description: "Full official game title."
+      placeholder: "e.g., Mario Kart 8 Deluxe"
+    validations:
+      required: true
+
+  - type: input
+    id: vulnerable_version
+    attributes:
+      label: "Vulnerable Game Version"
+      description: "The exact version that has the vulnerability. Use 'all' if every version is affected."
+      placeholder: "e.g., v1.0.0 or all"
+    validations:
+      required: true
+
+  - type: input
+    id: game_title_id
+    attributes:
+      label: "Title ID (Program ID)"
+      description: "Hexadecimal 16-character Title ID. Look it up on homebrews with title managers (GoldLeaf, Spharia ...) or on a public database."
+      placeholder: "e.g., 0100152000022000"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: vuln_type
+    attributes:
+      label: "Type of vulnerability"
+      options:
+        - RCE (Remote Code Execution)
+        - Arbitrary code execution via network exploit
+        - Known exploit usable over LDN sessions
+        - Save data corruption / manipulation
+        - Other security vulnerability
+    validations:
+      required: true
+
+  - type: textarea
+    id: vuln_description
+    attributes:
+      label: "Vulnerability description"
+      description: "Describe the vulnerability clearly. What can an attacker do? How does it affect LDN sessions?"
+      placeholder: |
+        Version v1.0.0 of [Game] contains a buffer overflow in the network handler that allows
+        arbitrary code execution over LDN. An attacker on the same LDN session can exploit
+        this to execute payloads on other connected consoles.
+    validations:
+      required: true
+
+  - type: input
+    id: fixed_version
+    attributes:
+      label: "Fixed in a newer game version? (if applicable)"
+      description: "If the vulnerability is patched in a later update, specify which version. Leave empty if unpatched."
+      placeholder: "e.g., v1.0.1 (all versions before this are vulnerable)"
+    validations:
+      required: false
+
+  - type: input
+    id: cve_reference
+    attributes:
+      label: "CVE or reference (if available)"
+      description: "CVE identifier, security advisory link, or other reference documenting this vulnerability."
+      placeholder: "e.g., CVE-2025-XXXXX or https://..."
+    validations:
+      required: false
+
+  - type: input
+    id: source
+    attributes:
+      label: "Source of this information"
+      description: "Where did you learn about this vulnerability? Link to the report, disclosure, or investigation."
+      placeholder: "e.g., https://... or #123"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: block_urgency
+    attributes:
+      label: "How urgently should this version be blocked?"
+      options:
+        - Critical — active exploitation in the wild
+        - High — proven exploit, no active exploitation yet
+        - Medium — theoretical exploit, confirmed vulnerability
+        - Low — potential issue, needs investigation
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional_context
+    attributes:
+      label: "Additional context"
+      description: "Any other relevant information: affected firmware versions, similar vulnerabilities in other games, mitigation advice, etc."
+      placeholder: |
+        This is similar to the exploit in [other game]. Nintendo patched it in firmware version [X].
+        Users should update the game to [version] or avoid LDN sessions with this version.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: "Pre-submission"
+      options:
+        - label: "I searched existing issues for this game and version"
+          required: true
+        - label: "I confirmed this is a security vulnerability (not a compatibility or connectivity issue)"
+          required: true
+        - label: "I provided a verifiable source for this vulnerability"
+          required: true
