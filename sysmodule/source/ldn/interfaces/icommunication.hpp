@@ -45,12 +45,12 @@
     AMS_SF_METHOD_INFO(C, H, 102, Result, Scan,                                                                         \
         (ams::sf::Out<u32> count,                                                                                       \
          ams::sf::OutAutoSelectArray<ams::mitm::ldn::NetworkInfo> buffer,                                               \
-         u16 channel, ams::mitm::ldn::ScanFilter filter), (count, buffer, channel, filter))                             \
+         u16 channel, const ams::mitm::ldn::ScanFilter &filter), (count, buffer, channel, filter))                             \
     /* Access Point Operations */                                                                                       \
     AMS_SF_METHOD_INFO(C, H, 200, Result, OpenAccessPoint, (), ())                                                      \
     AMS_SF_METHOD_INFO(C, H, 201, Result, CloseAccessPoint, (), ())                                                     \
     AMS_SF_METHOD_INFO(C, H, 202, Result, CreateNetwork,                                                                \
-        (ams::mitm::ldn::CreateNetworkConfig data), (data))                                                             \
+        (const ams::mitm::ldn::CreateNetworkConfig &data), (data))                                                             \
     AMS_SF_METHOD_INFO(C, H, 204, Result, DestroyNetwork, (), ())                                                       \
     AMS_SF_METHOD_INFO(C, H, 206, Result, SetAdvertiseData,                                                             \
         (ams::sf::InAutoSelectBuffer data), (data))                                                                     \
@@ -59,7 +59,7 @@
     AMS_SF_METHOD_INFO(C, H, 300, Result, OpenStation, (), ())                                                          \
     AMS_SF_METHOD_INFO(C, H, 301, Result, CloseStation, (), ())                                                         \
     AMS_SF_METHOD_INFO(C, H, 302, Result, Connect,                                                                      \
-        (ams::mitm::ldn::ConnectNetworkData dat, const ams::mitm::ldn::NetworkInfo &data), (dat, data))                 \
+        (const ams::mitm::ldn::ConnectNetworkData &dat, const ams::mitm::ldn::NetworkInfo &data), (dat, data))                 \
     AMS_SF_METHOD_INFO(C, H, 304, Result, Disconnect, (), ())                                                           \
     /* Lifecycle Operations */                                                                                          \
     AMS_SF_METHOD_INFO(C, H, 400, Result, Initialize,                                                                   \
@@ -71,12 +71,12 @@
     AMS_SF_METHOD_INFO(C, H, 103, Result, ScanPrivate,                                                                  \
         (ams::sf::Out<u32> count,                                                                                       \
          ams::sf::OutAutoSelectArray<ams::mitm::ldn::NetworkInfo> buffer,                                               \
-         u16 channel, ams::mitm::ldn::ScanFilter filter), (count, buffer, channel, filter))                             \
+         u16 channel, const ams::mitm::ldn::ScanFilter &filter), (count, buffer, channel, filter))                             \
     AMS_SF_METHOD_INFO(C, H, 203, Result, CreateNetworkPrivate,                                                         \
-        (ams::mitm::ldn::CreateNetworkPrivateConfig data,                                                               \
+        (const ams::mitm::ldn::CreateNetworkPrivateConfig &data,                                                               \
          ams::sf::InPointerBuffer addressList), (data, addressList))                                                    \
     AMS_SF_METHOD_INFO(C, H, 303, Result, ConnectPrivate,                                                               \
-        (ams::mitm::ldn::ConnectPrivateData data), (data))                                                              \
+        (const ams::mitm::ldn::ConnectPrivateData &data), (data))                                                              \
     /* Other stubs */                                                                                                   \
     AMS_SF_METHOD_INFO(C, H, 104, Result, SetWirelessControllerRestriction, (), ())                                     \
     AMS_SF_METHOD_INFO(C, H, 205, Result, Reject, (u32 nodeId), (nodeId))                                               \

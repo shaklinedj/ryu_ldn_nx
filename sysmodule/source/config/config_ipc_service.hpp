@@ -139,7 +139,7 @@ public:
      *  @param address New server address to use
      */
     /// @gdb{tag="CONFIG:IPC", msg="SetServerAddress"}
-    ams::Result SetServerAddress(ServerAddressIpc address);
+    ams::Result SetServerAddress(const ServerAddressIpc &address);
 
     /** @brief Get whether LDN emulation is enabled */
     /// @gdb{tag="CONFIG:IPC", msg="GetLdnEnabled"}
@@ -293,7 +293,7 @@ public:
     AMS_SF_METHOD_INFO(C, H, 2,  ams::Result, GetPassphrase,      (ams::sf::Out<std::array<char, 64>> out),            (out),       ams::hos::Version_Min, ams::hos::Version_Max)    \
     AMS_SF_METHOD_INFO(C, H, 3,  ams::Result, SetPassphrase,      (std::array<char, 64> passphrase),                   (passphrase),ams::hos::Version_Min, ams::hos::Version_Max)    \
     AMS_SF_METHOD_INFO(C, H, 4,  ams::Result, GetServerAddress,   (ams::sf::Out<ryu_ldn::ipc::ServerAddressIpc> out),  (out),       ams::hos::Version_Min, ams::hos::Version_Max)    \
-    AMS_SF_METHOD_INFO(C, H, 5,  ams::Result, SetServerAddress,   (ryu_ldn::ipc::ServerAddressIpc address),            (address),   ams::hos::Version_Min, ams::hos::Version_Max)    \
+    AMS_SF_METHOD_INFO(C, H, 5,  ams::Result, SetServerAddress,   (const ryu_ldn::ipc::ServerAddressIpc &address),            (address),   ams::hos::Version_Min, ams::hos::Version_Max)    \
     AMS_SF_METHOD_INFO(C, H, 6,  ams::Result, GetLdnEnabled,      (ams::sf::Out<u32> out),                             (out),       ams::hos::Version_Min, ams::hos::Version_Max)    \
     AMS_SF_METHOD_INFO(C, H, 7,  ams::Result, SetLdnEnabled,      (u32 enabled),                                       (enabled),   ams::hos::Version_Min, ams::hos::Version_Max)    \
     AMS_SF_METHOD_INFO(C, H, 8,  ams::Result, GetUseTls,          (ams::sf::Out<u32> out),                             (out),       ams::hos::Version_Min, ams::hos::Version_Max)    \
