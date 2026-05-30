@@ -174,7 +174,8 @@ void parse_config_content(const char* content, size_t size, Config& config) {
     Section current_section = Section::None;
     size_t line_pos = 0;
 
-    for (size_t i = 0; i <= size; i++) {
+    size_t i = 0;
+    while (i <= size) {
         // End of line or end of content
         if (i == size || content[i] == '\n' || content[i] == '\r') {
             line[line_pos] = '\0';
@@ -244,6 +245,7 @@ void parse_config_content(const char* content, size_t size, Config& config) {
         } else if (line_pos < sizeof(line) - 1) {
             line[line_pos++] = content[i];
         }
+        i++;
     }
 }
 
