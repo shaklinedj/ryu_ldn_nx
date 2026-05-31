@@ -399,13 +399,11 @@ TEST(token_add_waiting_token_flow) {
     protocol::ExternalProxyToken tokens[protocol::MAX_PLAYERS]{};
     int token_count = 0;
 
-    // Add first token
+    // Add first token (token_count starts at 0, always < MAX_PLAYERS=8)
+    static_assert(protocol::MAX_PLAYERS > 0, "MAX_PLAYERS must be positive");
     protocol::ExternalProxyToken token1{};
     token1.virtual_ip = 0x0A720001;
-
-    if (token_count < protocol::MAX_PLAYERS) {
-        tokens[token_count++] = token1;
-    }
+    tokens[token_count++] = token1;
 
     ASSERT_EQ(token_count, 1);
     ASSERT_EQ(tokens[0].virtual_ip, 0x0A720001U);

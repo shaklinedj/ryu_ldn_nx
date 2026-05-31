@@ -56,6 +56,8 @@ services:
         echo "[clean] 🧹 Cleaning overlay..."
         cd /workspace/overlay && make clean 2>/dev/null || true
         echo "[clean] 🧹 Removing output..."
+        echo "[clean] 🧹 Cleaning tests..."
+        cd /workspace/tests && make clean 2>/dev/null || true
         rm -rf /workspace/output /workspace/ryu_ldn_nx-release.zip
         echo "[clean] ✅ Done"
 
@@ -70,7 +72,7 @@ services:
     volumes:
       - .:/workspace
     working_dir: /workspace/tests
-    command: make test
+    command: make clean test
 
   # GDB debugger for Switch (interactive)
   # Usage: docker compose run --rm debugger <SWITCH_IP> [PROCESS_ID]
@@ -86,6 +88,40 @@ services:
     stdin_open: true
     tty: true
     entrypoint: ["/workspace/scripts/debugger/debug.sh"]
+
+  # Run clang-tidy on project source files (not Atmosphere-libs)
+  # Usage: docker compose run --rm lint
+  lint:
+    image: ghcr.io/ethiquema/ryu_ldn_nx:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - .:/workspace
+    working_dir: /workspace
+    entrypoint: ["/bin/bash", "/workspace/scripts/lint.sh"]
+
+  # Run CodeQL analysis (standalone CLI, no GitHub Actions needed)
+  # Usage: docker compose run --rm codeql-analyze
+  codeql-create:
+    image: ghcr.io/ethiquema/ryu_ldn_nx:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - .:/workspace
+    working_dir: /workspace
+    entrypoint: ["/bin/bash", "/workspace/scripts/codeql-create.sh"]
+
+  codeql-analyze:
+    image: ghcr.io/ethiquema/ryu_ldn_nx:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - .:/workspace
+    working_dir: /workspace
+    entrypoint: ["/bin/bash", "/workspace/scripts/codeql-analyze.sh"]
 
   shell:
     image: ghcr.io/ethiquema/ryu_ldn_nx:latest
