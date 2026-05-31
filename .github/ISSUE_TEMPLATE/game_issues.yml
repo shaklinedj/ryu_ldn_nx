@@ -170,7 +170,8 @@ body:
       description: |
         Paste the **full contents** of `sdmc:/config/ryu_ldn_nx/config.ini`.
         Required — connection mode, server, and P2P settings are all in this file.
-      placeholder: |
+
+        ```ini
         [server]
         host = ...
         port = ...
@@ -190,6 +191,8 @@ body:
         enabled = ...
         level = ...
         log_to_file = ...
+        ```
+      placeholder: "Paste your full config.ini here"
     validations:
       required: true
 
@@ -204,9 +207,12 @@ body:
         4. Paste relevant lines from `sdmc:/config/ryu_ldn_nx/ryu_ldn_nx.log`
 
         Logs are required for game problem reports. Without logs, it is very difficult to diagnose the issue.
-      placeholder: |
+
+        ```log
         [YYYY-MM-DD HH:MM:SS] [ERROR] ...
         [YYYY-MM-DD HH:MM:SS] [WARN]  ...
+        ```
+      placeholder: "Paste relevant log lines here"
     validations:
       required: true
 

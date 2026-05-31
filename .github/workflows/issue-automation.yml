@@ -60,8 +60,12 @@ jobs:
           if [ -n "$DEV_COMMIT" ]; then
             DEV_SHORT=$(echo "$DEV_COMMIT" | cut -c1-7)
             echo "dev_label=Dev build (${DEV_SHORT})" >> "$GITHUB_OUTPUT"
+            echo "dev_commit=${DEV_COMMIT}" >> "$GITHUB_OUTPUT"
+            echo "dev_short=${DEV_SHORT}" >> "$GITHUB_OUTPUT"
           else
             echo "dev_label=Dev build (pre-release)" >> "$GITHUB_OUTPUT"
+            echo "dev_commit=" >> "$GITHUB_OUTPUT"
+            echo "dev_short=" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Validate and annotate
@@ -72,6 +76,8 @@ jobs:
           VERSION_OTHER: ${{ steps.extract.outputs.version_other }}
           LATEST_TAG: ${{ steps.release.outputs.latest_tag }}
           DEV_LABEL: ${{ steps.dev.outputs.dev_label }}
+          DEV_COMMIT: ${{ steps.dev.outputs.dev_commit }}
+          DEV_SHORT: ${{ steps.dev.outputs.dev_short }}
         run: |
           COMMENT=""
           case "$VERSION_CHANNEL" in
