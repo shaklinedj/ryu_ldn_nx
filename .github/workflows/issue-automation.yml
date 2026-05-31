@@ -1,0 +1,726 @@
+name: Issue & PR Automation
+
+on:
+  issues:
+    types: [assigned, edited, opened]
+  issue_comment:
+    types: [created]
+  push:
+    branches:
+      - 'feature/**'
+      - 'bugfix/**'
+      - 'hotfix/**'
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  validate-version:
+    name: Validate version on bug report
+    runs-on: ubuntu-latest
+    if: >
+      github.event_name == 'issues' &&
+      contains(fromJSON('["opened", "edited"]'), github.event.action) &&
+      (contains(github.event.issue.labels.*.name, 'bug') ||
+       contains(github.event.issue.labels.*.name, 'game-issue'))
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract version fields from issue body
+        id: extract
+        env:
+          ISSUE_BODY: ${{ github.event.issue.body }}
+        run: |
+          VERSION_CHANNEL=$(echo "$ISSUE_BODY" | sed -n '/^### Which build are you running\?$/,/^###/{ /^### Which build are you running\?$/d; /^###/d; p; }' | head -1 | xargs)
+          if [ -z "$VERSION_CHANNEL" ]; then
+            VERSION_CHANNEL=$(echo "$ISSUE_BODY" | sed -n '/^### ryu_ldn_nx build$/,/^###/{ /^### ryu_ldn_nx build$/d; /^###/d; p; }' | head -1 | xargs)
+          fi
+          VERSION_OTHER=$(echo "$ISSUE_BODY" | sed -n '/^### Version or commit (if Other)$/,/^###/{ /^### Version or commit (if Other)$/d; /^###/d; p; }' | head -1 | xargs)
+          echo "version_channel=$VERSION_CHANNEL" >> "$GITHUB_OUTPUT"
+          echo "version_other=$VERSION_OTHER" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch latest release version
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          LATEST_TAG=$(gh release list --limit 1 --exclude-drafts --exclude-pre-releases --json tagName --jq '.[0].tagName' 2>/dev/null || echo "")
+          if [ -z "$LATEST_TAG" ]; then
+            LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "unknown")
+          fi
+          echo "latest_tag=$LATEST_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch latest dev build info
+        id: dev
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          DEV_COMMIT=$(gh release view dev --json targetCommitish --jq '.targetCommitish' 2>/dev/null || echo "")
+          if [ -n "$DEV_COMMIT" ]; then
+            DEV_SHORT=$(echo "$DEV_COMMIT" | cut -c1-7)
+            echo "dev_label=Dev build (${DEV_SHORT})" >> "$GITHUB_OUTPUT"
+            echo "dev_commit=${DEV_COMMIT}" >> "$GITHUB_OUTPUT"
+            echo "dev_short=${DEV_SHORT}" >> "$GITHUB_OUTPUT"
+          else
+            echo "dev_label=Dev build (pre-release)" >> "$GITHUB_OUTPUT"
+            echo "dev_commit=" >> "$GITHUB_OUTPUT"
+            echo "dev_short=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Validate and annotate
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          VERSION_CHANNEL: ${{ steps.extract.outputs.version_channel }}
+          VERSION_OTHER: ${{ steps.extract.outputs.version_other }}
+          LATEST_TAG: ${{ steps.release.outputs.latest_tag }}
+          DEV_LABEL: ${{ steps.dev.outputs.dev_label }}
+          DEV_COMMIT: ${{ steps.dev.outputs.dev_commit }}
+          DEV_SHORT: ${{ steps.dev.outputs.dev_short }}
+        run: |
+          COMMENT=""
+          case "$VERSION_CHANNEL" in
+            "Latest release")
+              COMMENT="✅ **Version confirmed:** Latest release (\`${LATEST_TAG}\`)
+
+          This bug affects a released version → eligible for a **hotfix** branch targeting \`main\`."
+              ;;
+            "Latest dev build")
+              COMMENT="✅ **Version confirmed:** ${DEV_LABEL}
+
+          This bug affects the dev build → will use a standard **bugfix** branch targeting \`develop\`."
+              ;;
+            "Other (specify below)")
+              if [ -z "$VERSION_OTHER" ]; then
+                COMMENT="⚠️ **Version not specified.** You selected \"Other\" but did not provide a version or commit hash.
+
+          Please edit this issue and add the version in the \"Version or commit (if Other)\" field, or select one of the standard builds above."
+              else
+                VALID=false
+                if git rev-parse "$VERSION_OTHER" >/dev/null 2>&1; then
+                  VALID=true
+                elif git rev-parse "v${VERSION_OTHER#v}" >/dev/null 2>&1; then
+                  VALID=true
+                elif gh release view "$VERSION_OTHER" --json tagName >/dev/null 2>&1; then
+                  VALID=true
+                elif gh release view "v${VERSION_OTHER#v}" --json tagName >/dev/null 2>&1; then
+                  VALID=true
+                fi
+                if [ "$VALID" = true ]; then
+                  SHORT_HASH=$(echo "$VERSION_OTHER" | cut -c1-7)
+                  IS_RELEASE=$(gh release view "$VERSION_OTHER" --json isPrerelease --jq '.isPrerelease' 2>/dev/null || echo "true")
+                  if [ "$IS_RELEASE" = "false" ]; then
+                    COMMENT="✅ **Version confirmed:** \`${VERSION_OTHER}\` (release tag)
+
+          This bug affects a released version → eligible for a **hotfix** branch targeting \`main\`."
+                  else
+                    COMMENT="✅ **Version confirmed:** commit \`${SHORT_HASH}\`
+
+          This version is not a tagged release → will use a standard **bugfix** branch targeting \`develop\`."
+                  fi
+                else
+                  COMMENT="⚠️ **Unknown version:** \`${VERSION_OTHER}\` could not be found in this repository's releases or commit history.
+
+          Please verify you entered the correct tag (e.g., \`v1.2.0\`) or commit hash (e.g., \`abc1234\`). A maintainer will need to confirm this version manually."
+                fi
+              fi
+              ;;
+            *)
+              COMMENT="ℹ️ **Build version not specified.** Please select one of the options in the \"Which build are you running?\" field.
+
+          Available options:
+          - **Latest release** (\`${LATEST_TAG}\`)
+          - **${DEV_LABEL}**
+          - **Other** (provide a tag or commit hash)"
+              ;;
+          esac
+
+          gh api "repos/${{ github.repository }}/issues/${ISSUE_NUMBER}/comments" \
+            --paginate --jq '.[] | select(.user.login == "github-actions[bot]") | select(.body | startswith("✅ **Version") or startswith("⚠️ **Version") or startswith("ℹ️ **Build")) | .id' \
+            | while read -r comment_id; do
+              gh api "repos/${{ github.repository }}/issues/comments/${comment_id}" -X DELETE 2>/dev/null || true
+            done
+
+          gh issue comment "$ISSUE_NUMBER" --body "$COMMENT"
+
+  check-title-length:
+    name: Validate issue title for branch creation
+    runs-on: ubuntu-latest
+    if: >
+      github.event_name == 'issues' &&
+      github.event.action == 'assigned'
+    outputs:
+      title_ok: ${{ steps.check.outputs.title_ok }}
+    steps:
+      - name: Check title length
+        id: check
+        env:
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+        run: |
+          TITLE_LEN=${#ISSUE_TITLE}
+          MAX_LEN=80
+          if [ "$TITLE_LEN" -gt "$MAX_LEN" ]; then
+            echo "title_ok=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Title is ${TITLE_LEN} chars (max ${MAX_LEN}). Shorten before branch can be created."
+          else
+            echo "title_ok=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Warn if title too long
+        if: steps.check.outputs.title_ok == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          gh issue comment "$ISSUE_NUMBER" \
+            --body ":warning: **Title too long for branch naming** (over 80 chars).
+
+          Please edit the issue title to be more concise, then re-assign yourself to trigger branch creation."
+
+  retry-on-edit:
+    name: Retry branch creation after title edit
+    runs-on: ubuntu-latest
+    if: >
+      github.event_name == 'issues' &&
+      github.event.action == 'edited'
+    outputs:
+      title_ok: ${{ steps.check.outputs.title_ok }}
+    steps:
+      - name: Check if title is now valid
+        id: check
+        env:
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+        run: |
+          TITLE_LEN=${#ISSUE_TITLE}
+          if [ "$TITLE_LEN" -gt 80 ]; then
+            echo "title_ok=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "title_ok=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  create-branch-and-pr:
+    name: Create gitflow branch and draft PR
+    runs-on: ubuntu-latest
+    needs: [check-title-length, retry-on-edit]
+    if: >
+      always() &&
+      github.event_name == 'issues' &&
+      (needs.check-title-length.outputs.title_ok == 'true' ||
+       needs.retry-on-edit.outputs.title_ok == 'true')
+    steps:
+      - name: Classify issue and determine gitflow branch type
+        id: classify
+        env:
+          ISSUE_LABELS: ${{ toJson(github.event.issue.labels.*.name) }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          LABELS=$(echo "$ISSUE_LABELS" | jq -r '.[]')
+          SKIP=false
+          BRANCH_TYPE=""
+          BASE_BRANCH="develop"
+
+          VERSION_CHANNEL=$(echo "$ISSUE_BODY" | sed -n '/^### Which build are you running\?$/,/^###/{ /^### Which build are you running\?$/d; /^###/d; p; }' | head -1 | xargs)
+          if [ -z "$VERSION_CHANNEL" ]; then
+            VERSION_CHANNEL=$(echo "$ISSUE_BODY" | sed -n '/^### ryu_ldn_nx build$/,/^###/{ /^### ryu_ldn_nx build$/d; /^###/d; p; }' | head -1 | xargs)
+          fi
+          VERSION_OTHER=$(echo "$ISSUE_BODY" | sed -n '/^### Version or commit (if Other)$/,/^###/{ /^### Version or commit (if Other)$/d; /^###/d; p; }' | head -1 | xargs)
+
+          for label in $LABELS; do
+            case "$label" in
+              bug)
+                BRANCH_TYPE="bugfix"
+                ;;
+              enhancement)
+                BRANCH_TYPE="feature"
+                ;;
+              game-issue|whitelist-request|vulnerable-game)
+                SKIP=true
+                ;;
+            esac
+          done
+
+          if [ "$SKIP" = true ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "branch_type=" >> "$GITHUB_OUTPUT"
+            echo "base_branch=develop" >> "$GITHUB_OUTPUT"
+            echo "slug=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ -z "$BRANCH_TYPE" ]; then
+            BRANCH_TYPE="feature"
+          fi
+
+          if [ "$BRANCH_TYPE" = "bugfix" ]; then
+            if echo "$VERSION_CHANNEL" | grep -qi "release"; then
+              BRANCH_TYPE="hotfix"
+              BASE_BRANCH="main"
+            elif echo "$VERSION_CHANNEL" | grep -qi "other" && [ -n "$VERSION_OTHER" ]; then
+              if gh release view "$VERSION_OTHER" --json isPrerelease --jq '.isPrerelease' 2>/dev/null | grep -q "false"; then
+                BRANCH_TYPE="hotfix"
+                BASE_BRANCH="main"
+              fi
+            fi
+          fi
+
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "branch_type=$BRANCH_TYPE" >> "$GITHUB_OUTPUT"
+          echo "base_branch=$BASE_BRANCH" >> "$GITHUB_OUTPUT"
+
+          SLUG=$(echo "$ISSUE_TITLE" | \
+            sed 's/^\[BUG\]\s*//' | \
+            sed 's/^\[FEATURE\]\s*//' | \
+            sed 's/^\[GAME\]\s*//' | \
+            sed 's/^\[WHITELIST\]\s*//' | \
+            sed 's/^\[GAME-VULN\]\s*//' | \
+            tr '[:upper:]' '[:lower:]' | \
+            sed 's/[^a-z0-9]/-/g' | \
+            sed 's/--*/-/g' | \
+            sed 's/^-//;s/-$//' | \
+            cut -c1-50)
+          echo "slug=$SLUG" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout base branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.classify.outputs.base_branch }}
+          fetch-depth: 0
+
+      - name: Check for existing branch
+        id: existing
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          PR_NUMBER=$(gh pr list \
+            --head "feature/*" --head "bugfix/*" --head "hotfix/*" \
+            --search "in:body Closes #${ISSUE_NUMBER}" \
+            --state open \
+            --json number \
+            --jq '.[0].number // empty')
+          if [ -n "$PR_NUMBER" ]; then
+            echo "already_exists=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "already_exists=false" >> "$GITHUB_OUTPUT"
+
+      - name: Create branch and draft PR
+        if: steps.classify.outputs.skip == 'false' && steps.existing.outputs.already_exists != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH_TYPE: ${{ steps.classify.outputs.branch_type }}
+          BASE_BRANCH: ${{ steps.classify.outputs.base_branch }}
+          SLUG: ${{ steps.classify.outputs.slug }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+        run: |
+          BRANCH_NAME="${BRANCH_TYPE}/${SLUG}"
+
+          if git ls-remote --heads origin "$BRANCH_NAME" | grep -q "$BRANCH_NAME"; then
+            echo "::notice::Branch ${BRANCH_NAME} already exists"
+            exit 0
+          fi
+
+          git checkout -b "$BRANCH_NAME"
+          git push origin "$BRANCH_NAME"
+
+          PROBLEM=$(echo "$ISSUE_BODY" | sed -n '/^### What went wrong\?$/,/^###/{ /^### What went wrong\?$/d; /^###/d; p; }' | head -10)
+          STEPS=$(echo "$ISSUE_BODY" | sed -n '/^### Steps to reproduce$/,/^###/{ /^### Steps to reproduce$/d; /^###/d; p; }' | head -15)
+          FEAT_PROBLEM=$(echo "$ISSUE_BODY" | sed -n '/^### What problem are you trying to solve\?$/,/^###/{ /^### What problem are you trying to solve\?$/d; /^###/d; p; }' | head -10)
+          FEAT_SOLUTION=$(echo "$ISSUE_BODY" | sed -n '/^### What should ryu.*do instead\?$/,/^###/{ /^### What should ryu.*do instead\?$/d; /^###/d; p; }' | head -10)
+          COMPONENT=$(echo "$ISSUE_BODY" | sed -n '/^### Which component is affected\?$/,/^###/{ /^### Which component is affected\?$/d; /^###/d; p; }' | head -1 | xargs)
+
+          CONTEXT=""
+          [ -n "$COMPONENT" ] && CONTEXT="${CONTEXT}
+          **Component:** ${COMPONENT}"
+          [ -n "$FEAT_PROBLEM" ] && CONTEXT="${CONTEXT}
+          **Problem:** ${FEAT_PROBLEM}"
+          [ -n "$FEAT_SOLUTION" ] && CONTEXT="${CONTEXT}
+          **Expected behavior:** ${FEAT_SOLUTION}"
+          [ -n "$PROBLEM" ] && CONTEXT="${CONTEXT}
+          **What went wrong:** ${PROBLEM}"
+          [ -n "$STEPS" ] && CONTEXT="${CONTEXT}
+
+          **Steps to reproduce:**
+          ${STEPS}"
+
+          if [ "$BRANCH_TYPE" = "hotfix" ]; then
+            PR_BASE="main"
+          else
+            PR_BASE="develop"
+          fi
+
+          DESCRIPTION="## Summary
+
+          Closes #${ISSUE_NUMBER}
+          ${CONTEXT}
+
+          ## Progress
+
+          - [ ] Implementation
+          - [ ] Tests
+          - [ ] Documentation
+
+          ## Commits
+
+          _This section is automatically updated on each push._
+
+          ## How to Test
+
+          _To be filled by the author before requesting review._
+
+          ---
+
+          > Gitflow branch: \`${BRANCH_NAME}\` → \`${PR_BASE}\`"
+
+          gh pr create \
+            --base "$PR_BASE" \
+            --head "$BRANCH_NAME" \
+            --draft \
+            --title "${ISSUE_TITLE}" \
+            --body "$DESCRIPTION"
+
+      - name: Comment on issue
+        if: steps.classify.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          BRANCH_TYPE: ${{ steps.classify.outputs.branch_type }}
+          SLUG: ${{ steps.classify.outputs.slug }}
+        run: |
+          BRANCH_NAME="${BRANCH_TYPE}/${SLUG}"
+          if [ "$BRANCH_TYPE" = "hotfix" ]; then
+            PR_BASE="main"
+          else
+            PR_BASE="develop"
+          fi
+          gh issue comment "$ISSUE_NUMBER" \
+            --body "Gitflow branch \`${BRANCH_NAME}\` created → draft PR targeting \`${PR_BASE}\`. Push your commits to this branch."
+
+  update-pr:
+    name: Update PR description with commits and TODOs
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Find associated PR
+        id: find_pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          PR_NUMBER=$(gh pr list \
+            --head "$BRANCH" \
+            --state open \
+            --json number \
+            --jq '.[0].number // empty')
+          if [ -z "$PR_NUMBER" ]; then
+            echo "pr_found=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "pr_found=true" >> "$GITHUB_OUTPUT"
+          echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+
+      - name: Build updated description
+        if: steps.find_pr.outputs.pr_found == 'true'
+        id: build
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ steps.find_pr.outputs.pr_number }}
+        run: |
+          PR_BODY=$(gh pr view "$PR_NUMBER" --json body --jq '.body')
+
+          TODO_SECTION=""
+          while IFS= read -r line; do
+            file=$(echo "$line" | cut -d: -f1)
+            todo_text=$(echo "$line" | sed 's/.*TODO[:[:space:]]*//')
+            TODO_SECTION="${TODO_SECTION}
+          - [ ] \`${file}\`: ${todo_text}"
+          done < <(grep -rn "TODO" --include='*.cpp' --include='*.hpp' --include='*.c' --include='*.h' . 2>/dev/null | head -30 || true)
+
+          COMMIT_SECTION=""
+          PR_BASE=$(gh pr view "$PR_NUMBER" --json baseRefName --jq '.baseRefName')
+          if [ -n "$PR_BASE" ] && git rev-parse "origin/${PR_BASE}" >/dev/null 2>&1; then
+            COMMIT_SECTION=$(git log --oneline "origin/${PR_BASE}..HEAD" 2>/dev/null | head -50 | \
+              while read -r hash msg; do echo "- `${hash}` ${msg}"; done)
+          fi
+          if [ -z "$COMMIT_SECTION" ]; then
+            COMMIT_SECTION="_No commits yet on this branch._"
+          fi
+
+          BEFORE_PROGRESS=$(echo "$PR_BODY" | sed '/^## Progress/,$d')
+          AFTER_COMMITS=$(echo "$PR_BODY" | sed -n '/^## How to Test/,$p')
+
+          {
+            echo "$BEFORE_PROGRESS"
+            echo ""
+            echo "## Progress"
+            echo ""
+            if [ -n "$TODO_SECTION" ]; then
+              echo "$TODO_SECTION"
+            else
+              echo "- [ ] Implementation"
+              echo "- [ ] Tests"
+              echo "- [ ] Documentation"
+            fi
+            echo ""
+            echo "## Commits"
+            echo ""
+            echo "$COMMIT_SECTION"
+            echo ""
+            echo "$AFTER_COMMITS"
+          } > /tmp/pr_body.txt
+
+          echo "body_file=/tmp/pr_body.txt" >> "$GITHUB_OUTPUT"
+
+      - name: Update PR
+        if: steps.find_pr.outputs.pr_found == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ steps.find_pr.outputs.pr_number }}
+        run: |
+          gh pr edit "$PR_NUMBER" --body-file /tmp/pr_body.txt
+
+  issue-relations:
+    name: Process bidirectional relation command
+    runs-on: ubuntu-latest
+    if: >
+      github.event_name == 'issue_comment' &&
+      github.event.comment.user.login != 'github-actions[bot]' &&
+      github.event.comment.user.type != 'Bot'
+    steps:
+      - name: Parse relation commands from comment
+        id: parse
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.comment.body;
+            const sourceNumber = context.payload.issue.number;
+            const additions = [];
+            const removals = [];
+
+            const addRegex = /(?<!-)\b(parent|child|related|enfant|lié)\s+(#\d+(?:\s*,?\s*#\d+)*)/gi;
+            const removeRegex = /-\s*(parent|child|related|enfant|lié)\s+(#\d+(?:\s*,?\s*#\d+)*)/gi;
+
+            let match;
+            while ((match = addRegex.exec(body)) !== null) {
+              const raw = match[1].toLowerCase();
+              const numbersStr = match[2];
+              const numbers = [...numbersStr.matchAll(/#(\d+)/g)].map(m => parseInt(m[1]));
+              let type;
+              if (raw === 'parent') type = 'parent';
+              else if (raw === 'child' || raw === 'enfant') type = 'child';
+              else if (raw === 'related' || raw === 'lié') type = 'related';
+              if (type) {
+                for (const number of numbers) {
+                  if (number === sourceNumber) continue;
+                  if (!additions.some(r => r.type === type && r.number === number)) {
+                    additions.push({ type, number });
+                  }
+                }
+              }
+            }
+
+            while ((match = removeRegex.exec(body)) !== null) {
+              const raw = match[1].toLowerCase();
+              const numbersStr = match[2];
+              const numbers = [...numbersStr.matchAll(/#(\d+)/g)].map(m => parseInt(m[1]));
+              let type;
+              if (raw === 'parent') type = 'parent';
+              else if (raw === 'child' || raw === 'enfant') type = 'child';
+              else if (raw === 'related' || raw === 'lié') type = 'related';
+              if (type) {
+                for (const number of numbers) {
+                  if (number === sourceNumber) continue;
+                  if (!removals.some(r => r.type === type && r.number === number)) {
+                    removals.push({ type, number });
+                  }
+                }
+              }
+            }
+
+            const hasCommand = additions.length > 0 || removals.length > 0;
+            core.setOutput('has_command', String(hasCommand));
+            core.setOutput('additions', JSON.stringify(additions));
+            core.setOutput('removals', JSON.stringify(removals));
+            core.setOutput('source_number', String(sourceNumber));
+
+      - name: Update relationships bidirectionally
+        if: steps.parse.outputs.has_command == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const additions = JSON.parse('${{ steps.parse.outputs.additions }}');
+            const removals = JSON.parse('${{ steps.parse.outputs.removals }}');
+            const sourceNumber = parseInt('${{ steps.parse.outputs.source_number }}');
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const MARKER = '<!-- RELATIONS -->';
+
+            async function getRelationComment(issueNumber) {
+              const { data: comments } = await github.rest.issues.listComments({
+                owner, repo, issue_number: issueNumber, per_page: 100
+              });
+              return comments.find(c =>
+                c.user.login === 'github-actions[bot]' && c.body.includes(MARKER)
+              );
+            }
+
+            function parseRelations(body) {
+              const result = { parents: [], children: [], related: [] };
+              if (!body) return result;
+              const parentMatch = body.match(/- 🔗 Parent: (.+)/);
+              if (parentMatch) {
+                for (const m of parentMatch[1].matchAll(/#(\d+)/g)) {
+                  result.parents.push(parseInt(m[1]));
+                }
+              }
+              const childMatch = body.match(/- 🔗 Children?: (.+)/);
+              if (childMatch) {
+                for (const m of childMatch[1].matchAll(/#(\d+)/g)) {
+                  result.children.push(parseInt(m[1]));
+                }
+              }
+              const relatedMatch = body.match(/- 🔗 Related: (.+)/);
+              if (relatedMatch) {
+                for (const m of relatedMatch[1].matchAll(/#(\d+)/g)) {
+                  result.related.push(parseInt(m[1]));
+                }
+              }
+              return result;
+            }
+
+            async function getIssueTitle(number) {
+              try {
+                const { data } = await github.rest.issues.get({ owner, repo, issue_number: number });
+                return data.title;
+              } catch { return 'Unknown'; }
+            }
+
+            async function formatIssueRef(number) {
+              const title = await getIssueTitle(number);
+              return `#${number} (${title})`;
+            }
+
+            async function writeRelationComment(issueNumber, rels) {
+              const existing = await getRelationComment(issueNumber);
+              let body = MARKER + '\n📋 **Relationships**\n';
+
+              if (rels.parents.length > 0) {
+                const refs = await Promise.all(rels.parents.map(n => formatIssueRef(n)));
+                body += `- 🔗 Parent: ${refs.join(', ')}\n`;
+              }
+              if (rels.children.length > 0) {
+                const refs = await Promise.all(rels.children.map(n => formatIssueRef(n)));
+                body += `- 🔗 Children: ${refs.join(', ')}\n`;
+              }
+              if (rels.related.length > 0) {
+                const refs = await Promise.all(rels.related.map(n => formatIssueRef(n)));
+                body += `- 🔗 Related: ${refs.join(', ')}\n`;
+              }
+              body += '\n*Auto-maintained. Use `parent #N`, `child #N`, `related #N` to add. Use `-parent #N`, `-child #N`, `-related #N` to remove.*';
+
+              if (rels.parents.length === 0 && rels.children.length === 0 && rels.related.length === 0) {
+                if (existing) {
+                  await github.rest.issues.deleteComment({ owner, repo, comment_id: existing.id });
+                }
+                return;
+              }
+
+              if (existing) {
+                await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+              } else {
+                await github.rest.issues.createComment({ owner, repo, issue_number: issueNumber, body });
+              }
+            }
+
+            const sourceRelComment = await getRelationComment(sourceNumber);
+            const sourceRels = sourceRelComment
+              ? parseRelations(sourceRelComment.body)
+              : { parents: [], children: [], related: [] };
+
+            for (const rel of additions) {
+              const targetNumber = rel.number;
+
+              if (rel.type === 'parent' && !sourceRels.parents.includes(targetNumber)) {
+                sourceRels.parents.push(targetNumber);
+              } else if (rel.type === 'child' && !sourceRels.children.includes(targetNumber)) {
+                sourceRels.children.push(targetNumber);
+              } else if (rel.type === 'related' && !sourceRels.related.includes(targetNumber)) {
+                sourceRels.related.push(targetNumber);
+              }
+
+              const targetRelComment = await getRelationComment(targetNumber);
+              const targetRels = targetRelComment
+                ? parseRelations(targetRelComment.body)
+                : { parents: [], children: [], related: [] };
+
+              if (rel.type === 'parent' && !targetRels.children.includes(sourceNumber)) {
+                targetRels.children.push(sourceNumber);
+              } else if (rel.type === 'child' && !targetRels.parents.includes(sourceNumber)) {
+                targetRels.parents.push(sourceNumber);
+              } else if (rel.type === 'related' && !targetRels.related.includes(sourceNumber)) {
+                targetRels.related.push(sourceNumber);
+              }
+
+              targetRels.parents = [...new Set(targetRels.parents)];
+              targetRels.children = [...new Set(targetRels.children)];
+              targetRels.related = [...new Set(targetRels.related)];
+
+              await writeRelationComment(targetNumber, targetRels);
+            }
+
+            for (const rel of removals) {
+              const targetNumber = rel.number;
+
+              if (rel.type === 'parent') {
+                sourceRels.parents = sourceRels.parents.filter(n => n !== targetNumber);
+              } else if (rel.type === 'child') {
+                sourceRels.children = sourceRels.children.filter(n => n !== targetNumber);
+              } else if (rel.type === 'related') {
+                sourceRels.related = sourceRels.related.filter(n => n !== targetNumber);
+              }
+
+              const targetRelComment = await getRelationComment(targetNumber);
+              const targetRels = targetRelComment
+                ? parseRelations(targetRelComment.body)
+                : { parents: [], children: [], related: [] };
+
+              if (rel.type === 'parent') {
+                targetRels.children = targetRels.children.filter(n => n !== sourceNumber);
+              } else if (rel.type === 'child') {
+                targetRels.parents = targetRels.parents.filter(n => n !== sourceNumber);
+              } else if (rel.type === 'related') {
+                targetRels.related = targetRels.related.filter(n => n !== sourceNumber);
+              }
+
+              targetRels.parents = [...new Set(targetRels.parents)];
+              targetRels.children = [...new Set(targetRels.children)];
+              targetRels.related = [...new Set(targetRels.related)];
+
+              await writeRelationComment(targetNumber, targetRels);
+            }
+
+            sourceRels.parents = [...new Set(sourceRels.parents)];
+            sourceRels.children = [...new Set(sourceRels.children)];
+            sourceRels.related = [...new Set(sourceRels.related)];
+
+            await writeRelationComment(sourceNumber, sourceRels);
+
+            await github.rest.reactions.createForIssueComment({
+              owner, repo,
+              comment_id: context.payload.comment.id,
+              content: '+1'
+            });

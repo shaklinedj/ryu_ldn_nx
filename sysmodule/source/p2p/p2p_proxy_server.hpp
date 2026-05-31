@@ -46,6 +46,7 @@
 
 #include <stratosphere.hpp>
 #include <atomic>
+#include <memory>
 #include "../protocol/types.hpp"
 #include "../protocol/ryu_protocol.hpp"
 #include "upnp_port_mapper.hpp"
@@ -413,7 +414,7 @@ private:
     bool m_lease_thread_running;
 
     // Sessions
-    P2pProxySession* m_sessions[MAX_PLAYERS];
+    std::unique_ptr<P2pProxySession> m_sessions[MAX_PLAYERS];
     int m_session_count;
 
     // Disconnected sessions waiting to be deleted by ReapZombieSessions().
@@ -424,7 +425,7 @@ private:
     // AcceptLoop / Stop() free it once m_thread_done is true and the
     // thread has joined.
     static constexpr int MAX_ZOMBIE_SESSIONS = MAX_PLAYERS * 2;
-    P2pProxySession* m_zombie_sessions[MAX_ZOMBIE_SESSIONS];
+    std::unique_ptr<P2pProxySession> m_zombie_sessions[MAX_ZOMBIE_SESSIONS];
     int m_zombie_session_count;
 
     // Waiting tokens for auth

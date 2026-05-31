@@ -608,7 +608,7 @@ Result ICommunicationService::Scan(
     ams::sf::Out<u32> count,
     ams::sf::OutAutoSelectArray<NetworkInfo> buffer,
     u16 channel,
-    ScanFilter filter)
+    const ScanFilter &filter)
 {
     AMS_UNUSED(channel);
 
@@ -812,7 +812,7 @@ Result ICommunicationService::CloseAccessPoint() {
     R_SUCCEED();
 }
 
-Result ICommunicationService::CreateNetwork(CreateNetworkConfig data) {
+Result ICommunicationService::CreateNetwork(const CreateNetworkConfig &data) {
     // Replace LocalCommunicationId=-1 with real LocalCommunicationId from NACP
     // See Ryujinx NeedsRealId handling - uses NACP LocalCommunicationId[0], not program_id
     u64 local_comm_id = data.networkConfig.intentId.localCommunicationId;
@@ -1136,7 +1136,7 @@ Result ICommunicationService::CloseStation() {
     R_SUCCEED();
 }
 
-Result ICommunicationService::Connect(ConnectNetworkData dat, const NetworkInfo& data) {
+Result ICommunicationService::Connect(const ConnectNetworkData &dat, const NetworkInfo& data) {
     // Replace LocalCommunicationId=-1 with real LocalCommunicationId from NACP
     // See Ryujinx NeedsRealId handling - uses NACP LocalCommunicationId[0], not program_id
     u64 local_comm_id = data.networkId.intentId.localCommunicationId;
@@ -1264,14 +1264,14 @@ Result ICommunicationService::ScanPrivate(
         ams::sf::Out<u32> count,
         ams::sf::OutAutoSelectArray<NetworkInfo> buffer,
         u16 channel,
-        ScanFilter filter) {
+        const ScanFilter &filter) {
     // ScanPrivate is the same as Scan but for private networks
     // The filter behavior is slightly different (doesn't mask BSSID flag)
     return Scan(count, buffer, channel, filter);
 }
 
 Result ICommunicationService::CreateNetworkPrivate(
-        CreateNetworkPrivateConfig data,
+        const CreateNetworkPrivateConfig &data,
         ams::sf::InPointerBuffer addressList) {
     LOG_INFO("CreateNetworkPrivate called (state before=%s, addr_list_size=%zu)",
              LdnStateMachine::StateToString(m_state_machine.GetState()),
@@ -1357,7 +1357,7 @@ Result ICommunicationService::CreateNetworkPrivate(
     R_SUCCEED();
 }
 
-Result ICommunicationService::ConnectPrivate(ConnectPrivateData data) {
+Result ICommunicationService::ConnectPrivate(const ConnectPrivateData &data) {
     R_UNLESS(IsServerConnected(), MAKERESULT(0x10, 2)); // Not connected
 
     auto result = m_state_machine.Connect();

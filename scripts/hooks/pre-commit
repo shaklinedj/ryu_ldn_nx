@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # ryu_ldn_nx pre-commit hook
 # Enforces: unit tests pass + per-file coverage >= 80%
-# Full pipeline (unit + integration + coverage) runs in CI only.
-# Requires: gcovr (pip install gcovr)
+# All checks run inside the Docker test container (devkitpro/devkita64).
 # Install: python3 scripts/hooks/install.py
 #          or: cp scripts/hooks/pre-commit .git/hooks/pre-commit
 
@@ -13,12 +12,12 @@ cd "$REPO_ROOT"
 
 MIN_COVERAGE="${MIN_COVERAGE:-80}"
 
-echo "=== Pre-commit: running unit tests with coverage ==="
-(cd tests && make clean > /dev/null 2>&1 && make COVERAGE=1 test)
+echo "=== Pre-commit: running unit tests with coverage in Docker ==="
+docker compose run --rm test
 
 echo ""
 echo "=== Pre-commit: checking coverage >= ${MIN_COVERAGE}% ==="
-python3 scripts/check-coverage.py --min "$MIN_COVERAGE" --root .
+docker compose run --rm --entrypoint python3 test /workspace/scripts/check-coverage.py --min "$MIN_COVERAGE" --root /workspace
 
 echo ""
 echo "=== Pre-commit: all checks passed ==="

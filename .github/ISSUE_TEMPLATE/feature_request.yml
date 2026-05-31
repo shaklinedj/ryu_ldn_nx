@@ -1,0 +1,106 @@
+name: Feature Suggestion
+description: "Suggest a quality-of-life improvement for ryu\_ldn\_nx (sysmodule, overlay, or documentation)"
+title: "[FEATURE] "
+labels: [enhancement]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Before submitting, read these rules:**
+
+        🚫 **No server-side features.** `ryu ldn nx` is a client-side sysmodule. We do not control the LDN server. Suggestions that require server changes (new packet types, server-side matchmaking, lobby persistence, etc.) will be closed.
+
+        🚫 **No new protocols.** The wire format must remain compatible with the existing C# server and LDN protocol. We cannot add new message types or change the protocol.
+
+        ✅ **What belongs here:** quality of life improvements that can be done entirely on the Switch side — overlay tweaks, config improvements, better error messages, UI/UX refinements, logging enhancements, etc.
+
+        🎮 **Game-specific behavior not working as expected?** This form is not for game problems. If a game behaves incorrectly or has connectivity issues, open a **Game Problem Report** instead.
+
+        **Examples that will be closed:**
+        
+        - "Add voice chat" → requires server infrastructure
+        
+        - "Support custom game modes" → requires server protocol changes
+        
+        - "Persistent lobbies after host leaves" → requires server-side feature
+
+  - type: markdown
+    attributes:
+      value: |
+        
+        ## Your suggestion
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: "Which component would this affect?"
+      options:
+        - Sysmodule
+        - Overlay (Tesla)
+        - Config (config.ini / ryu:cfg IPC)
+        - Logging / debugging
+        - Connection behavior (timeouts, reconnect, error messages)
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: "What is frustrating about the current experience?"
+      description: "Describe what is awkward, missing, or could be smoother. Focus on the user experience, not technical implementation."
+      placeholder: |
+        Currently, to do [X] I have to [...], which is inconvenient because [...].
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed_solution
+    attributes:
+      label: "What should change?"
+      description: "Describe the improvement you would like to see. Keep it client-side only — no server or protocol changes."
+      placeholder: |
+        It would be better if [component] did [Y] instead, so that [benefit].
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+
+        ## Impact
+
+  - type: textarea
+    id: use_case
+    attributes:
+      label: "When would this improvement matter?"
+      description: "Describe a real situation where this change would make a difference for you or other players."
+      placeholder: |
+        When [situation], I currently have to [workaround]. With this change, [experience improvement].
+    validations:
+      required: true
+
+  - type: dropdown
+    id: impact
+    attributes:
+      label: "How impactful would this improvement be?"
+      description: "Be honest — most QoL improvements are medium or low impact."
+      options:
+        - Low — Minor convenience
+        - Medium — Noticeable improvement, workaround exists
+        - High — Major improvement to everyday use
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: "Pre-submission"
+      options:
+        - label: "I read the rules above and this suggestion does not require server-side or protocol changes"
+          required: true
+        - label: "This is not a game-specific problem (use Game Problem Report for those)"
+          required: true
+        - label: "I searched existing feature suggestions for duplicates"
+          required: true
