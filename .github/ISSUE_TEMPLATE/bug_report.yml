@@ -102,7 +102,7 @@ body:
     attributes:
       label: "Which build are you running?"
       description: >-
-        Select the build you installed. A GitHub Action will verify your selection and add the exact version info as a comment.
+        Select the build you installed.
         Choose "Other" if you built from source or are running an older release.
       options:
         - Latest release

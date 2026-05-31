@@ -23,7 +23,8 @@ jobs:
     if: >
       github.event_name == 'issues' &&
       contains(fromJSON('["opened", "edited"]'), github.event.action) &&
-      contains(github.event.issue.labels.*.name, 'bug')
+      (contains(github.event.issue.labels.*.name, 'bug') ||
+       contains(github.event.issue.labels.*.name, 'game-issue'))
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -36,6 +37,9 @@ jobs:
           ISSUE_BODY: ${{ github.event.issue.body }}
         run: |
           VERSION_CHANNEL=$(echo "$ISSUE_BODY" | sed -n '/^### Which build are you running\?$/,/^###/{ /^### Which build are you running\?$/d; /^###/d; p; }' | head -1 | xargs)
+          if [ -z "$VERSION_CHANNEL" ]; then
+            VERSION_CHANNEL=$(echo "$ISSUE_BODY" | sed -n '/^### ryu_ldn_nx build$/,/^###/{ /^### ryu_ldn_nx build$/d; /^###/d; p; }' | head -1 | xargs)
+          fi
           VERSION_OTHER=$(echo "$ISSUE_BODY" | sed -n '/^### Version or commit (if Other)$/,/^###/{ /^### Version or commit (if Other)$/d; /^###/d; p; }' | head -1 | xargs)
           echo "version_channel=$VERSION_CHANNEL" >> "$GITHUB_OUTPUT"
           echo "version_other=$VERSION_OTHER" >> "$GITHUB_OUTPUT"
@@ -225,6 +229,9 @@ jobs:
           BASE_BRANCH="develop"
 
           VERSION_CHANNEL=$(echo "$ISSUE_BODY" | sed -n '/^### Which build are you running\?$/,/^###/{ /^### Which build are you running\?$/d; /^###/d; p; }' | head -1 | xargs)
+          if [ -z "$VERSION_CHANNEL" ]; then
+            VERSION_CHANNEL=$(echo "$ISSUE_BODY" | sed -n '/^### ryu_ldn_nx build$/,/^###/{ /^### ryu_ldn_nx build$/d; /^###/d; p; }' | head -1 | xargs)
+          fi
           VERSION_OTHER=$(echo "$ISSUE_BODY" | sed -n '/^### Version or commit (if Other)$/,/^###/{ /^### Version or commit (if Other)$/d; /^###/d; p; }' | head -1 | xargs)
 
           for label in $LABELS; do
