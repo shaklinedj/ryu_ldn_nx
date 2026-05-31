@@ -342,7 +342,11 @@ static int ParseDnsResponse(const uint8_t* response, size_t resp_len,
         // TYPE (2), CLASS (2), TTL (4), RDLENGTH (2)
         uint16_t rtype = (static_cast<uint16_t>(p[0]) << 8) | p[1];
         uint16_t rclass = (static_cast<uint16_t>(p[2]) << 8) | p[3];
+        uint32_t rttl = (static_cast<uint32_t>(p[4]) << 24) | (static_cast<uint32_t>(p[5]) << 16) |
+                        (static_cast<uint32_t>(p[6]) << 8)  | p[7];
         uint16_t rdlength = (static_cast<uint16_t>(p[8]) << 8) | p[9];
+        LOG_INFO("DNS answer[%u]: type=%u class=%u ttl=%u rdlen=%u offset=%td",
+                 i, rtype, rclass, rttl, rdlength, p - response);
         p += 10;
 
         if (p + rdlength > end) {
@@ -354,6 +358,10 @@ static int ParseDnsResponse(const uint8_t* response, size_t resp_len,
             if (ip_count < max_ips) {
                 uint32_t ip;
                 std::memcpy(&ip, p, 4);
+                LOG_INFO("DNS A record: raw_ip=0x%08X -> %u.%u.%u.%u",
+                         ip,
+                         (ip >> 24) & 0xFF, (ip >> 16) & 0xFF,
+                         (ip >> 8) & 0xFF, ip & 0xFF);
                 out_ips[ip_count++] = ip;
             }
         }
@@ -446,35 +454,30 @@ static int ResolveHostnameDns(const char* hostname, uint32_t* out_ips, int max_i
         LOG_INFO("DNS query id=0x%04X, response id=0x%04X", query_id, resp_id);
     }
 
-    // Hex dump of first 64 bytes of response for debugging
+    // Hex dump of DNS response — one LOG_INFO per 16-byte line
     {
-        char hex[256];
-        int off = 0;
         size_t dump_len = (recv_len < 64) ? static_cast<size_t>(recv_len) : 64;
-        for (size_t i = 0; i < dump_len && off < 200; i += 16) {
-            int n = std::snprintf(hex + off, sizeof(hex) - off,
-                    "  %04zx: %02x %02x %02x %02x %02x %02x %02x %02x"
-                    " %02x %02x %02x %02x %02x %02x %02x %02x",
-                    i,
-                    (i+0 < dump_len) ? resp_buf[i+0] : 0,
-                    (i+1 < dump_len) ? resp_buf[i+1] : 0,
-                    (i+2 < dump_len) ? resp_buf[i+2] : 0,
-                    (i+3 < dump_len) ? resp_buf[i+3] : 0,
-                    (i+4 < dump_len) ? resp_buf[i+4] : 0,
-                    (i+5 < dump_len) ? resp_buf[i+5] : 0,
-                    (i+6 < dump_len) ? resp_buf[i+6] : 0,
-                    (i+7 < dump_len) ? resp_buf[i+7] : 0,
-                    (i+8 < dump_len) ? resp_buf[i+8] : 0,
-                    (i+9 < dump_len) ? resp_buf[i+9] : 0,
-                    (i+10 < dump_len) ? resp_buf[i+10] : 0,
-                    (i+11 < dump_len) ? resp_buf[i+11] : 0,
-                    (i+12 < dump_len) ? resp_buf[i+12] : 0,
-                    (i+13 < dump_len) ? resp_buf[i+13] : 0,
-                    (i+14 < dump_len) ? resp_buf[i+14] : 0,
-                    (i+15 < dump_len) ? resp_buf[i+15] : 0);
-            off += n;
+        for (size_t i = 0; i < dump_len; i += 16) {
+            LOG_INFO("DNS hex %04zx: %02x %02x %02x %02x %02x %02x %02x %02x  "
+                     "%02x %02x %02x %02x %02x %02x %02x %02x",
+                     i,
+                     (i+0 < dump_len) ? resp_buf[i+0] : 0,
+                     (i+1 < dump_len) ? resp_buf[i+1] : 0,
+                     (i+2 < dump_len) ? resp_buf[i+2] : 0,
+                     (i+3 < dump_len) ? resp_buf[i+3] : 0,
+                     (i+4 < dump_len) ? resp_buf[i+4] : 0,
+                     (i+5 < dump_len) ? resp_buf[i+5] : 0,
+                     (i+6 < dump_len) ? resp_buf[i+6] : 0,
+                     (i+7 < dump_len) ? resp_buf[i+7] : 0,
+                     (i+8 < dump_len) ? resp_buf[i+8] : 0,
+                     (i+9 < dump_len) ? resp_buf[i+9] : 0,
+                     (i+10 < dump_len) ? resp_buf[i+10] : 0,
+                     (i+11 < dump_len) ? resp_buf[i+11] : 0,
+                     (i+12 < dump_len) ? resp_buf[i+12] : 0,
+                     (i+13 < dump_len) ? resp_buf[i+13] : 0,
+                     (i+14 < dump_len) ? resp_buf[i+14] : 0,
+                     (i+15 < dump_len) ? resp_buf[i+15] : 0);
         }
-        LOG_INFO("DNS response hex dump:\n%s", hex);
     }
 
     close(sock);
