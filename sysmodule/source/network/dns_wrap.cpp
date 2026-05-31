@@ -356,12 +356,12 @@ static int ParseDnsResponse(const uint8_t* response, size_t resp_len,
         // A record: TYPE=1, CLASS=1, RDLENGTH=4
         if (rtype == 1 && rclass == 1 && rdlength == 4) {
             if (ip_count < max_ips) {
-                uint32_t ip;
-                std::memcpy(&ip, p, 4);
+                uint32_t ip = (static_cast<uint32_t>(p[0]) << 24) |
+                              (static_cast<uint32_t>(p[1]) << 16) |
+                              (static_cast<uint32_t>(p[2]) << 8)  |
+                              static_cast<uint32_t>(p[3]);
                 LOG_INFO("DNS A record: raw_ip=0x%08X -> %u.%u.%u.%u",
-                         ip,
-                         (ip >> 24) & 0xFF, (ip >> 16) & 0xFF,
-                         (ip >> 8) & 0xFF, ip & 0xFF);
+                         ip, p[0], p[1], p[2], p[3]);
                 out_ips[ip_count++] = ip;
             }
         }
