@@ -33,6 +33,8 @@
 #include <netdb.h>
 #include <errno.h>
 
+#include "../debug/log.hpp"
+
 #ifdef __SWITCH__
 /**
  * Declare nifmGetCurrentIpConfigInfo with C linkage to match the
@@ -296,23 +298,23 @@ static int ParseDnsResponse(const uint8_t* response, size_t resp_len,
 
     // TC (truncated) bit
     if (flags & 0x0200) {
-        return EAI_AGAIN;
+        return -EAI_AGAIN;
     }
 
     // RCODE
     if (rcode == 3) {
-        return EAI_NONAME;  // NXDOMAIN
+        return -EAI_NONAME;  // NXDOMAIN
     }
     if (rcode == 2 || rcode == 5) {
-        return EAI_FAIL;  // SERVFAIL or REFUSED
+        return -EAI_FAIL;  // SERVFAIL or REFUSED
     }
     if (rcode != 0) {
-        return EAI_FAIL;  // Other errors
+        return -EAI_FAIL;  // Other errors
     }
 
     uint16_t ancount = (static_cast<uint16_t>(response[6]) << 8) | response[7];
     if (ancount == 0) {
-        return EAI_NONAME;
+        return -EAI_NONAME;
     }
 
     uint16_t qdcount = (static_cast<uint16_t>(response[4]) << 8) | response[5];
@@ -359,7 +361,7 @@ static int ParseDnsResponse(const uint8_t* response, size_t resp_len,
         p += rdlength;
     }
 
-    return ip_count > 0 ? ip_count : EAI_NONAME;
+    return ip_count > 0 ? ip_count : -EAI_NONAME;
 }
 
 /**
@@ -377,7 +379,7 @@ static int ParseDnsResponse(const uint8_t* response, size_t resp_len,
  */
 static int ResolveHostnameDns(const char* hostname, uint32_t* out_ips, int max_ips) {
     if (!hostname || !out_ips || max_ips <= 0) {
-        return EAI_FAIL;
+        return -EAI_FAIL;
     }
 
     // Step 1: Get DNS server IP
@@ -391,13 +393,13 @@ static int ResolveHostnameDns(const char* hostname, uint32_t* out_ips, int max_i
     uint8_t query_buf[512];
     ssize_t query_len = BuildDnsQuery(hostname, query_id, query_buf, sizeof(query_buf));
     if (query_len < 0) {
-        return EAI_FAIL;
+        return -EAI_FAIL;
     }
 
     // Step 3: Create UDP socket
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock < 0) {
-        return EAI_FAIL;
+        return -EAI_FAIL;
     }
 
     // Step 4: Set receive timeout (5 seconds)
@@ -412,12 +414,14 @@ static int ResolveHostnameDns(const char* hostname, uint32_t* out_ips, int max_i
     dns_addr.sin_port = htons(53);
     dns_addr.sin_addr.s_addr = dns_ip;
 
+    LOG_VERBOSE("DNS query for '%s': sending %zd bytes to DNS server", hostname, query_len);
+
     ssize_t sent = sendto(sock, query_buf, static_cast<size_t>(query_len), 0,
                            reinterpret_cast<struct sockaddr*>(&dns_addr),
                            sizeof(dns_addr));
     if (sent < 0) {
         close(sock);
-        return EAI_AGAIN;
+        return -EAI_AGAIN;
     }
 
     // Step 6: Receive response
@@ -429,14 +433,32 @@ static int ResolveHostnameDns(const char* hostname, uint32_t* out_ips, int max_i
                                  reinterpret_cast<struct sockaddr*>(&from_addr),
                                  &from_len);
 
+    // Diagnostic logging: dump key DNS response fields
+    if (recv_len >= 12) {
+        uint16_t resp_id  = (static_cast<uint16_t>(resp_buf[0]) << 8) | resp_buf[1];
+        uint16_t resp_fl  = (static_cast<uint16_t>(resp_buf[2]) << 8) | resp_buf[3];
+        uint16_t resp_qd  = (static_cast<uint16_t>(resp_buf[4]) << 8) | resp_buf[5];
+        uint16_t resp_an  = (static_cast<uint16_t>(resp_buf[6]) << 8) | resp_buf[7];
+        uint16_t resp_ns  = (static_cast<uint16_t>(resp_buf[8]) << 8) | resp_buf[9];
+        uint16_t resp_ar  = (static_cast<uint16_t>(resp_buf[10]) << 8) | resp_buf[11];
+        LOG_INFO("DNS response: %zu bytes, id=0x%04X flags=0x%04X QD=%u AN=%u NS=%u AR=%u",
+                 recv_len, resp_id, resp_fl, resp_qd, resp_an, resp_ns, resp_ar);
+    }
+
     close(sock);
 
     if (recv_len <= 0) {
-        return EAI_AGAIN;
+        return -EAI_AGAIN;
     }
 
     // Step 7: Parse response
-    return ParseDnsResponse(resp_buf, static_cast<size_t>(recv_len), out_ips, max_ips);
+    int result = ParseDnsResponse(resp_buf, static_cast<size_t>(recv_len), out_ips, max_ips);
+    if (result > 0) {
+        LOG_INFO("DNS resolved '%s' to %d IP(s)", hostname, result);
+    } else {
+        LOG_WARN("DNS resolve '%s' failed: result=%d", hostname, result);
+    }
+    return result;
 }
 
 } // anonymous namespace
@@ -477,7 +499,12 @@ int __wrap_getaddrinfo(const char* node, const char* service,
             int num_ips = ResolveHostnameDns(node, resolved_ips, 8);
 
             if (num_ips <= 0) {
-                return (num_ips == 0) ? EAI_NONAME : EAI_AGAIN;
+                if (num_ips == 0) return EAI_NONAME;
+                // Map negative EAI codes back to positive for getaddrinfo
+                if (num_ips == -EAI_AGAIN) return EAI_AGAIN;
+                if (num_ips == -EAI_NONAME) return EAI_NONAME;
+                if (num_ips == -EAI_FAIL)   return EAI_FAIL;
+                return EAI_AGAIN;  // unknown error → retryable
             }
 
             // Build addrinfo linked list from resolved IPs
