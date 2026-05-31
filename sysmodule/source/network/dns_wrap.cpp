@@ -443,6 +443,38 @@ static int ResolveHostnameDns(const char* hostname, uint32_t* out_ips, int max_i
         uint16_t resp_ar  = (static_cast<uint16_t>(resp_buf[10]) << 8) | resp_buf[11];
         LOG_INFO("DNS response: %zu bytes, id=0x%04X flags=0x%04X QD=%u AN=%u NS=%u AR=%u",
                  recv_len, resp_id, resp_fl, resp_qd, resp_an, resp_ns, resp_ar);
+        LOG_INFO("DNS query id=0x%04X, response id=0x%04X", query_id, resp_id);
+    }
+
+    // Hex dump of first 64 bytes of response for debugging
+    {
+        char hex[256];
+        int off = 0;
+        size_t dump_len = (recv_len < 64) ? static_cast<size_t>(recv_len) : 64;
+        for (size_t i = 0; i < dump_len && off < 200; i += 16) {
+            int n = std::snprintf(hex + off, sizeof(hex) - off,
+                    "  %04zx: %02x %02x %02x %02x %02x %02x %02x %02x"
+                    " %02x %02x %02x %02x %02x %02x %02x %02x",
+                    i,
+                    (i+0 < dump_len) ? resp_buf[i+0] : 0,
+                    (i+1 < dump_len) ? resp_buf[i+1] : 0,
+                    (i+2 < dump_len) ? resp_buf[i+2] : 0,
+                    (i+3 < dump_len) ? resp_buf[i+3] : 0,
+                    (i+4 < dump_len) ? resp_buf[i+4] : 0,
+                    (i+5 < dump_len) ? resp_buf[i+5] : 0,
+                    (i+6 < dump_len) ? resp_buf[i+6] : 0,
+                    (i+7 < dump_len) ? resp_buf[i+7] : 0,
+                    (i+8 < dump_len) ? resp_buf[i+8] : 0,
+                    (i+9 < dump_len) ? resp_buf[i+9] : 0,
+                    (i+10 < dump_len) ? resp_buf[i+10] : 0,
+                    (i+11 < dump_len) ? resp_buf[i+11] : 0,
+                    (i+12 < dump_len) ? resp_buf[i+12] : 0,
+                    (i+13 < dump_len) ? resp_buf[i+13] : 0,
+                    (i+14 < dump_len) ? resp_buf[i+14] : 0,
+                    (i+15 < dump_len) ? resp_buf[i+15] : 0);
+            off += n;
+        }
+        LOG_INFO("DNS response hex dump:\n%s", hex);
     }
 
     close(sock);
