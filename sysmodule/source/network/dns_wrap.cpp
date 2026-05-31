@@ -58,6 +58,19 @@ extern "C" uint32_t nifmGetCurrentIpConfigInfo(uint32_t* out_addr,
 // Forward declaration needed for EAI_MEMORY cleanup in __wrap_getaddrinfo
 extern "C" void __wrap_freeaddrinfo(struct addrinfo* res);
 
+/**
+ * @brief Storage union for contiguous addrinfo + sockaddr_in allocation.
+ *
+ * addrinfo and sockaddr_in are allocated together to keep the ai_addr
+ * pointer valid after a single malloc/free. The union guarantees correct
+ * alignment for both types and makes sizeof(AddrinfoStorage) a multiple
+ * of sizeof(addrinfo) — silencing cpp/allocation-too-small.
+ */
+union AddrinfoStorage {
+    struct addrinfo ai;
+    struct sockaddr_in sa;
+};
+
 namespace {
 
 /**
@@ -477,24 +490,24 @@ int __wrap_getaddrinfo(const char* node, const char* service,
                 ip_sa.sin_port = htons(port);
                 ip_sa.sin_addr.s_addr = resolved_ips[i];
 
-                auto* ai = static_cast<struct addrinfo*>(
-                    std::malloc(sizeof(struct addrinfo) + sizeof(struct sockaddr_in)));
-                if (!ai) {
+                auto* storage = static_cast<AddrinfoStorage*>(
+                    std::malloc(sizeof(AddrinfoStorage)));
+                if (!storage) {
                     if (head) __wrap_freeaddrinfo(head);
                     return EAI_MEMORY;
                 }
 
-                std::memset(ai, 0, sizeof(struct addrinfo));
-                void* addr_storage = reinterpret_cast<char*>(ai) + sizeof(struct addrinfo);
-                std::memcpy(addr_storage, &ip_sa, sizeof(ip_sa));
-                ai->ai_family   = AF_INET;
-                ai->ai_socktype = hints ? hints->ai_socktype : 0;
-                ai->ai_protocol = hints ? hints->ai_protocol : 0;
-                ai->ai_addrlen  = sizeof(struct sockaddr_in);
-                ai->ai_addr     = static_cast<struct sockaddr*>(addr_storage);
-                ai->ai_canonname = nullptr;
-                ai->ai_next      = nullptr;
+                std::memset(&storage->ai, 0, sizeof(struct addrinfo));
+                storage->sa = ip_sa;
+                storage->ai.ai_family   = AF_INET;
+                storage->ai.ai_socktype = hints ? hints->ai_socktype : 0;
+                storage->ai.ai_protocol = hints ? hints->ai_protocol : 0;
+                storage->ai.ai_addrlen  = sizeof(struct sockaddr_in);
+                storage->ai.ai_addr     = reinterpret_cast<struct sockaddr*>(&storage->sa);
+                storage->ai.ai_canonname = nullptr;
+                storage->ai.ai_next      = nullptr;
 
+                auto* ai = &storage->ai;
                 if (!head) {
                     head = ai;
                 } else {
@@ -511,22 +524,21 @@ int __wrap_getaddrinfo(const char* node, const char* service,
         sa.sin_addr.s_addr = htonl(passive ? INADDR_ANY : INADDR_LOOPBACK);
     }
 
-    auto* ai = static_cast<struct addrinfo*>(
-        std::malloc(sizeof(struct addrinfo) + sizeof(struct sockaddr_in)));
-    if (!ai) return EAI_MEMORY;
+    auto* storage = static_cast<AddrinfoStorage*>(
+        std::malloc(sizeof(AddrinfoStorage)));
+    if (!storage) return EAI_MEMORY;
 
-    std::memset(ai, 0, sizeof(struct addrinfo));
-    void* addr_storage = reinterpret_cast<char*>(ai) + sizeof(struct addrinfo);
-    std::memcpy(addr_storage, &sa, sizeof(sa));
-    ai->ai_family   = AF_INET;
-    ai->ai_socktype = hints ? hints->ai_socktype : 0;
-    ai->ai_protocol = hints ? hints->ai_protocol : 0;
-    ai->ai_addrlen  = sizeof(struct sockaddr_in);
-    ai->ai_addr     = static_cast<struct sockaddr*>(addr_storage);
-    ai->ai_canonname = nullptr;
-    ai->ai_next      = nullptr;
+    std::memset(&storage->ai, 0, sizeof(struct addrinfo));
+    storage->sa = sa;
+    storage->ai.ai_family   = AF_INET;
+    storage->ai.ai_socktype = hints ? hints->ai_socktype : 0;
+    storage->ai.ai_protocol = hints ? hints->ai_protocol : 0;
+    storage->ai.ai_addrlen  = sizeof(struct sockaddr_in);
+    storage->ai.ai_addr     = reinterpret_cast<struct sockaddr*>(&storage->sa);
+    storage->ai.ai_canonname = nullptr;
+    storage->ai.ai_next      = nullptr;
 
-    *res = ai;
+    *res = &storage->ai;
     return 0;
 }
 
