@@ -102,7 +102,7 @@ body:
     attributes:
       label: "Which build are you running?"
       description: >-
-        Select the build you installed. A GitHub Action will verify your selection and add the exact version info as a comment.
+        Select the build you installed.
         Choose "Other" if you built from source or are running an older release.
       options:
         - Latest release
@@ -131,9 +131,9 @@ body:
       label: "Your config.ini"
       description: |
         Paste the **full contents** of `sdmc:/config/ryu_ldn_nx/config.ini`.
-        
         Required — connection mode, server, timeouts, and P2P settings are all in this file.
-      placeholder: |
+
+        ```ini
         [server]
         host = ...
         port = ...
@@ -153,6 +153,8 @@ body:
         enabled = ...
         level = ...
         log_to_file = ...
+        ```
+      placeholder: "Paste your full config.ini here"
     validations:
       required: true
 
@@ -161,18 +163,18 @@ body:
     attributes:
       label: "Sysmodule Logs"
       description: |
-        1. Set `[debug] enabled = 1`,  `[debug] log_to_file = 1` and `[debug] level = 2` in config.ini
-        
+        1. Set `[debug] enabled = 1`, `[debug] log_to_file = 1` and `[debug] level = 2` in config.ini
         2. Reboot or reload `ryu_ldn_nx`
-        
         3. Reproduce the bug
-        
         4. Paste the relevant lines from `sdmc:/config/ryu_ldn_nx/ryu_ldn_nx.log`
 
         If you cannot get logs, explain why.
-      placeholder: |
+
+        ```log
         [YYYY-MM-DD HH:MM:SS] [ERROR] ...
         [YYYY-MM-DD HH:MM:SS] [WARN]  ...
+        ```
+      placeholder: "Paste relevant log lines here"
     validations:
       required: true
 
@@ -185,9 +187,12 @@ body:
         Look for files containing `4200000000000010` (`ryu_ldn_nx` Title ID).
         Key fields: error type, faulting address, stack trace.
         Leave empty if no crash occurred.
-      placeholder: |
+
+        ```text
         Error type: DATA ABORT (DABRT)
         Faulting address: 0x...
+        ```
+      placeholder: "Paste crash report here (leave empty if no crash)"
     validations:
       required: false
 

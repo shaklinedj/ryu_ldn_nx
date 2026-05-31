@@ -109,13 +109,13 @@ jobs:
 
           HUB_BODY="## Game Hub: ${GAME_TITLE}
 
-Title ID: \`${TITLE_ID}\`
+          Title ID: \`${TITLE_ID}\`
 
-title_id:${TITLE_ID}
+          title_id:${TITLE_ID}
 
----
+          ---
 
-## Severity: New
+          ## Severity: New
 
           | Metric | Value |
           |--------|-------|
@@ -148,7 +148,7 @@ title_id:${TITLE_ID}
             const hubNumber = parseInt('${{ steps.search.outputs.hub_number || steps.create.outputs.hub_number }}');
             const owner = context.repo.owner;
             const repo = context.repo.repo;
-            const MARKER = '<!-- RELATIONS -->';
+            const MARKER = '<!-- HUB-RELATIONS -->';
 
             async function getRelationComment(issueNum) {
               const { data: comments } = await github.rest.issues.listComments({
@@ -326,7 +326,31 @@ title_id:${TITLE_ID}
               owner, repo, issue_number: hubNumber, per_page: 100
             });
 
-            const MARKER = '<!-- RELATIONS -->';
+            const MARKER = '<!-- HUB-RELATIONS -->';
+
+            function parseRelations(body) {
+              const result = { parents: [], children: [], related: [] };
+              if (!body) return result;
+              const parentMatch = body.match(/- 🔗 Parent: (.+)/);
+              if (parentMatch) {
+                for (const m of parentMatch[1].matchAll(/#(\d+)/g)) {
+                  result.parents.push(parseInt(m[1]));
+                }
+              }
+              const childMatch = body.match(/- 🔗 Children?: (.+)/);
+              if (childMatch) {
+                for (const m of childMatch[1].matchAll(/#(\d+)/g)) {
+                  result.children.push(parseInt(m[1]));
+                }
+              }
+              const relatedMatch = body.match(/- 🔗 Related: (.+)/);
+              if (relatedMatch) {
+                for (const m of relatedMatch[1].matchAll(/#(\d+)/g)) {
+                  result.related.push(parseInt(m[1]));
+                }
+              }
+              return result;
+            }
             const subIssueNumbers = new Set();
 
             // Parse bidirectional relation comments
@@ -451,32 +475,32 @@ title_id:${TITLE_ID}
 
             const newBody = `## Game Hub: ${gameTitle}
 
-Title ID: \`${titleId}\`
+            Title ID: \`${titleId}\`
 
-title_id:${titleId}
+            title_id:${titleId}
 
----
+            ---
 
-## Severity: ${severityEmoji} ${severityLabel}
+            ## Severity: ${severityEmoji} ${severityLabel}
 
-| Metric | Value |
-|--------|-------|
-| Confirmed open | ${confirmedOpen} |
-| Resolved | ${confirmedClosed} |
-| Vulnerable versions | ${activeVulns} |
+            | Metric | Value |
+            |--------|-------|
+            | Confirmed open | ${confirmedOpen} |
+            | Resolved | ${confirmedClosed} |
+            | Vulnerable versions | ${activeVulns} |
 
-## Confirmed Reports
+            ## Confirmed Reports
 
-${reportSection}
+            ${reportSection}
 
-## Vulnerable Versions
+            ## Vulnerable Versions
 
-${vulnSection}
+            ${vulnSection}
 
----
+            ---
 
-*This hub is auto-maintained. Do not edit manually.*
-*Severity is based on average impact of open confirmed reports. Resolved issues do not lower the score.*`;
+            *This hub is auto-maintained. Do not edit manually.*
+            *Severity is based on average impact of open confirmed reports. Resolved issues do not lower the score.*`;
 
             await github.rest.issues.update({
               owner, repo, issue_number: hubNumber, body: newBody
@@ -599,8 +623,21 @@ ${vulnSection}
             const FOURTEEN_DAYS = 14 * 24 * 60 * 60 * 1000;
 
             for (const issue of issues) {
-              const updatedAt = new Date(issue.updated_at).getTime();
-              if (now - updatedAt >= FOURTEEN_DAYS) {
+              // Find when this issue was marked stale (use comment date, not issue.updated_at)
+              const { data: comments } = await github.rest.issues.listComments({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                per_page: 100
+              });
+              const staleComments = comments.filter(c =>
+                c.user.login === 'github-actions[bot]' &&
+                c.body.includes('Marking as stale')
+              );
+              if (staleComments.length === 0) continue;
+              const lastStaleDate = new Date(Math.max(...staleComments.map(c => new Date(c.created_at).getTime())));
+
+              if (now - lastStaleDate.getTime() >= FOURTEEN_DAYS) {
                 await github.rest.issues.createComment({
                   owner: context.repo.owner,
                   repo: context.repo.repo,

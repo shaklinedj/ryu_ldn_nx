@@ -1,0 +1,77 @@
+name: Other
+description: "For issues or questions that do not fit any other template"
+title: ""
+labels: []
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for anything that does not fit the other issue templates (Bug Report, Feature Request, Game Problem Report, Vulnerable Game Version, or Whitelist Request).
+
+        **Before opening**, please search existing issues to avoid duplicates.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What is the issue, question, or request?
+      placeholder: |
+        Please describe what you need help with or what you would like to report.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Category
+      description: What type of issue is this?
+      options:
+        - General question
+        - Installation help
+        - Configuration help
+        - Documentation issue
+        - Build issue
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: switch_firmware
+    attributes:
+      label: Switch Firmware Version (optional)
+      description: Only relevant if related to a system/compatibility issue.
+      placeholder: "e.g., 19.0.1"
+    validations:
+      required: false
+
+  - type: input
+    id: atmosphere_version
+    attributes:
+      label: Atmosphere Version (optional)
+      description: Only relevant if related to a system/compatibility issue.
+      placeholder: "e.g., 1.7.0"
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional_info
+    attributes:
+      label: Logs, Screenshots, or Additional Information (optional)
+      description: |
+        Paste relevant log excerpts, attach screenshots, or provide any extra context.
+        If including logs, set `[debug] enabled = 1`, `[debug] log_to_file = 1`, and `[debug] level = 2` in config.ini, then reproduce the issue.
+        Relevant lines can be found in `sdmc:/config/ryu_ldn_nx/ryu_ldn_nx.log`.
+      placeholder: |
+        [YYYY-MM-DD HH:MM:SS] [ERROR] ...
+        [YYYY-MM-DD HH:MM:SS] [WARN]  ...
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Pre-submission
+      options:
+        - label: I searched existing issues and this does not fit any other template
+          required: true

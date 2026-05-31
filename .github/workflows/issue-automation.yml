@@ -23,7 +23,8 @@ jobs:
     if: >
       github.event_name == 'issues' &&
       contains(fromJSON('["opened", "edited"]'), github.event.action) &&
-      contains(github.event.issue.labels.*.name, 'bug')
+      (contains(github.event.issue.labels.*.name, 'bug') ||
+       contains(github.event.issue.labels.*.name, 'game-issue'))
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -36,6 +37,9 @@ jobs:
           ISSUE_BODY: ${{ github.event.issue.body }}
         run: |
           VERSION_CHANNEL=$(echo "$ISSUE_BODY" | sed -n '/^### Which build are you running\?$/,/^###/{ /^### Which build are you running\?$/d; /^###/d; p; }' | head -1 | xargs)
+          if [ -z "$VERSION_CHANNEL" ]; then
+            VERSION_CHANNEL=$(echo "$ISSUE_BODY" | sed -n '/^### ryu_ldn_nx build$/,/^###/{ /^### ryu_ldn_nx build$/d; /^###/d; p; }' | head -1 | xargs)
+          fi
           VERSION_OTHER=$(echo "$ISSUE_BODY" | sed -n '/^### Version or commit (if Other)$/,/^###/{ /^### Version or commit (if Other)$/d; /^###/d; p; }' | head -1 | xargs)
           echo "version_channel=$VERSION_CHANNEL" >> "$GITHUB_OUTPUT"
           echo "version_other=$VERSION_OTHER" >> "$GITHUB_OUTPUT"
@@ -60,8 +64,12 @@ jobs:
           if [ -n "$DEV_COMMIT" ]; then
             DEV_SHORT=$(echo "$DEV_COMMIT" | cut -c1-7)
             echo "dev_label=Dev build (${DEV_SHORT})" >> "$GITHUB_OUTPUT"
+            echo "dev_commit=${DEV_COMMIT}" >> "$GITHUB_OUTPUT"
+            echo "dev_short=${DEV_SHORT}" >> "$GITHUB_OUTPUT"
           else
             echo "dev_label=Dev build (pre-release)" >> "$GITHUB_OUTPUT"
+            echo "dev_commit=" >> "$GITHUB_OUTPUT"
+            echo "dev_short=" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Validate and annotate
@@ -72,6 +80,8 @@ jobs:
           VERSION_OTHER: ${{ steps.extract.outputs.version_other }}
           LATEST_TAG: ${{ steps.release.outputs.latest_tag }}
           DEV_LABEL: ${{ steps.dev.outputs.dev_label }}
+          DEV_COMMIT: ${{ steps.dev.outputs.dev_commit }}
+          DEV_SHORT: ${{ steps.dev.outputs.dev_short }}
         run: |
           COMMENT=""
           case "$VERSION_CHANNEL" in
@@ -143,8 +153,7 @@ jobs:
     runs-on: ubuntu-latest
     if: >
       github.event_name == 'issues' &&
-      github.event.action == 'assigned' &&
-      github.event.sender.id == github.event.assignee.id
+      github.event.action == 'assigned'
     outputs:
       title_ok: ${{ steps.check.outputs.title_ok }}
     steps:
@@ -178,8 +187,7 @@ jobs:
     runs-on: ubuntu-latest
     if: >
       github.event_name == 'issues' &&
-      github.event.action == 'edited' &&
-      github.event.sender.id == github.event.assignee.id
+      github.event.action == 'edited'
     outputs:
       title_ok: ${{ steps.check.outputs.title_ok }}
     steps:
@@ -200,8 +208,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: [check-title-length, retry-on-edit]
     if: >
+      always() &&
       github.event_name == 'issues' &&
-      github.event.sender.id == github.event.assignee.id &&
       (needs.check-title-length.outputs.title_ok == 'true' ||
        needs.retry-on-edit.outputs.title_ok == 'true')
     steps:
@@ -219,6 +227,9 @@ jobs:
           BASE_BRANCH="develop"
 
           VERSION_CHANNEL=$(echo "$ISSUE_BODY" | sed -n '/^### Which build are you running\?$/,/^###/{ /^### Which build are you running\?$/d; /^###/d; p; }' | head -1 | xargs)
+          if [ -z "$VERSION_CHANNEL" ]; then
+            VERSION_CHANNEL=$(echo "$ISSUE_BODY" | sed -n '/^### ryu_ldn_nx build$/,/^###/{ /^### ryu_ldn_nx build$/d; /^###/d; p; }' | head -1 | xargs)
+          fi
           VERSION_OTHER=$(echo "$ISSUE_BODY" | sed -n '/^### Version or commit (if Other)$/,/^###/{ /^### Version or commit (if Other)$/d; /^###/d; p; }' | head -1 | xargs)
 
           for label in $LABELS; do
@@ -301,7 +312,7 @@ jobs:
           echo "already_exists=false" >> "$GITHUB_OUTPUT"
 
       - name: Create branch and draft PR
-        if: steps.classify.outputs.skip == 'false'
+        if: steps.classify.outputs.skip == 'false' && steps.existing.outputs.already_exists != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BRANCH_TYPE: ${{ steps.classify.outputs.branch_type }}
@@ -440,9 +451,10 @@ jobs:
           done < <(grep -rn "TODO" --include='*.cpp' --include='*.hpp' --include='*.c' --include='*.h' . 2>/dev/null | head -30 || true)
 
           COMMIT_SECTION=""
-          if git rev-parse origin/develop >/dev/null 2>&1; then
-            COMMIT_SECTION=$(git log --oneline origin/develop..HEAD 2>/dev/null | head -50 | \
-              while read -r hash msg; do echo "- \`${hash}\` ${msg}"; done)
+          PR_BASE=$(gh pr view "$PR_NUMBER" --json baseRefName --jq '.baseRefName')
+          if [ -n "$PR_BASE" ] && git rev-parse "origin/${PR_BASE}" >/dev/null 2>&1; then
+            COMMIT_SECTION=$(git log --oneline "origin/${PR_BASE}..HEAD" 2>/dev/null | head -50 | \
+              while read -r hash msg; do echo "- `${hash}` ${msg}"; done)
           fi
           if [ -z "$COMMIT_SECTION" ]; then
             COMMIT_SECTION="_No commits yet on this branch._"
