@@ -153,8 +153,7 @@ jobs:
     runs-on: ubuntu-latest
     if: >
       github.event_name == 'issues' &&
-      github.event.action == 'assigned' &&
-      github.event.sender.id == github.event.assignee.id
+      github.event.action == 'assigned'
     outputs:
       title_ok: ${{ steps.check.outputs.title_ok }}
     steps:
@@ -188,8 +187,7 @@ jobs:
     runs-on: ubuntu-latest
     if: >
       github.event_name == 'issues' &&
-      github.event.action == 'edited' &&
-      github.event.sender.id == github.event.assignee.id
+      github.event.action == 'edited'
     outputs:
       title_ok: ${{ steps.check.outputs.title_ok }}
     steps:
@@ -211,7 +209,6 @@ jobs:
     needs: [check-title-length, retry-on-edit]
     if: >
       github.event_name == 'issues' &&
-      github.event.sender.id == github.event.assignee.id &&
       (needs.check-title-length.outputs.title_ok == 'true' ||
        needs.retry-on-edit.outputs.title_ok == 'true')
     steps:
@@ -314,7 +311,7 @@ jobs:
           echo "already_exists=false" >> "$GITHUB_OUTPUT"
 
       - name: Create branch and draft PR
-        if: steps.classify.outputs.skip == 'false'
+        if: steps.classify.outputs.skip == 'false' && steps.existing.outputs.already_exists != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BRANCH_TYPE: ${{ steps.classify.outputs.branch_type }}
@@ -453,9 +450,10 @@ jobs:
           done < <(grep -rn "TODO" --include='*.cpp' --include='*.hpp' --include='*.c' --include='*.h' . 2>/dev/null | head -30 || true)
 
           COMMIT_SECTION=""
-          if git rev-parse origin/develop >/dev/null 2>&1; then
-            COMMIT_SECTION=$(git log --oneline origin/develop..HEAD 2>/dev/null | head -50 | \
-              while read -r hash msg; do echo "- \`${hash}\` ${msg}"; done)
+          PR_BASE=$(gh pr view "$PR_NUMBER" --json baseRefName --jq '.baseRefName')
+          if [ -n "$PR_BASE" ] && git rev-parse "origin/${PR_BASE}" >/dev/null 2>&1; then
+            COMMIT_SECTION=$(git log --oneline "origin/${PR_BASE}..HEAD" 2>/dev/null | head -50 | \
+              while read -r hash msg; do echo "- `${hash}` ${msg}"; done)
           fi
           if [ -z "$COMMIT_SECTION" ]; then
             COMMIT_SECTION="_No commits yet on this branch._"
