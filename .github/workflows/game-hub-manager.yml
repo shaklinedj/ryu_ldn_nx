@@ -109,13 +109,13 @@ jobs:
 
           HUB_BODY="## Game Hub: ${GAME_TITLE}
 
-Title ID: \`${TITLE_ID}\`
+          Title ID: \`${TITLE_ID}\`
 
-title_id:${TITLE_ID}
+          title_id:${TITLE_ID}
 
----
+          ---
 
-## Severity: New
+          ## Severity: New
 
           | Metric | Value |
           |--------|-------|
@@ -451,32 +451,32 @@ title_id:${TITLE_ID}
 
             const newBody = `## Game Hub: ${gameTitle}
 
-Title ID: \`${titleId}\`
+            Title ID: \`${titleId}\`
 
-title_id:${titleId}
+            title_id:${titleId}
 
----
+            ---
 
-## Severity: ${severityEmoji} ${severityLabel}
+            ## Severity: ${severityEmoji} ${severityLabel}
 
-| Metric | Value |
-|--------|-------|
-| Confirmed open | ${confirmedOpen} |
-| Resolved | ${confirmedClosed} |
-| Vulnerable versions | ${activeVulns} |
+            | Metric | Value |
+            |--------|-------|
+            | Confirmed open | ${confirmedOpen} |
+            | Resolved | ${confirmedClosed} |
+            | Vulnerable versions | ${activeVulns} |
 
-## Confirmed Reports
+            ## Confirmed Reports
 
-${reportSection}
+            ${reportSection}
 
-## Vulnerable Versions
+            ## Vulnerable Versions
 
-${vulnSection}
+            ${vulnSection}
 
----
+            ---
 
-*This hub is auto-maintained. Do not edit manually.*
-*Severity is based on average impact of open confirmed reports. Resolved issues do not lower the score.*`;
+            *This hub is auto-maintained. Do not edit manually.*
+            *Severity is based on average impact of open confirmed reports. Resolved issues do not lower the score.*`;
 
             await github.rest.issues.update({
               owner, repo, issue_number: hubNumber, body: newBody
