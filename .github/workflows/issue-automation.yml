@@ -332,6 +332,11 @@ jobs:
 
           git checkout -b "$BRANCH_NAME"
           git push origin "$BRANCH_NAME"
+          # Create an empty commit so the branch has at least one divergent commit.
+          # GitHub’s createPullRequest API requires ≥1 commit diff between head and base,
+          # even for draft PRs. An empty commit is harmless — it gets squashed or buried.
+          git commit --allow-empty -m "chore: initialize branch from issue #${ISSUE_NUMBER}"
+          git push origin "$BRANCH_NAME"
 
           PROBLEM=$(echo "$ISSUE_BODY" | sed -n '/^### What went wrong\?$/,/^###/{ /^### What went wrong\?$/d; /^###/d; p; }' | head -10)
           STEPS=$(echo "$ISSUE_BODY" | sed -n '/^### Steps to reproduce$/,/^###/{ /^### Steps to reproduce$/d; /^###/d; p; }' | head -15)
