@@ -327,6 +327,6 @@ public:
  *
  * Interface ID: 0x52594343 ("RYCC" - RYu Config Controller)
  */
-// lgtm[cpp/unused-local-variable,cpp/unused-static-variable] — macro
+// codeql[cpp/unused-local-variable,cpp/unused-static-variable] — macro
 // expansion uses `args` via perfect forwarding
 AMS_SF_DEFINE_INTERFACE(ryu_ldn::ipc, IConfigService, AMS_RYU_CFG_SERVICE_INTERFACE, 0x52594343)

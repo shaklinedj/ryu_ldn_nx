@@ -510,7 +510,7 @@ DecodeResult decode_with_data(const uint8_t* buffer, size_t buffer_size,
         // `extra_data` points into the caller-provided `buffer`. This is an
         // intentional zero-copy design — the caller always provides a
         // receive buffer on the heap/static BSS, never on the stack.
-        // lgtm[cpp/stack-address-escape]
+        // codeql[cpp/stack-address-escape]
         extra_data = buffer + sizeof(LdnHeader) + sizeof(T);
 
         // Verify buffer has enough data
