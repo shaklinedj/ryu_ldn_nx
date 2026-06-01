@@ -553,6 +553,8 @@ int __wrap_getaddrinfo(const char* node, const char* service,
                 ip_sa.sin_port = htons(port);
                 ip_sa.sin_addr.s_addr = htonl(resolved_ips[i]);
 
+                // codeql[cpp/suspicious-allocation-size] — AddrinfoStorage is a struct
+                // containing addrinfo + sockaddr_in, not an array of addrinfo.
                 auto* storage = static_cast<AddrinfoStorage*>(
                     std::malloc(sizeof(AddrinfoStorage)));
                 if (!storage) {
@@ -587,6 +589,8 @@ int __wrap_getaddrinfo(const char* node, const char* service,
         sa.sin_addr.s_addr = htonl(passive ? INADDR_ANY : INADDR_LOOPBACK);
     }
 
+    // codeql[cpp/suspicious-allocation-size] — AddrinfoStorage is a struct
+    // containing addrinfo + sockaddr_in, not an array of addrinfo.
     auto* storage = static_cast<AddrinfoStorage*>(
         std::malloc(sizeof(AddrinfoStorage)));
     if (!storage) return EAI_MEMORY;
