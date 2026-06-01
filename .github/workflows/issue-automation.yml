@@ -37,11 +37,11 @@ jobs:
         env:
           ISSUE_BODY: ${{ github.event.issue.body }}
         run: |
-          VERSION_CHANNEL=$(echo "$ISSUE_BODY" | sed -n '/^### Which build are you running\?$/,/^###/{ /^### Which build are you running\?$/d; /^###/d; p; }' | head -1 | xargs)
+          VERSION_CHANNEL=$(echo "$ISSUE_BODY" | sed -n '/^### Which build are you running\?$/,/^###/{ /^### Which build are you running\?$/d; /^###/d; p; }' | head -1 | xargs | tr -d '\r')
           if [ -z "$VERSION_CHANNEL" ]; then
-            VERSION_CHANNEL=$(echo "$ISSUE_BODY" | sed -n '/^### ryu_ldn_nx build$/,/^###/{ /^### ryu_ldn_nx build$/d; /^###/d; p; }' | head -1 | xargs)
+            VERSION_CHANNEL=$(echo "$ISSUE_BODY" | sed -n '/^### ryu_ldn_nx build$/,/^###/{ /^### ryu_ldn_nx build$/d; /^###/d; p; }' | head -1 | xargs | tr -d '\r')
           fi
-          VERSION_OTHER=$(echo "$ISSUE_BODY" | sed -n '/^### Version or commit (if Other)$/,/^###/{ /^### Version or commit (if Other)$/d; /^###/d; p; }' | head -1 | xargs)
+          VERSION_OTHER=$(echo "$ISSUE_BODY" | sed -n '/^### Version or commit (if Other)$/,/^###/{ /^### Version or commit (if Other)$/d; /^###/d; p; }' | head -1 | xargs | tr -d '\r')
           echo "version_channel=$VERSION_CHANNEL" >> "$GITHUB_OUTPUT"
           echo "version_other=$VERSION_OTHER" >> "$GITHUB_OUTPUT"
 
@@ -50,11 +50,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          HAS_STABLE_RELEASE=true
           LATEST_TAG=$(gh release list --limit 1 --exclude-drafts --exclude-pre-releases --json tagName --jq '.[0].tagName' 2>/dev/null || echo "")
           if [ -z "$LATEST_TAG" ]; then
-            LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "unknown")
+            HAS_STABLE_RELEASE=false
+            LATEST_TAG="(no stable release)"
           fi
           echo "latest_tag=$LATEST_TAG" >> "$GITHUB_OUTPUT"
+          echo "has_stable_release=$HAS_STABLE_RELEASE" >> "$GITHUB_OUTPUT"
 
       - name: Fetch latest dev build info
         id: dev
@@ -83,13 +86,22 @@ jobs:
           DEV_LABEL: ${{ steps.dev.outputs.dev_label }}
           DEV_COMMIT: ${{ steps.dev.outputs.dev_commit }}
           DEV_SHORT: ${{ steps.dev.outputs.dev_short }}
+          HAS_STABLE_RELEASE: ${{ steps.release.outputs.has_stable_release }}
         run: |
           COMMENT=""
+          echo "::debug::VERSION_CHANNEL='${VERSION_CHANNEL}'"
+          echo "::debug::BRANCH_TYPE='${BRANCH_TYPE:-not-yet-set}'"
           case "$VERSION_CHANNEL" in
             "Latest release")
-              COMMENT="✅ **Version confirmed:** Latest release (\`${LATEST_TAG}\`)
+              if [ "$HAS_STABLE_RELEASE" = "true" ]; then
+                COMMENT="✅ **Version confirmed:** Latest release (\`${LATEST_TAG}\`)
 
           This bug affects a released version → eligible for a **hotfix** branch targeting \`main\`."
+              else
+                COMMENT="⚠️ **No stable release found.** You selected \"Latest release\" but no stable release exists.
+
+          All releases are currently pre-releases. → will use a standard **bugfix** branch targeting \`develop\`."
+              fi
               ;;
             "Latest dev build")
               COMMENT="✅ **Version confirmed:** ${DEV_LABEL}
@@ -132,12 +144,53 @@ jobs:
               fi
               ;;
             *)
-              COMMENT="ℹ️ **Build version not specified.** Please select one of the options in the \"Which build are you running?\" field.
+              # Fuzzy fallback for minor variations (trailing spaces, slight mis-capitalization)
+              if echo "$VERSION_CHANNEL" | grep -qiE "latest.*dev|dev.*build|dev.*latest"; then
+                COMMENT="✅ **Version confirmed:** ${DEV_LABEL}
 
-          Available options:
-          - **Latest release** (\`${LATEST_TAG}\`)
-          - **${DEV_LABEL}**
-          - **Other** (provide a tag or commit hash)"
+          This bug affects the dev build → will use a standard **bugfix** branch targeting `develop`."
+                BRANCH_TYPE="bugfix"
+                LABEL_TYPE="bug"
+              elif echo "$VERSION_CHANNEL" | grep -qiE "latest.*release|release.*latest|stable|release"; then
+                if [ "$HAS_STABLE_RELEASE" = "true" ]; then
+                  COMMENT="✅ **Version confirmed:** Latest release (\`${LATEST_TAG}\`)
+
+          This bug affects a released version → eligible for a **hotfix** branch targeting \`main\`."
+                  BRANCH_TYPE="hotfix"
+                  LABEL_TYPE="bug"
+                else
+                  COMMENT="⚠️ **No stable release found.** Detected \"release\" selection but no stable release exists.
+
+          All releases are currently pre-releases. → will use a standard **bugfix** branch targeting \`develop\`."
+                  BRANCH_TYPE="bugfix"
+                  LABEL_TYPE="bug"
+                fi
+              elif echo "$VERSION_CHANNEL" | grep -qiE "other"; then
+                if [ -z "$VERSION_OTHER" ]; then
+                  COMMENT="⚠️ **Version not specified.** You selected \"Other\" but did not provide a tag or commit hash.
+
+          Please edit your issue and fill in \"Version or commit\" with the version you are running."
+                  BRANCH_TYPE="unknown"
+                  LABEL_TYPE="unknown"
+                else
+                  COMMENT="✅ **Version confirmed:** Other (`${VERSION_OTHER}`)
+
+          This bug affects a custom build → will use a standard **bugfix** branch targeting `develop`."
+                  BRANCH_TYPE="bugfix"
+                  LABEL_TYPE="bug"
+                fi
+              else
+                COMMENT="ℹ️ **Build version not specified.** Please select one of the options in the \"Which build are you running?\" field.
+
+          Available options (select from dropdown):
+          - **Latest release** → hotfix targeting `main` (`${LATEST_TAG}`)
+          - **Latest dev build** → bugfix targeting `develop`
+          - **Other** → provide tag or commit hash"
+                BRANCH_TYPE="unknown"
+                LABEL_TYPE="unknown"
+              fi
+              echo "version_channel=$VERSION_CHANNEL" >> $GITHUB_OUTPUT
+              echo "comment=$COMMENT" >> $GITHUB_OUTPUT
               ;;
           esac
 
@@ -207,12 +260,9 @@ jobs:
   create-branch-and-pr:
     name: Create gitflow branch and draft PR
     runs-on: ubuntu-latest
-    needs: [check-title-length, retry-on-edit]
     if: >
-      always() &&
       github.event_name == 'issues' &&
-      (needs.check-title-length.outputs.title_ok == 'true' ||
-       needs.retry-on-edit.outputs.title_ok == 'true')
+      github.event.action == 'assigned'
     steps:
       - name: Classify issue and determine gitflow branch type
         id: classify
@@ -227,11 +277,11 @@ jobs:
           BRANCH_TYPE=""
           BASE_BRANCH="develop"
 
-          VERSION_CHANNEL=$(echo "$ISSUE_BODY" | sed -n '/^### Which build are you running\?$/,/^###/{ /^### Which build are you running\?$/d; /^###/d; p; }' | head -1 | xargs)
+          VERSION_CHANNEL=$(echo "$ISSUE_BODY" | sed -n '/^### Which build are you running\?$/,/^###/{ /^### Which build are you running\?$/d; /^###/d; p; }' | head -1 | xargs | tr -d '\r')
           if [ -z "$VERSION_CHANNEL" ]; then
-            VERSION_CHANNEL=$(echo "$ISSUE_BODY" | sed -n '/^### ryu_ldn_nx build$/,/^###/{ /^### ryu_ldn_nx build$/d; /^###/d; p; }' | head -1 | xargs)
+            VERSION_CHANNEL=$(echo "$ISSUE_BODY" | sed -n '/^### ryu_ldn_nx build$/,/^###/{ /^### ryu_ldn_nx build$/d; /^###/d; p; }' | head -1 | xargs | tr -d '\r')
           fi
-          VERSION_OTHER=$(echo "$ISSUE_BODY" | sed -n '/^### Version or commit (if Other)$/,/^###/{ /^### Version or commit (if Other)$/d; /^###/d; p; }' | head -1 | xargs)
+          VERSION_OTHER=$(echo "$ISSUE_BODY" | sed -n '/^### Version or commit (if Other)$/,/^###/{ /^### Version or commit (if Other)$/d; /^###/d; p; }' | head -1 | xargs | tr -d '\r')
 
           for label in $LABELS; do
             case "$label" in
@@ -256,14 +306,19 @@ jobs:
           fi
 
           if [ -z "$BRANCH_TYPE" ]; then
-            BRANCH_TYPE="feature"
+            echo "::notice::No actionable label (bug/enhancement) — skipping branch creation"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
 
           if [ "$BRANCH_TYPE" = "bugfix" ]; then
-            if echo "$VERSION_CHANNEL" | grep -qi "release"; then
-              BRANCH_TYPE="hotfix"
-              BASE_BRANCH="main"
-            elif echo "$VERSION_CHANNEL" | grep -qi "other" && [ -n "$VERSION_OTHER" ]; then
+            if echo "$VERSION_CHANNEL" | grep -qiE "release|stable"; then
+              STABLE_TAG=$(gh release list --limit 1 --exclude-drafts --exclude-pre-releases --json tagName --jq '.[0].tagName' 2>/dev/null || echo "")
+              if [ -n "$STABLE_TAG" ]; then
+                BRANCH_TYPE="hotfix"
+                BASE_BRANCH="main"
+              fi
+            elif echo "$VERSION_CHANNEL" | grep -qiE "other" && [ -n "$VERSION_OTHER" ]; then
               if gh release view "$VERSION_OTHER" --json isPrerelease --jq '.isPrerelease' 2>/dev/null | grep -q "false"; then
                 BRANCH_TYPE="hotfix"
                 BASE_BRANCH="main"
@@ -332,12 +387,17 @@ jobs:
 
           git checkout -b "$BRANCH_NAME"
           git push origin "$BRANCH_NAME"
+          # Create an empty commit so the branch has at least one divergent commit.
+          # GitHub’s createPullRequest API requires ≥1 commit diff between head and base,
+          # even for draft PRs. An empty commit is harmless — it gets squashed or buried.
+          git commit --allow-empty -m "chore: initialize branch from issue #${ISSUE_NUMBER}"
+          git push origin "$BRANCH_NAME"
 
           PROBLEM=$(echo "$ISSUE_BODY" | sed -n '/^### What went wrong\?$/,/^###/{ /^### What went wrong\?$/d; /^###/d; p; }' | head -10)
           STEPS=$(echo "$ISSUE_BODY" | sed -n '/^### Steps to reproduce$/,/^###/{ /^### Steps to reproduce$/d; /^###/d; p; }' | head -15)
           FEAT_PROBLEM=$(echo "$ISSUE_BODY" | sed -n '/^### What problem are you trying to solve\?$/,/^###/{ /^### What problem are you trying to solve\?$/d; /^###/d; p; }' | head -10)
           FEAT_SOLUTION=$(echo "$ISSUE_BODY" | sed -n '/^### What should ryu.*do instead\?$/,/^###/{ /^### What should ryu.*do instead\?$/d; /^###/d; p; }' | head -10)
-          COMPONENT=$(echo "$ISSUE_BODY" | sed -n '/^### Which component is affected\?$/,/^###/{ /^### Which component is affected\?$/d; /^###/d; p; }' | head -1 | xargs)
+          COMPONENT=$(echo "$ISSUE_BODY" | sed -n '/^### Which component is affected\?$/,/^###/{ /^### Which component is affected\?$/d; /^###/d; p; }' | head -1 | xargs | tr -d '\r')
 
           CONTEXT=""
           [ -n "$COMPONENT" ] && CONTEXT="${CONTEXT}
