@@ -551,7 +551,7 @@ int __wrap_getaddrinfo(const char* node, const char* service,
                 struct sockaddr_in ip_sa{};
                 ip_sa.sin_family = AF_INET;
                 ip_sa.sin_port = htons(port);
-                ip_sa.sin_addr.s_addr = resolved_ips[i];
+                ip_sa.sin_addr.s_addr = htonl(resolved_ips[i]);
 
                 auto* storage = static_cast<AddrinfoStorage*>(
                     std::malloc(sizeof(AddrinfoStorage)));

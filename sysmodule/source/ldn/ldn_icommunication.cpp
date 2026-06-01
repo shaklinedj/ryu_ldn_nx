@@ -296,13 +296,26 @@ Result ICommunicationService::ConnectToServer() {
 
     LOG_INFO("Connecting to RyuLdn server...");
 
-    // Attempt TCP connection
+    // Attempt TCP connection.
+    // RyuLdnClient::connect() starts the connection process and returns Success
+    // if the attempt was initiated, even if the underlying TCP connection failed.
+    // After connect() returns, check that the TCP socket is actually connected
+    // before proceeding to the handshake wait — otherwise we wait 5 seconds for
+    // a handshake that can never succeed.
     {
         auto result = m_server_client.connect();
         if (result != ryu_ldn::network::ClientOpResult::Success) {
-            LOG_ERROR("Server connection failed: %s",
+            LOG_ERROR("Server connection initiation failed: %s",
                       ryu_ldn::network::client_op_result_to_string(result));
-            R_RETURN(MAKERESULT(0x10, 2)); // Connection failed
+            R_RETURN(MAKERESULT(0x10, 2)); // Connection initiation failed
+        }
+
+        // connect() returns Success even when try_connect() fails (wrong state
+        // machine path, DNS failure, TCP refused, etc.). Verify TCP established.
+        if (!m_server_client.is_connected()) {
+            LOG_ERROR("TCP connection to server failed (state=%d)",
+                      static_cast<int>(m_server_client.get_state()));
+            R_RETURN(MAKERESULT(0x10, 2)); // TCP connection failed
         }
     }
 
