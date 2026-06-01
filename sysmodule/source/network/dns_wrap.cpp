@@ -61,14 +61,15 @@ extern "C" uint32_t nifmGetCurrentIpConfigInfo(uint32_t* out_addr,
 extern "C" void __wrap_freeaddrinfo(struct addrinfo* res);
 
 /**
- * @brief Storage union for contiguous addrinfo + sockaddr_in allocation.
+ * @brief Storage struct for contiguous addrinfo + sockaddr_in allocation.
  *
  * addrinfo and sockaddr_in are allocated together to keep the ai_addr
- * pointer valid after a single malloc/free. The union guarantees correct
- * alignment for both types and makes sizeof(AddrinfoStorage) a multiple
- * of sizeof(addrinfo) — silencing cpp/allocation-too-small.
+ * pointer valid after a single malloc/free. Using a struct (not union)
+ * ensures ai_family and sa.sin_addr.s_addr occupy separate memory,
+ * preventing the overlap bug where assigning ai_family = AF_INET (2)
+ * corrupted the resolved IP address on ARM64.
  */
-union AddrinfoStorage {
+struct AddrinfoStorage {
     struct addrinfo ai;
     struct sockaddr_in sa;
 };
