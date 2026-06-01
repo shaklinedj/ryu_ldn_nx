@@ -7,6 +7,7 @@ on:
     types: [created]
   push:
     branches:
+      - 'main'
       - 'feature/**'
       - 'bugfix/**'
       - 'hotfix/**'
@@ -408,7 +409,11 @@ jobs:
   update-pr:
     name: Update PR description with commits and TODOs
     runs-on: ubuntu-latest
-    if: github.event_name == 'push'
+    if: >
+      github.event_name == 'push' &&
+      (startsWith(github.ref, 'refs/heads/feature/') ||
+       startsWith(github.ref, 'refs/heads/bugfix/') ||
+       startsWith(github.ref, 'refs/heads/hotfix/'))
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -724,3 +729,79 @@ jobs:
               comment_id: context.payload.comment.id,
               content: '+1'
             });
+
+  sync-hotfix-to-develop:
+    name: Sync hotfix to develop
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect merge commit and determine source
+        id: detect
+        run: |
+          PARENT_COUNT=$(git rev-list --parents -n 1 HEAD | wc -w)
+          PARENTS=$((PARENT_COUNT - 1))
+          echo "parent_count=${PARENTS}" >> "$GITHUB_OUTPUT"
+
+          if [ "$PARENTS" -ge 2 ]; then
+            MERGED_BRANCH_HEAD=$(git rev-parse HEAD^2)
+            echo "merged_head=${MERGED_BRANCH_HEAD}" >> "$GITHUB_OUTPUT"
+
+            git fetch origin develop
+            if git merge-base --is-ancestor "$MERGED_BRANCH_HEAD" origin/develop 2>/dev/null; then
+              echo "from_develop=true" >> "$GITHUB_OUTPUT"
+              echo "::notice::Merge came from develop — skipping PR creation"
+            else
+              echo "from_develop=false" >> "$GITHUB_OUTPUT"
+              echo "::notice::Merge came from non-develop branch — will create sync PR"
+            fi
+          else
+            echo "from_develop=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Not a merge commit (${PARENTS} parent(s)) — skipping"
+          fi
+
+      - name: Ensure auto-forward label exists
+        if: steps.detect.outputs.parent_count >= '2' && steps.detect.outputs.from_develop == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh label create auto-forward --color "cccccc" --description "Auto-forward hotfix sync PR" 2>/dev/null || true
+      - name: Create PR main → develop
+        if: steps.detect.outputs.parent_count >= '2' && steps.detect.outputs.from_develop == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          EXISTING=$(gh pr list --base develop --head main --state open --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            echo "::notice::PR #${EXISTING} already exists from main → develop, skipping"
+            exit 0
+          fi
+
+          echo "Creating PR from main → develop..."
+          PR_URL=$(gh pr create \
+            --base develop \
+            --head main \
+            --title "chore: sync main → develop after hotfix" \
+            --body "Auto-generated PR to forward hotfix changes merged into \`main\` back to \`develop\`.
+
+          **Source**: merge commit from non-develop branch
+          **Why**: keep develop in sync with any hotfixes applied directly to main.
+
+          This PR is automatically created and configured for auto-merge." \
+            --label "auto-forward")
+
+          PR_NUMBER=$(echo "$PR_URL" | grep -oE '[0-9]+$')
+          echo "::notice::Created PR #${PR_NUMBER}"
+
+          if gh pr merge "$PR_NUMBER" --auto --merge 2>/dev/null; then
+            echo "::notice::Auto-merge enabled for PR #${PR_NUMBER}"
+          else
+            echo "::warning::Could not enable auto-merge for PR #${PR_NUMBER} — check repository settings"
+          fi
