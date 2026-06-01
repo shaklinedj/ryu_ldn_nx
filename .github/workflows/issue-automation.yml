@@ -242,13 +242,9 @@ jobs:
   create-branch-and-pr:
     name: Create gitflow branch and draft PR
     runs-on: ubuntu-latest
-    needs: [check-title-length, retry-on-edit, validate-version]
     if: >
-      always() &&
       github.event_name == 'issues' &&
-      (needs.validate-version.result == 'success' || needs.validate-version.result == 'skipped') &&
-      (needs.check-title-length.outputs.title_ok == 'true' ||
-       needs.retry-on-edit.outputs.title_ok == 'true')
+      github.event.action == 'assigned'
     steps:
       - name: Classify issue and determine gitflow branch type
         id: classify
