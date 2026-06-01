@@ -242,10 +242,11 @@ jobs:
   create-branch-and-pr:
     name: Create gitflow branch and draft PR
     runs-on: ubuntu-latest
-    needs: [check-title-length, retry-on-edit]
+    needs: [check-title-length, retry-on-edit, validate-version]
     if: >
       always() &&
       github.event_name == 'issues' &&
+      (needs.validate-version.result == 'success' || needs.validate-version.result == 'skipped') &&
       (needs.check-title-length.outputs.title_ok == 'true' ||
        needs.retry-on-edit.outputs.title_ok == 'true')
     steps:
@@ -295,7 +296,7 @@ jobs:
           fi
 
           if [ "$BRANCH_TYPE" = "bugfix" ]; then
-            if echo "$VERSION_CHANNEL" | grep -qi "release"; then
+            if echo "$VERSION_CHANNEL" | grep -qiE "release|stable"; then
               BRANCH_TYPE="hotfix"
               BASE_BRANCH="main"
             elif echo "$VERSION_CHANNEL" | grep -qiE "other" && [ -n "$VERSION_OTHER" ]; then
