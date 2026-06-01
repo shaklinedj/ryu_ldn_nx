@@ -337,7 +337,7 @@ void Logger::open_file() {
 #else
     // The Switch SD card uses FAT32/exFAT which has no POSIX permission
     // model — fopen("a") creates with default FAT attributes and chmod is
-    // a no-op on this filesystem.  // lgtm[cpp/world-writable-file-creation]
+    // a no-op on this filesystem.  // codeql[cpp/world-writable-file-creation]
     m_file = std::fopen(m_log_path, "a");
 
     if (m_file != nullptr) {

@@ -64,7 +64,7 @@ Create `sdmc:/config/ryu_ldn_nx/config.ini` (or let the sysmodule auto-create it
 
 ```ini
 [server]
-host = 90.93.156.13
+host = 90.93.156.13    ; IP address or hostname
 port = 30456
 use_tls = 0                      ; NOT IMPLEMENTED — no TLS code exists
 

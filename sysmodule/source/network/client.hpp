@@ -613,6 +613,26 @@ private:
     void try_connect();
 
     /**
+     * @brief Handle Handshaking state in update loop
+     *
+     * Checks for handshake timeout, then attempts to receive and
+     * process the handshake response from the server.
+     *
+     * @param current_time_ms Current time in milliseconds
+     */
+    void handle_handshaking_state(uint64_t current_time_ms);
+
+    /**
+     * @brief Handle Ready state in update loop
+     *
+     * Processes incoming packets and sends keepalive pings.
+     * Detects connection loss via ping timeout.
+     *
+     * @param current_time_ms Current time in milliseconds
+     */
+    void handle_ready_state(uint64_t current_time_ms);
+
+    /**
      * @brief Process received packets
      */
     /// @gdb{tag="NETWORK:STATE_CALLBACKS", msg="process_packets: draining receive buffer"}
