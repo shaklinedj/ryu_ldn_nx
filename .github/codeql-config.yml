@@ -1,8 +1,12 @@
 name: CodeQL strict configuration
 paths-ignore:
-  - tests/**
-  - overlay/**
-  - docs/**
-  - scripts/**
+  - tests/**  # Unit tests: not deployed in production, would generate false positives on intentional edge-case patterns
+  - overlay/libultrahand/**  # Third-party Tesla overlay framework (libtesla, libultra, cJSON) — external dependency
+  - overlay/build/**  # Build artifacts (object files, ELF, NSO) — not source code
+  - docs/**  # Documentation site (Astro + Starlight) — not C/C++ code
+  - scripts/**  # Build/debug helper scripts — not deployed code
+  - sysmodule/Atmosphere-libs/**  # Atmosphere CFW libraries (libstratosphere, libvapours, libexosphere, libmesosphere) — external submodule
+  - sysmodule/build/**  # Build artifacts (object files, ELF, NSP, NSO) — not source code
+  - output/**  # SD card packaging output — distribution artifacts, not source code
 queries:
   - uses: security-and-quality
