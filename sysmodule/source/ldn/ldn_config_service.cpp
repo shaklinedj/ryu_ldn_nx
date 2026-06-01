@@ -76,7 +76,7 @@ Result LdnConfigService::GetServerAddress(sf::Out<ServerAddress> out) {
     R_SUCCEED();
 }
 
-Result LdnConfigService::SetServerAddress(ServerAddress address) {
+Result LdnConfigService::SetServerAddress(const ServerAddress &address) {
     auto& cfg = ryu_ldn::config::ConfigManager::Instance();
     cfg.SetServerHost(address.host);
     cfg.SetServerPort(address.port);

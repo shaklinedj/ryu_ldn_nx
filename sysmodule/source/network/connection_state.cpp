@@ -96,189 +96,155 @@ bool ConnectionStateMachine::is_transitioning() const {
 bool ConnectionStateMachine::is_valid_transition(ConnectionState from,
                                                   ConnectionEvent event,
                                                   ConnectionState& to) const {
-    switch (from) {
-        // ================================================================
-        // Disconnected: Waiting for connection request
-        // ================================================================
-        case ConnectionState::Disconnected:
-            switch (event) {
-                case ConnectionEvent::Connect:
-                    to = ConnectionState::Connecting;
-                    return true;
-                case ConnectionEvent::RetryRequested:
-                    to = ConnectionState::Connecting;
-                    return true;
-                default:
-                    return false;
-            }
+    // Transition lookup table: [state][event] -> (target_state, valid)
+    // Invalid transitions are represented by (Disconnected, false).
+    // This table replaces the 9-case switch to reduce cyclomatic complexity
+    // flagged by CodeQL cpp/complex-block.
+    using T = ConnectionState;
+    static constexpr struct { T target; bool valid; } table[9][11] = {
+        // State: Disconnected
+        {
+            {T::Connecting,  true },  // Connect
+            {T::Disconnected, false},  // ConnectSuccess
+            {T::Disconnected, false},  // ConnectFailed
+            {T::Disconnected, false},  // HandshakeStarted
+            {T::Disconnected, false},  // HandshakeSuccess
+            {T::Disconnected, false},  // HandshakeFailed
+            {T::Disconnected, false},  // Disconnect
+            {T::Disconnected, false},  // ConnectionLost
+            {T::Disconnected, false},  // BackoffExpired
+            {T::Connecting,  true },  // RetryRequested
+            {T::Disconnected, false},  // FatalError
+        },
+        // State: Connecting
+        {
+            {T::Disconnected, false},  // Connect
+            {T::Connected,   true },  // ConnectSuccess
+            {T::Backoff,     true },  // ConnectFailed
+            {T::Disconnected, false},  // HandshakeStarted
+            {T::Disconnected, false},  // HandshakeSuccess
+            {T::Disconnected, false},  // HandshakeFailed
+            {T::Disconnected, true },  // Disconnect
+            {T::Disconnected, false},  // ConnectionLost
+            {T::Disconnected, false},  // BackoffExpired
+            {T::Disconnected, false},  // RetryRequested
+            {T::Error,       true },  // FatalError
+        },
+        // State: Connected
+        {
+            {T::Disconnected, false},  // Connect
+            {T::Disconnected, false},  // ConnectSuccess
+            {T::Disconnected, false},  // ConnectFailed
+            {T::Handshaking, true },  // HandshakeStarted
+            {T::Ready,       true },  // HandshakeSuccess
+            {T::Backoff,      true },  // HandshakeFailed
+            {T::Disconnecting, true},  // Disconnect
+            {T::Backoff,      true },  // ConnectionLost
+            {T::Disconnected, false},  // BackoffExpired
+            {T::Disconnected, false},  // RetryRequested
+            {T::Error,        true },  // FatalError
+        },
+        // State: Handshaking
+        {
+            {T::Disconnected, false},  // Connect
+            {T::Disconnected, false},  // ConnectSuccess
+            {T::Disconnected, false},  // ConnectFailed
+            {T::Disconnected, false},  // HandshakeStarted
+            {T::Ready,       true },  // HandshakeSuccess
+            {T::Backoff,      true },  // HandshakeFailed
+            {T::Disconnecting, true},  // Disconnect
+            {T::Backoff,      true },  // ConnectionLost
+            {T::Disconnected, false},  // BackoffExpired
+            {T::Disconnected, false},  // RetryRequested
+            {T::Error,        true },  // FatalError
+        },
+        // State: Ready
+        {
+            {T::Disconnected, false},  // Connect
+            {T::Disconnected, false},  // ConnectSuccess
+            {T::Disconnected, false},  // ConnectFailed
+            {T::Disconnected, false},  // HandshakeStarted
+            {T::Disconnected, false},  // HandshakeSuccess
+            {T::Disconnected, false},  // HandshakeFailed
+            {T::Disconnecting, true },  // Disconnect
+            {T::Backoff,      true },  // ConnectionLost
+            {T::Disconnected, false},  // BackoffExpired
+            {T::Disconnected, false},  // RetryRequested
+            {T::Error,        true },  // FatalError
+        },
+        // State: Backoff
+        {
+            {T::Disconnected, false},  // Connect
+            {T::Disconnected, false},  // ConnectSuccess
+            {T::Disconnected, false},  // ConnectFailed
+            {T::Disconnected, false},  // HandshakeStarted
+            {T::Disconnected, false},  // HandshakeSuccess
+            {T::Disconnected, false},  // HandshakeFailed
+            {T::Disconnected, true },  // Disconnect
+            {T::Disconnected, false},  // ConnectionLost
+            {T::Retrying,    true },  // BackoffExpired
+            {T::Retrying,    true },  // RetryRequested
+            {T::Error,       true },  // FatalError
+        },
+        // State: Retrying
+        {
+            {T::Disconnected, false},  // Connect
+            {T::Connected,   true },  // ConnectSuccess
+            {T::Backoff,     true },  // ConnectFailed
+            {T::Disconnected, false},  // HandshakeStarted
+            {T::Disconnected, false},  // HandshakeSuccess
+            {T::Disconnected, false},  // HandshakeFailed
+            {T::Disconnected, true },  // Disconnect
+            {T::Disconnected, false},  // ConnectionLost
+            {T::Disconnected, false},  // BackoffExpired
+            {T::Disconnected, false},  // RetryRequested
+            {T::Error,       true },  // FatalError
+        },
+        // State: Disconnecting
+        {
+            {T::Disconnected, false},  // Connect
+            {T::Disconnected, true },  // ConnectSuccess
+            {T::Disconnected, true },  // ConnectFailed
+            {T::Disconnected, false},  // HandshakeStarted
+            {T::Disconnected, false},  // HandshakeSuccess
+            {T::Disconnected, false},  // HandshakeFailed
+            {T::Disconnected, false},  // Disconnect
+            {T::Disconnected, true },  // ConnectionLost
+            {T::Disconnected, false},  // BackoffExpired
+            {T::Disconnected, false},  // RetryRequested
+            {T::Disconnected, true },  // FatalError
+        },
+        // State: Error
+        {
+            {T::Disconnected, false},  // Connect
+            {T::Disconnected, false},  // ConnectSuccess
+            {T::Disconnected, false},  // ConnectFailed
+            {T::Disconnected, false},  // HandshakeStarted
+            {T::Disconnected, false},  // HandshakeSuccess
+            {T::Disconnected, false},  // HandshakeFailed
+            {T::Disconnected, true },  // Disconnect
+            {T::Disconnected, false},  // ConnectionLost
+            {T::Disconnected, false},  // BackoffExpired
+            {T::Connecting,  true },  // RetryRequested
+            {T::Disconnected, false},  // FatalError
+        },
+    };
 
-        // ================================================================
-        // Connecting: TCP connection attempt in progress
-        // ================================================================
-        case ConnectionState::Connecting:
-            switch (event) {
-                case ConnectionEvent::ConnectSuccess:
-                    to = ConnectionState::Connected;
-                    return true;
-                case ConnectionEvent::ConnectFailed:
-                    to = ConnectionState::Backoff;
-                    return true;
-                case ConnectionEvent::Disconnect:
-                    to = ConnectionState::Disconnected;
-                    return true;
-                case ConnectionEvent::FatalError:
-                    to = ConnectionState::Error;
-                    return true;
-                default:
-                    return false;
-            }
+    static_assert(sizeof(table) / sizeof(table[0]) == 9, "State count mismatch");
+    static_assert(sizeof(table[0]) / sizeof(table[0][0]) == 11, "Event count mismatch");
 
-        // ================================================================
-        // Connected: TCP established, ready for handshake
-        // ================================================================
-        case ConnectionState::Connected:
-            switch (event) {
-                case ConnectionEvent::HandshakeStarted:
-                    to = ConnectionState::Handshaking;
-                    return true;
-                case ConnectionEvent::HandshakeSuccess:
-                    to = ConnectionState::Ready;
-                    return true;
-                case ConnectionEvent::HandshakeFailed:
-                    to = ConnectionState::Backoff;
-                    return true;
-                case ConnectionEvent::ConnectionLost:
-                    to = ConnectionState::Backoff;
-                    return true;
-                case ConnectionEvent::Disconnect:
-                    to = ConnectionState::Disconnecting;
-                    return true;
-                case ConnectionEvent::FatalError:
-                    to = ConnectionState::Error;
-                    return true;
-                default:
-                    return false;
-            }
+    const auto si = static_cast<size_t>(from);
+    const auto ei = static_cast<size_t>(event);
 
-        // ================================================================
-        // Handshaking: Protocol handshake in progress
-        // ================================================================
-        case ConnectionState::Handshaking:
-            switch (event) {
-                case ConnectionEvent::HandshakeSuccess:
-                    to = ConnectionState::Ready;
-                    return true;
-                case ConnectionEvent::HandshakeFailed:
-                    to = ConnectionState::Backoff;
-                    return true;
-                case ConnectionEvent::ConnectionLost:
-                    to = ConnectionState::Backoff;
-                    return true;
-                case ConnectionEvent::Disconnect:
-                    to = ConnectionState::Disconnecting;
-                    return true;
-                case ConnectionEvent::FatalError:
-                    to = ConnectionState::Error;
-                    return true;
-                default:
-                    return false;
-            }
-
-        // ================================================================
-        // Ready: Fully connected and operational
-        // ================================================================
-        case ConnectionState::Ready:
-            switch (event) {
-                case ConnectionEvent::ConnectionLost:
-                    to = ConnectionState::Backoff;
-                    return true;
-                case ConnectionEvent::Disconnect:
-                    to = ConnectionState::Disconnecting;
-                    return true;
-                case ConnectionEvent::FatalError:
-                    to = ConnectionState::Error;
-                    return true;
-                default:
-                    return false;
-            }
-
-        // ================================================================
-        // Backoff: Waiting before retry after failure
-        // ================================================================
-        case ConnectionState::Backoff:
-            switch (event) {
-                case ConnectionEvent::BackoffExpired:
-                    to = ConnectionState::Retrying;
-                    return true;
-                case ConnectionEvent::Disconnect:
-                    to = ConnectionState::Disconnected;
-                    return true;
-                case ConnectionEvent::RetryRequested:
-                    to = ConnectionState::Retrying;
-                    return true;
-                case ConnectionEvent::FatalError:
-                    to = ConnectionState::Error;
-                    return true;
-                default:
-                    return false;
-            }
-
-        // ================================================================
-        // Retrying: Retry connection attempt in progress
-        // ================================================================
-        case ConnectionState::Retrying:
-            switch (event) {
-                case ConnectionEvent::ConnectSuccess:
-                    to = ConnectionState::Connected;
-                    return true;
-                case ConnectionEvent::ConnectFailed:
-                    to = ConnectionState::Backoff;
-                    return true;
-                case ConnectionEvent::Disconnect:
-                    to = ConnectionState::Disconnected;
-                    return true;
-                case ConnectionEvent::FatalError:
-                    to = ConnectionState::Error;
-                    return true;
-                default:
-                    return false;
-            }
-
-        // ================================================================
-        // Disconnecting: Graceful disconnect in progress
-        // ================================================================
-        case ConnectionState::Disconnecting:
-            switch (event) {
-                case ConnectionEvent::ConnectSuccess:
-                case ConnectionEvent::ConnectFailed:
-                case ConnectionEvent::ConnectionLost:
-                    to = ConnectionState::Disconnected;
-                    return true;
-                case ConnectionEvent::FatalError:
-                    to = ConnectionState::Disconnected;
-                    return true;
-                default:
-                    return false;
-            }
-
-        // ================================================================
-        // Error: Unrecoverable error state
-        // ================================================================
-        case ConnectionState::Error:
-            switch (event) {
-                case ConnectionEvent::Disconnect:
-                    to = ConnectionState::Disconnected;
-                    return true;
-                case ConnectionEvent::RetryRequested:
-                    to = ConnectionState::Connecting;
-                    return true;
-                default:
-                    return false;
-            }
-
-        default:
-            return false;
+    if (si >= 9 || ei >= 11) {
+        return false;
     }
+
+    const auto& entry = table[si][ei];
+    if (entry.valid) {
+        to = entry.target;
+    }
+    return entry.valid;
 }
 
 /**

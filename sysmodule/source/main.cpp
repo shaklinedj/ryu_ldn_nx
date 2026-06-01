@@ -40,6 +40,7 @@ namespace ams {
         alignas(os::MemoryPageSize) constinit u8 g_malloc_buffer[MallocBufferSize];
 
         /// Socket buffer configuration
+        // lgtm[cpp/unused-static-function] — consteval, used at compile-time below
         consteval size_t GetLibnxBsdTransferMemorySize(const ::SocketInitConfig* config) {
             const u32 tcp_tx_buf_max_size = config->tcp_tx_buf_max_size != 0
                 ? config->tcp_tx_buf_max_size : config->tcp_tx_buf_size;
@@ -48,7 +49,7 @@ namespace ams {
             const u32 sum = tcp_tx_buf_max_size + tcp_rx_buf_max_size +
                             config->udp_tx_buf_size + config->udp_rx_buf_size;
 
-            return config->sb_efficiency * util::AlignUp(sum, os::MemoryPageSize);
+            return static_cast<size_t>(config->sb_efficiency) * util::AlignUp(sum, os::MemoryPageSize);
         }
 
         /// Socket initialization configuration
