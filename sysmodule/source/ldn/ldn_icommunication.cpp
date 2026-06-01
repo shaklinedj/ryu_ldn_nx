@@ -1541,7 +1541,7 @@ void ICommunicationService::HandleServerPacket(ryu_ldn::protocol::PacketId id, c
     // contention with IPC readers like GetNetworkInfo.
     std::scoped_lock lock(m_shared_mutex);
 
-    switch (id) {
+    switch (id) { // codeql[cpp/long-switch] — extracted long cases to private methods
         case ryu_ldn::protocol::PacketId::Connected: {
             HandleConnectedPacket(data, size);
             break;
