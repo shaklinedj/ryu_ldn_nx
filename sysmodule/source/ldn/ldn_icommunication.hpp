@@ -153,7 +153,7 @@ public:
         ams::sf::Out<u32> count,
         ams::sf::OutAutoSelectArray<NetworkInfo> buffer,
         u16 channel,
-        ScanFilter filter);
+        const ScanFilter &filter);
 
     // ========================================================================
     // Access Point Operations
@@ -182,7 +182,7 @@ public:
      * @return Result code
      */
     /// @gdb{tag="LDN:OPS", msg="CreateNetwork"}
-    Result CreateNetwork(CreateNetworkConfig data);
+    Result CreateNetwork(const CreateNetworkConfig &data);
 
     /**
      * @brief Destroy the network
@@ -238,7 +238,7 @@ public:
      * @return Result code
      */
     /// @gdb{tag="LDN:OPS", msg="Connect"}
-    Result Connect(ConnectNetworkData dat, const NetworkInfo& data);
+    Result Connect(const ConnectNetworkData &dat, const NetworkInfo& data);
 
     /**
      * @brief Disconnect from network
@@ -299,7 +299,7 @@ public:
         ams::sf::Out<u32> count,
         ams::sf::OutAutoSelectArray<NetworkInfo> buffer,
         u16 channel,
-        ScanFilter filter);
+        const ScanFilter &filter);
 
     /**
      * @brief Create a private (password-protected) network
@@ -310,7 +310,7 @@ public:
      */
     /// @gdb{tag="LDN:OPS", msg="CreateNetworkPrivate"}
     Result CreateNetworkPrivate(
-        CreateNetworkPrivateConfig data,
+        const CreateNetworkPrivateConfig &data,
         ams::sf::InPointerBuffer addressList);
 
     /**
@@ -320,7 +320,7 @@ public:
      * @return Result code
      */
     /// @gdb{tag="LDN:OPS", msg="ConnectPrivate"}
-    Result ConnectPrivate(ConnectPrivateData data);
+    Result ConnectPrivate(const ConnectPrivateData &data);
 
     // ========================================================================
     // Other Operations

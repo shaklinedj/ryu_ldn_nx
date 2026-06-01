@@ -67,6 +67,8 @@ constexpr uint16_t EPHEMERAL_PORT_MAX = 65535;
  * 65535 - 49152 + 1 = 16384 ports
  */
 constexpr size_t EPHEMERAL_PORT_COUNT = EPHEMERAL_PORT_MAX - EPHEMERAL_PORT_MIN + 1;
+// uint16_t can never exceed 65535 (EPHEMERAL_PORT_MAX), so no upper-bound check is needed in PortToIndex.
+static_assert(EPHEMERAL_PORT_MAX == 0xFFFF, "EPHEMERAL_PORT_MAX must equal uint16_t max — removes need for upper bound check");
 
 /**
  * @brief Ephemeral Port Pool for Proxy Sockets
@@ -195,7 +197,7 @@ private:
      * @return Index into the bitset, or EPHEMERAL_PORT_COUNT if invalid
      */
     static constexpr size_t PortToIndex(uint16_t port) {
-        if (port < EPHEMERAL_PORT_MIN || port > EPHEMERAL_PORT_MAX) {
+        if (port < EPHEMERAL_PORT_MIN) {
             return EPHEMERAL_PORT_COUNT; // Invalid index
         }
         return port - EPHEMERAL_PORT_MIN;

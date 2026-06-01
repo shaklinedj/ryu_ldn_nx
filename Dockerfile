@@ -31,8 +31,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-pip \
     doxygen \
     graphviz \
+    clang-tidy \
+    python3-venv \
     && rm -rf /var/lib/apt/lists/* \
     && pip3 install --break-system-packages gcovr
+
+# Install CodeQL CLI (standalone) for static analysis
+# Version pinned to latest stable — update the URL when bumping
+RUN mkdir -p /opt/codeql && \
+    curl -fsSL https://github.com/github/codeql-action/releases/download/codeql-bundle-v2.21.1/codeql-bundle-linux64.tar.gz \
+    | tar xz -C /opt/codeql --strip-components=1 && \
+    chmod +x /opt/codeql/codeql && \
+    /opt/codeql/codeql resolve qlpacks 2>&1 | head -5
+ENV PATH="/opt/codeql:${PATH}"
 
 # Switch development libraries are pre-installed in the devkitpro/devkita64
 # base image. No dkp-pacman install step is needed — the base image already
