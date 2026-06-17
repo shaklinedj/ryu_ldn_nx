@@ -17,12 +17,11 @@
  * `libminiupnpc.a`) to these implementations, so miniupnpc's SSDP
  * discovery + HTTP control flow can run without ever touching sfdnsres.
  *
- * **Scope of substitution**: only IPv4 numeric literals are supported.
- * For UPnP that is a non-issue: SSDP targets the fixed multicast address
- * `239.255.255.250` and routers always advertise their LOCATION as an
- * IPv4-literal URL. Hostname resolution remains intentionally
- * unsupported (returns `EAI_NONAME`) — the rest of the sysmodule already
- * pre-resolves IP literals via `inet_pton` in `network/socket.cpp`.
+ * **Scope of substitution**: IPv4 numeric literals are resolved via
+ * `inet_pton`. Hostname resolution is performed via direct UDP DNS
+ * queries to the configured (or fallback) DNS server, bypassing
+ * sfdnsres entirely. This allows both IP-literal and hostname-based
+ * lookups to work from the boot2 sysmodule context.
  *
  * @copyright Copyright (c) 2026 ryu_ldn_nx contributors
  * @license GPL-2.0-or-later
@@ -34,9 +33,413 @@
 #include <netdb.h>
 #include <errno.h>
 
+#ifdef __SWITCH__
+/**
+ * Declare nifmGetCurrentIpConfigInfo with C linkage to match the
+ * symbol exported by libnx. The <switch/services/nifm.h> header is
+ * intentionally NOT included because it pulls in the Stratosphere
+ * Result type (ams::Result), which conflicts with this compilation
+ * unit's minimal dependency set. We declare the function with plain
+ * C types (uint32_t*) and check the return value against 0 (success).
+ */
+extern "C" uint32_t nifmGetCurrentIpConfigInfo(uint32_t* out_addr,
+                                                uint32_t* out_subnet,
+                                                uint32_t* out_gw,
+                                                uint32_t* out_dns1,
+                                                uint32_t* out_dns2);
+#endif
+
+#include <unistd.h>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <cstdio>
+
+// Forward declaration needed for EAI_MEMORY cleanup in __wrap_getaddrinfo
+extern "C" void __wrap_freeaddrinfo(struct addrinfo* res);
+
+/**
+ * @brief Storage struct for contiguous addrinfo + sockaddr_in allocation.
+ *
+ * addrinfo and sockaddr_in are allocated together to keep the ai_addr
+ * pointer valid after a single malloc/free. The struct guarantees correct
+ * alignment for both types and makes sizeof(AddrinfoStorage) a multiple
+ * of sizeof(addrinfo) — silencing cpp/allocation-too-small.
+ */
+struct AddrinfoStorage {
+    struct addrinfo ai;
+    struct sockaddr_in sa;
+};
+
+namespace {
+
+/**
+ * @brief Encode a hostname into DNS wire-format label sequence.
+ * @param hostname  Null-terminated hostname string (e.g. "www.example.com").
+ * @param buf       Output buffer for the encoded name.
+ * @param buf_size  Size of the output buffer.
+ * @return Number of bytes written to buf, or 0 if the encoded name exceeds buf_size.
+ *
+ * Labels are length-prefixed; the sequence is terminated by a zero-length label.
+ * "www.example.com" becomes "\x03www\x07example\x03com\x00".
+ */
+size_t EncodeDnsName(const char* hostname, uint8_t* buf, size_t buf_size) {
+    if (!hostname || !buf || buf_size == 0) {
+        return 0;
+    }
+
+    size_t pos = 0;
+    const char* src = hostname;
+
+    while (*src) {
+        // Find the next dot (or end of string)
+        const char* dot = std::strchr(src, '.');
+        size_t label_len = dot ? static_cast<size_t>(dot - src) : std::strlen(src);
+
+        // DNS labels must be 1..63 bytes
+        if (label_len == 0 || label_len > 63) {
+            return 0;
+        }
+
+        // Need space for: 1 byte length + label_len bytes + at least 1 byte terminator
+        if (pos + 1 + label_len + 1 > buf_size) {
+            return 0;
+        }
+
+        buf[pos++] = static_cast<uint8_t>(label_len);
+        std::memcpy(buf + pos, src, label_len);
+        pos += label_len;
+
+        if (dot) {
+            src = dot + 1;  // Skip the dot
+        } else {
+            break;
+        }
+    }
+
+    // Zero-length label (root terminator)
+    if (pos + 1 > buf_size) {
+        return 0;
+    }
+    buf[pos++] = 0x00;
+
+    return pos;
+}
+
+/**
+ * @brief Build a DNS query packet for an A record.
+ * @param hostname     The hostname to resolve.
+ * @param query_id     The query ID to embed in the DNS header.
+ * @param packet       Output buffer for the DNS query packet.
+ * @param packet_size  Size of the output buffer.
+ * @return Size of the built packet in bytes, or -1 on error.
+ *
+ * The query requests an A record (QTYPE=1) in the IN class (QCLASS=1)
+ * with the recursion-desired flag set.
+ */
+ssize_t BuildDnsQuery(const char* hostname, uint16_t query_id,
+                      uint8_t* packet, size_t packet_size) {
+    if (!hostname || hostname[0] == '\0' || !packet) {
+        return -1;
+    }
+
+    // Encode the name first to determine its length
+    uint8_t name_buf[256];
+    size_t name_len = EncodeDnsName(hostname, name_buf, sizeof(name_buf));
+    if (name_len == 0) {
+        return -1;
+    }
+
+    // Total packet size: 12 (header) + name_len + 4 (QTYPE + QCLASS)
+    size_t total_size = 12 + name_len + 4;
+    if (total_size > packet_size) {
+        return -1;
+    }
+
+    size_t pos = 0;
+
+    // DNS Header (12 bytes)
+    packet[pos++] = static_cast<uint8_t>((query_id >> 8) & 0xFF);
+    packet[pos++] = static_cast<uint8_t>(query_id & 0xFF);
+    packet[pos++] = 0x01;  // Flags: RD=1 (recursion desired) → 0x0100
+    packet[pos++] = 0x00;
+    packet[pos++] = 0x00;  // QDCOUNT = 1
+    packet[pos++] = 0x01;
+    packet[pos++] = 0x00;  // ANCOUNT = 0
+    packet[pos++] = 0x00;
+    packet[pos++] = 0x00;  // NSCOUNT = 0
+    packet[pos++] = 0x00;
+    packet[pos++] = 0x00;  // ARCOUNT = 0
+    packet[pos++] = 0x00;
+
+    // Question section: encoded name + QTYPE + QCLASS
+    std::memcpy(packet + pos, name_buf, name_len);
+    pos += name_len;
+
+    // QTYPE = A (1) in big-endian
+    packet[pos++] = 0x00;
+    packet[pos++] = 0x01;
+
+    // QCLASS = IN (1) in big-endian
+    packet[pos++] = 0x00;
+    packet[pos++] = 0x01;
+
+    return static_cast<ssize_t>(pos);
+}
+
+/**
+ * @brief Retrieve the DNS server IP from the system network configuration.
+ * @param dns_ip  Output parameter receiving the DNS server IPv4 address
+ *                in network byte order (big-endian).
+ * @return true if a DNS server was found, false if fallback to 8.8.8.8 is used.
+ *
+ * On Switch, uses nifmGetCurrentIpConfigInfo to obtain the primary (and
+ * optionally secondary) DNS server. The values returned by nifm are already
+ * in network byte order — no bswap32 is applied. If both are 0.0.0.0, or
+ * if nifm fails, falls back to Google DNS (8.8.8.8).
+ */
+static bool GetDnsServerIp(uint32_t& dns_ip) {
+#ifdef __SWITCH__
+    uint32_t out_addr = 0, out_subnet = 0, out_gw = 0;
+    uint32_t out_dns1 = 0, out_dns2 = 0;
+
+    uint32_t rc = nifmGetCurrentIpConfigInfo(&out_addr, &out_subnet, &out_gw,
+                                            &out_dns1, &out_dns2);
+    if (rc == 0) {
+        if (out_dns1 != 0) {
+            dns_ip = out_dns1;
+            return true;
+        }
+        if (out_dns2 != 0) {
+            dns_ip = out_dns2;
+            return true;
+        }
+    }
+#endif
+
+    // Fallback: Google DNS 8.8.8.8
+    // 0x08080808 is already big-endian representation of 8.8.8.8
+    dns_ip = 0x08080808;
+    return false;
+}
+
+/**
+ * @brief Skip over a DNS name in a response packet (handles labels and pointers).
+ * @param p     Current position in the response buffer.
+ * @param end   End of the response buffer (one past last valid byte).
+ * @return Pointer to the byte after the name, or nullptr if the name overflows the buffer.
+ *
+ * DNS names use label sequences (length-prefixed) and may contain compression
+ * pointers (2-byte entries starting with 0xC0). This function advances past
+ * the name without following pointers, since we only need to skip over it.
+ */
+static const uint8_t* SkipDnsName(const uint8_t* p, const uint8_t* end) {
+    if (!p || !end) {
+        return nullptr;
+    }
+
+    while (p < end) {
+        uint8_t label_len = *p;
+
+        // Compression pointer: top 2 bits = 11
+        if ((label_len & 0xC0) == 0xC0) {
+            // Pointer is 2 bytes — advance past it
+            if (p + 2 > end) {
+                return nullptr;
+            }
+            return p + 2;
+        }
+
+        // Zero-length label: end of name
+        if (label_len == 0) {
+            return p + 1;
+        }
+
+        // Regular label: skip length byte + label data
+        if (p + 1 + label_len > end) {
+            return nullptr;
+        }
+        p += 1 + label_len;
+    }
+
+    // Ran past the end without terminating
+    return nullptr;
+}
+
+/**
+ * @brief Parse a DNS response packet and extract IPv4 addresses from A records.
+ * @param response  Raw DNS response bytes.
+ * @param resp_len  Length of the response in bytes.
+ * @param out_ips   Output array for resolved IPv4 addresses (network byte order).
+ * @param max_ips   Maximum number of IPs the output array can hold.
+ * @return Number of IPs extracted (>=1 on success), or negative EAI_* error code.
+ *
+ * Validates the DNS header (QR=1, RCODE=0, ANCOUNT>0), skips the question
+ * section, and iterates over answer records extracting A records (TYPE=1,
+ * CLASS=1, RDLENGTH=4). Returns EAI_NONAME for NXDOMAIN, EAI_FAIL for
+ * SERVFAIL/REFUSED, EAI_AGAIN for truncated responses.
+ */
+static int ParseDnsResponse(const uint8_t* response, size_t resp_len,
+                             uint32_t* out_ips, int max_ips) {
+    if (!response || resp_len < 12 || !out_ips || max_ips <= 0) {
+        return -1;
+    }
+
+    // Parse header
+    uint16_t flags = (static_cast<uint16_t>(response[2]) << 8) | response[3];
+    uint16_t rcode = flags & 0x000F;
+
+    // QR bit must be 1 (response)
+    if (!(flags & 0x8000)) {
+        return -1;
+    }
+
+    // TC (truncated) bit
+    if (flags & 0x0200) {
+        return EAI_AGAIN;
+    }
+
+    // RCODE
+    if (rcode == 3) {
+        return EAI_NONAME;  // NXDOMAIN
+    }
+    if (rcode == 2 || rcode == 5) {
+        return EAI_FAIL;  // SERVFAIL or REFUSED
+    }
+    if (rcode != 0) {
+        return EAI_FAIL;  // Other errors
+    }
+
+    uint16_t ancount = (static_cast<uint16_t>(response[6]) << 8) | response[7];
+    if (ancount == 0) {
+        return EAI_NONAME;
+    }
+
+    uint16_t qdcount = (static_cast<uint16_t>(response[4]) << 8) | response[5];
+    const uint8_t* p = response + 12;
+    const uint8_t* end = response + resp_len;
+
+    // Skip all question sections (name + QTYPE + QCLASS each)
+    for (uint16_t q = 0; q < qdcount; ++q) {
+        p = SkipDnsName(p, end);
+        if (!p || p + 4 > end) {
+            return -1;
+        }
+        p += 4;  // Skip QTYPE and QCLASS (4 bytes)
+    }
+
+    // Parse answer records
+    int ip_count = 0;
+    for (uint16_t i = 0; i < ancount && ip_count < max_ips; ++i) {
+        // Skip the name
+        p = SkipDnsName(p, end);
+        if (!p || p + 10 > end) {
+            return -1;
+        }
+
+        // TYPE (2), CLASS (2), TTL (4), RDLENGTH (2)
+        uint16_t rtype = (static_cast<uint16_t>(p[0]) << 8) | p[1];
+        uint16_t rclass = (static_cast<uint16_t>(p[2]) << 8) | p[3];
+        uint16_t rdlength = (static_cast<uint16_t>(p[8]) << 8) | p[9];
+        p += 10;
+
+        if (p + rdlength > end) {
+            return -1;
+        }
+
+        // A record: TYPE=1, CLASS=1, RDLENGTH=4
+        if (rtype == 1 && rclass == 1 && rdlength == 4) {
+            if (ip_count < max_ips) {
+                uint32_t ip;
+                std::memcpy(&ip, p, 4);
+                out_ips[ip_count++] = ip;
+            }
+        }
+
+        p += rdlength;
+    }
+
+    return ip_count > 0 ? ip_count : EAI_NONAME;
+}
+
+/**
+ * @brief Resolve a hostname by sending a UDP DNS query to the configured DNS server.
+ * @param hostname  Null-terminated hostname to resolve.
+ * @param out_ips   Output array for resolved IPv4 addresses (network byte order).
+ * @param max_ips   Maximum number of IPs the output array can hold.
+ * @return Number of resolved IPs (>=1 on success), or negative EAI_* error code.
+ *
+ * Sends a single DNS query over UDP to the DNS server obtained from
+ * GetDnsServerIp() (which falls back to 8.8.8.8 if system config is
+ * unavailable). Uses a 5-second receive timeout. Only handles A records
+ * (IPv4). Truncated responses (TC bit) return EAI_AGAIN since TCP
+ * fallback is not implemented.
+ */
+static int ResolveHostnameDns(const char* hostname, uint32_t* out_ips, int max_ips) {
+    if (!hostname || !out_ips || max_ips <= 0) {
+        return EAI_FAIL;
+    }
+
+    // Step 1: Get DNS server IP
+    uint32_t dns_ip;
+    GetDnsServerIp(dns_ip);
+
+    // Step 2: Build DNS query
+    static uint16_t s_next_query_id = 0x1234;
+    uint16_t query_id = __atomic_fetch_add(&s_next_query_id, 1, __ATOMIC_RELAXED);
+
+    uint8_t query_buf[512];
+    ssize_t query_len = BuildDnsQuery(hostname, query_id, query_buf, sizeof(query_buf));
+    if (query_len < 0) {
+        return EAI_FAIL;
+    }
+
+    // Step 3: Create UDP socket
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0) {
+        return EAI_FAIL;
+    }
+
+    // Step 4: Set receive timeout (5 seconds)
+    struct timeval tv;
+    tv.tv_sec = 5;
+    tv.tv_usec = 0;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+    // Step 5: Send query to DNS server
+    struct sockaddr_in dns_addr{};
+    dns_addr.sin_family = AF_INET;
+    dns_addr.sin_port = htons(53);
+    dns_addr.sin_addr.s_addr = dns_ip;
+
+    ssize_t sent = sendto(sock, query_buf, static_cast<size_t>(query_len), 0,
+                           reinterpret_cast<struct sockaddr*>(&dns_addr),
+                           sizeof(dns_addr));
+    if (sent < 0) {
+        close(sock);
+        return EAI_AGAIN;
+    }
+
+    // Step 6: Receive response
+    uint8_t resp_buf[512];
+    struct sockaddr_in from_addr{};
+    socklen_t from_len = sizeof(from_addr);
+
+    ssize_t recv_len = recvfrom(sock, resp_buf, sizeof(resp_buf), 0,
+                                 reinterpret_cast<struct sockaddr*>(&from_addr),
+                                 &from_len);
+
+    close(sock);
+
+    if (recv_len <= 0) {
+        return EAI_AGAIN;
+    }
+
+    // Step 7: Parse response
+    return ParseDnsResponse(resp_buf, static_cast<size_t>(recv_len), out_ips, max_ips);
+}
+
+} // anonymous namespace
 
 extern "C" {
 
@@ -69,36 +472,80 @@ int __wrap_getaddrinfo(const char* node, const char* service,
 
     if (node) {
         if (::inet_pton(AF_INET, node, &sa.sin_addr) != 1) {
-            return EAI_NONAME;
+            // Not an IP literal — attempt DNS resolution
+            uint32_t resolved_ips[8];
+            int num_ips = ResolveHostnameDns(node, resolved_ips, 8);
+
+            if (num_ips <= 0) {
+                return (num_ips == 0) ? EAI_NONAME : EAI_AGAIN;
+            }
+
+            // Build addrinfo linked list from resolved IPs
+            struct addrinfo* head = nullptr;
+            struct addrinfo* tail = nullptr;
+
+            for (int i = 0; i < num_ips; ++i) {
+                struct sockaddr_in ip_sa{};
+                ip_sa.sin_family = AF_INET;
+                ip_sa.sin_port = htons(port);
+                ip_sa.sin_addr.s_addr = resolved_ips[i];
+
+                auto* storage = static_cast<AddrinfoStorage*>(
+                    std::malloc(sizeof(AddrinfoStorage)));
+                if (!storage) {
+                    if (head) __wrap_freeaddrinfo(head);
+                    return EAI_MEMORY;
+                }
+
+                std::memset(&storage->ai, 0, sizeof(struct addrinfo));
+                storage->sa = ip_sa;
+                storage->ai.ai_family   = AF_INET;
+                storage->ai.ai_socktype = hints ? hints->ai_socktype : 0;
+                storage->ai.ai_protocol = hints ? hints->ai_protocol : 0;
+                storage->ai.ai_addrlen  = sizeof(struct sockaddr_in);
+                storage->ai.ai_addr     = reinterpret_cast<struct sockaddr*>(&storage->sa);
+                storage->ai.ai_canonname = nullptr;
+                storage->ai.ai_next      = nullptr;
+
+                auto* ai = &storage->ai;
+                if (!head) {
+                    head = ai;
+                } else {
+                    tail->ai_next = ai;
+                }
+                tail = ai;
+            }
+
+            *res = head;
+            return 0;
         }
     } else {
         const bool passive = hints && (hints->ai_flags & AI_PASSIVE);
         sa.sin_addr.s_addr = htonl(passive ? INADDR_ANY : INADDR_LOOPBACK);
     }
 
-    auto* ai = static_cast<struct addrinfo*>(
-        std::malloc(sizeof(struct addrinfo) + sizeof(struct sockaddr_in)));
-    if (!ai) return EAI_MEMORY;
+    auto* storage = static_cast<AddrinfoStorage*>(
+        std::malloc(sizeof(AddrinfoStorage)));
+    if (!storage) return EAI_MEMORY;
 
-    std::memset(ai, 0, sizeof(struct addrinfo));
-    ai->ai_family   = AF_INET;
-    ai->ai_socktype = hints ? hints->ai_socktype : 0;
-    ai->ai_protocol = hints ? hints->ai_protocol : 0;
-    ai->ai_addrlen  = sizeof(struct sockaddr_in);
-    ai->ai_addr     = reinterpret_cast<struct sockaddr*>(
-        reinterpret_cast<char*>(ai) + sizeof(struct addrinfo));
-    std::memcpy(ai->ai_addr, &sa, sizeof(sa));
-    ai->ai_canonname = nullptr;
-    ai->ai_next      = nullptr;
+    std::memset(&storage->ai, 0, sizeof(struct addrinfo));
+    storage->sa = sa;
+    storage->ai.ai_family   = AF_INET;
+    storage->ai.ai_socktype = hints ? hints->ai_socktype : 0;
+    storage->ai.ai_protocol = hints ? hints->ai_protocol : 0;
+    storage->ai.ai_addrlen  = sizeof(struct sockaddr_in);
+    storage->ai.ai_addr     = reinterpret_cast<struct sockaddr*>(&storage->sa);
+    storage->ai.ai_canonname = nullptr;
+    storage->ai.ai_next      = nullptr;
 
-    *res = ai;
+    *res = &storage->ai;
     return 0;
 }
 
 void __wrap_freeaddrinfo(struct addrinfo* res) {
     while (res) {
         struct addrinfo* next = res->ai_next;
-        std::free(res);
+        std::free(res);   // ai_addr is inside the same allocation block
         res = next;
     }
 }

@@ -4,5 +4,6 @@ paths-ignore:
   - overlay/**
   - docs/**
   - scripts/**
+  - sysmodule/Atmosphere-libs/**
 queries:
   - uses: security-and-quality

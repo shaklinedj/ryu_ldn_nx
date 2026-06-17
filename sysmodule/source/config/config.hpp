@@ -118,14 +118,14 @@ constexpr const char* LOG_PATH = "sdmc:/config/ryu_ldn_nx/ryu_ldn_nx.log";
 // Default Values - Server
 // -----------------------------------------------------------------------------
 
-/** @brief Default server hostname (Temporary private RyuLDN server for development and testing) */
-constexpr const char* DEFAULT_HOST = "90.93.156.13";
+/** @brief Default server hostname (Official Ryujinx LDN production server) */
+constexpr const char* DEFAULT_HOST = "ldn.ryujinx.app";
 
 /** @brief Default server port */
 constexpr uint16_t DEFAULT_PORT = 30456;
 
-/** @brief Default TLS setting — NOT IMPLEMENTED, always plain TCP regardless of this value */
-constexpr bool DEFAULT_USE_TLS = false;
+/** @brief Default TLS setting — Use TLS for the official production server */
+constexpr bool DEFAULT_USE_TLS = true;
 
 // -----------------------------------------------------------------------------
 // Default Values - Network

@@ -320,10 +320,10 @@ P2pProxyServer::P2pProxyServer(MasterSendCallback master_callback, void* user_da
     // Initialize session array to nullptr
     // This is important - we use nullptr to detect empty slots
     for (int i = 0; i < MAX_PLAYERS; i++) {
-        m_sessions[i] = nullptr;
+        m_sessions[i].reset();
     }
     for (int i = 0; i < MAX_ZOMBIE_SESSIONS; i++) {
-        m_zombie_sessions[i] = nullptr;
+        m_zombie_sessions[i].reset();
     }
 }
 
@@ -563,8 +563,7 @@ void P2pProxyServer::Stop() {
         for (int i = 0; i < MAX_PLAYERS; i++) {
             if (m_sessions[i] != nullptr) {
                 m_sessions[i]->Disconnect(true);  // from_master = true
-                delete m_sessions[i];
-                m_sessions[i] = nullptr;
+                m_sessions[i].reset();
             }
         }
         m_session_count = 0;
@@ -1052,7 +1051,7 @@ bool P2pProxyServer::TryRegisterUser(P2pProxySession* session,
                 // Add session to player list
                 for (int j = 0; j < MAX_PLAYERS; j++) {
                     if (m_sessions[j] == nullptr) {
-                        m_sessions[j] = session;
+                        m_sessions[j].reset(session);
                         m_session_count++;
                         break;
                     }
@@ -1417,7 +1416,7 @@ void P2pProxyServer::RouteMessage(P2pProxySession* sender,
     if (is_broadcast) {
         // Send to all authenticated players
         for (int i = 0; i < MAX_PLAYERS; i++) {
-            P2pProxySession* s = m_sessions[i];
+            P2pProxySession* s = m_sessions[i].get();
             LOG_INFO("RouteMessage: slot %d -> %p%s",
                      i, static_cast<void*>(s),
                      s == nullptr ? " (null)" :
@@ -1430,7 +1429,7 @@ void P2pProxyServer::RouteMessage(P2pProxySession* sender,
     } else {
         // Send to specific player by virtual IP
         for (int i = 0; i < MAX_PLAYERS; i++) {
-            P2pProxySession* s = m_sessions[i];
+            P2pProxySession* s = m_sessions[i].get();
             if (s != nullptr && s->IsAuthenticated() &&
                 s->GetVirtualIpAddress() == dest_ip) {
                 LOG_INFO("RouteMessage: unicast match slot %d (vIP 0x%08X)", i, dest_ip);
@@ -1594,16 +1593,16 @@ void P2pProxyServer::ReapZombieSessions() {
         std::scoped_lock lock(m_mutex);
         int kept = 0;
         for (int i = 0; i < m_zombie_session_count; ++i) {
-            P2pProxySession* z = m_zombie_sessions[i];
+            P2pProxySession* z = m_zombie_sessions[i].get();
             if (z != nullptr && z->m_thread_done.load(std::memory_order_acquire)) {
                 zombies[taken++] = z;
             } else {
-                m_zombie_sessions[kept++] = z;
+                m_zombie_sessions[kept++].reset(z);
             }
         }
         m_zombie_session_count = kept;
         for (int i = kept; i < MAX_ZOMBIE_SESSIONS; ++i) {
-            m_zombie_sessions[i] = nullptr;
+            m_zombie_sessions[i].reset();
         }
     }
 
@@ -1657,7 +1656,7 @@ void P2pProxyServer::HandleExternalProxyStateChange(uint32_t virtual_ip, bool co
         for (int i = 0; i < MAX_PLAYERS && victim_count < MAX_PLAYERS; i++) {
             if (m_sessions[i] != nullptr &&
                 m_sessions[i]->GetVirtualIpAddress() == virtual_ip) {
-                victims[victim_count++] = m_sessions[i];
+                victims[victim_count++] = m_sessions[i].get();
             }
         }
     }
@@ -1683,8 +1682,8 @@ void P2pProxyServer::OnSessionDisconnected(P2pProxySession* session) {
     // Find and remove from session array
     bool found = false;
     for (int i = 0; i < MAX_PLAYERS; i++) {
-        if (m_sessions[i] == session) {
-            m_sessions[i] = nullptr;
+        if (m_sessions[i].get() == session) {
+            m_sessions[i].reset();
             m_session_count--;
             found = true;
             LOG_INFO("P2P session disconnected: virtual IP 0x%08X",
@@ -1708,7 +1707,7 @@ void P2pProxyServer::OnSessionDisconnected(P2pProxySession* session) {
     // were enough to exhaust the 384 KB sysmodule heap and DABRT 0x101
     // on the next allocation.
     if (m_zombie_session_count < MAX_ZOMBIE_SESSIONS) {
-        m_zombie_sessions[m_zombie_session_count++] = session;
+        m_zombie_sessions[m_zombie_session_count++].reset(session);
     } else {
         LOG_ERROR("Zombie session pool full (%d), dropping pointer — heap will leak",
                   MAX_ZOMBIE_SESSIONS);

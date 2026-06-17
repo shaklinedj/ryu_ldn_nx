@@ -179,7 +179,7 @@ public:
      * @return ResultSuccess on success
      */
     /// @gdb{tag="LDN:CONFIG", msg="SetServerAddress"}
-    Result SetServerAddress(ServerAddress address);
+    Result SetServerAddress(const ServerAddress &address);
 
     /**
      * @brief Get debug logging state

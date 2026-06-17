@@ -85,6 +85,7 @@ RyuLdnClientConfig::RyuLdnClientConfig()
     std::strncpy(host, "127.0.0.1", sizeof(host) - 1);
     host[sizeof(host) - 1] = '\0';
     passphrase[0] = '\0';  // Empty passphrase = public rooms
+    use_tls = false;
 }
 
 /**
@@ -111,6 +112,8 @@ RyuLdnClientConfig::RyuLdnClientConfig(const config::Config& cfg)
     // Copy passphrase, ensuring null termination
     std::memset(passphrase, 0, sizeof(passphrase));
     std::memcpy(passphrase, cfg.ldn.passphrase, sizeof(passphrase) - 1);
+    
+    use_tls = cfg.server.use_tls;
 
     // Configure reconnection from app config
     reconnect.initial_delay_ms = cfg.network.reconnect_delay_ms;
@@ -1043,7 +1046,8 @@ void RyuLdnClient::try_connect() {
     ClientResult result = m_tcp_client->connect(
         m_config.host,
         m_config.port,
-        m_config.connect_timeout_ms
+        m_config.connect_timeout_ms,
+        m_config.use_tls
     );
 
     if (result == ClientResult::Success) {

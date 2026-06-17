@@ -4,11 +4,11 @@
 
 [server]
 ; Server hostname or IP address
-host = 90.93.156.13
+host = ldn.ryujinx.app
 ; Server port
 port = 30456
-; Use TLS encryption (0/1) — NOT IMPLEMENTED: always plain TCP regardless of this setting
-use_tls = 0
+; Use TLS encryption (0/1)
+use_tls = 1
 
 [network]
 ; Connection timeout in milliseconds

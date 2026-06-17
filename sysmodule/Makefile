@@ -38,7 +38,7 @@ CXXFLAGS	+= $(VERSION_DEFINES)
 # Additional libraries for P2P/UPnP support
 # switch-miniupnpc is provided by devkitPro
 #---------------------------------------------------------------------------------
-LIBS		+= -lminiupnpc
+LIBS		+= -lminiupnpc -lmbedtls -lmbedcrypto -lmbedx509
 
 #---------------------------------------------------------------------------------
 # Resolver wrappers — sfdnsres-backed getaddrinfo()/freeaddrinfo()/getnameinfo()

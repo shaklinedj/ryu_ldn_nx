@@ -440,12 +440,12 @@ ProxySocket* ProxySocketManager::FindSocketByDestination(uint32_t dest_ip, uint1
         }
 
         // IP matching:
-        // CRITICAL: sin_addr is now in Ryujinx format (NO bswap was applied in Bind).
-        // Use sin_addr directly instead of GetAddr() which does bswap32.
+        // Use GetAddr() to convert sin_addr from network byte order to host byte order
+        // to properly match against dest_ip which is in Ryujinx host format (0x0A72xxxx).
         // 1. INADDR_ANY (bound to 0.0.0.0 - accepts any destination)
         // 2. Exact match (bound to specific IP)
         // 3. Broadcast: any socket on the same port receives broadcast packets
-        uint32_t local_ip = local_addr.sin_addr;  // Direct access - Ryujinx format
+        uint32_t local_ip = local_addr.GetAddr();  // Host byte order
         if (local_ip == 0) {
             // Bound to INADDR_ANY - accepts all
             return socket.get();
@@ -496,7 +496,7 @@ size_t ProxySocketManager::FindAllSocketsByDestination(uint32_t dest_ip, uint16_
             continue;
         }
 
-        uint32_t local_ip = local_addr.sin_addr;
+        uint32_t local_ip = local_addr.GetAddr();
 
         if (local_ip == 0) {
             out_sockets[count++] = socket.get();

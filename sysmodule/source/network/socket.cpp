@@ -76,6 +76,42 @@
 #include <poll.h>
 #endif
 
+
+#ifndef TEST_BUILD
+#include <mbedtls/entropy.h>
+#include <mbedtls/ctr_drbg.h>
+#include <mbedtls/ssl.h>
+#include <mbedtls/error.h>
+#include <mbedtls/net_sockets.h>
+
+struct TlsContext {
+    mbedtls_ssl_context ssl;
+    mbedtls_ssl_config conf;
+    mbedtls_ctr_drbg_context ctr_drbg;
+    mbedtls_entropy_context entropy;
+};
+
+static int my_net_send(void *ctx, const unsigned char *buf, size_t len) {
+    int fd = *reinterpret_cast<int*>(ctx);
+    ssize_t ret = ::send(fd, buf, len, MSG_NOSIGNAL);
+    if (ret < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) return MBEDTLS_ERR_SSL_WANT_WRITE;
+        return MBEDTLS_ERR_NET_SEND_FAILED;
+    }
+    return static_cast<int>(ret);
+}
+
+static int my_net_recv(void *ctx, unsigned char *buf, size_t len) {
+    int fd = *reinterpret_cast<int*>(ctx);
+    ssize_t ret = ::recv(fd, buf, len, 0);
+    if (ret < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) return MBEDTLS_ERR_SSL_WANT_READ;
+        return MBEDTLS_ERR_NET_RECV_FAILED;
+    }
+    return static_cast<int>(ret);
+}
+#endif
+
 namespace ryu_ldn::network {
 
 // =============================================================================
@@ -265,6 +301,8 @@ bool resolve_host(const char* host, struct sockaddr_in& addr) {
 Socket::Socket()
     : m_fd(-1)
     , m_connected(false)
+    , m_use_tls(false)
+    , m_tls_ctx(nullptr)
 {
 }
 
@@ -289,10 +327,14 @@ Socket::~Socket() {
 Socket::Socket(Socket&& other) noexcept
     : m_fd(other.m_fd)
     , m_connected(other.m_connected)
+    , m_use_tls(other.m_use_tls)
+    , m_tls_ctx(other.m_tls_ctx)
 {
     // Invalidate the source socket
     other.m_fd = -1;
     other.m_connected = false;
+    other.m_use_tls = false;
+    other.m_tls_ctx = nullptr;
 }
 
 /**
@@ -312,6 +354,8 @@ Socket& Socket::operator=(Socket&& other) noexcept {
         // Transfer ownership
         m_fd = other.m_fd;
         m_connected = other.m_connected;
+        m_use_tls = other.m_use_tls;
+        m_tls_ctx = other.m_tls_ctx;
 
         // Invalidate source
         other.m_fd = -1;
@@ -374,7 +418,7 @@ SocketResult Socket::create() {
  * @note If connection fails, the socket is automatically closed
  * @note Recommended timeout: 5000ms (5 seconds) for typical use
  */
-SocketResult Socket::connect(const char* host, uint16_t port, uint32_t timeout_ms) {
+SocketResult Socket::connect(const char* host, uint16_t port, uint32_t timeout_ms, bool use_tls) {
     // Ensure socket subsystem is initialized
     if (!s_initialized) {
         return SocketResult::NotInitialized;
@@ -481,7 +525,55 @@ SocketResult Socket::connect(const char* host, uint16_t port, uint32_t timeout_m
 #endif
     }
 
+
     m_connected = true;
+    m_use_tls = use_tls;
+#ifndef TEST_BUILD
+    if (m_use_tls) {
+        m_tls_ctx = new TlsContext();
+        TlsContext* tls = static_cast<TlsContext*>(m_tls_ctx);
+
+        mbedtls_ssl_init(&tls->ssl);
+        mbedtls_ssl_config_init(&tls->conf);
+        mbedtls_ctr_drbg_init(&tls->ctr_drbg);
+        mbedtls_entropy_init(&tls->entropy);
+
+        int ret = mbedtls_ctr_drbg_seed(&tls->ctr_drbg, mbedtls_entropy_func, &tls->entropy, nullptr, 0);
+        if (ret != 0) {
+            LOG_ERROR("mbedtls_ctr_drbg_seed failed: %d", ret);
+            close();
+            return SocketResult::SocketError;
+        }
+
+        ret = mbedtls_ssl_config_defaults(&tls->conf, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_TRANSPORT_STREAM, MBEDTLS_SSL_PRESET_DEFAULT);
+        if (ret != 0) {
+            LOG_ERROR("mbedtls_ssl_config_defaults failed: %d", ret);
+            close();
+            return SocketResult::SocketError;
+        }
+
+        mbedtls_ssl_conf_authmode(&tls->conf, MBEDTLS_SSL_VERIFY_NONE);
+        mbedtls_ssl_conf_rng(&tls->conf, mbedtls_ctr_drbg_random, &tls->ctr_drbg);
+
+        ret = mbedtls_ssl_setup(&tls->ssl, &tls->conf);
+        if (ret != 0) {
+            LOG_ERROR("mbedtls_ssl_setup failed: %d", ret);
+            close();
+            return SocketResult::SocketError;
+        }
+
+        mbedtls_ssl_set_bio(&tls->ssl, &m_fd, my_net_send, my_net_recv, nullptr);
+
+        while ((ret = mbedtls_ssl_handshake(&tls->ssl)) != 0) {
+            if (ret != MBEDTLS_ERR_SSL_WANT_READ && ret != MBEDTLS_ERR_SSL_WANT_WRITE) {
+                LOG_ERROR("mbedtls_ssl_handshake failed: %d", ret);
+                close();
+                return SocketResult::SocketError;
+            }
+        }
+    }
+#endif
+
     LOG_INFO("Socket::connect: connected to %s:%u successfully", host, port);
     return SocketResult::Success;
 }
@@ -512,7 +604,24 @@ SocketResult Socket::send(const uint8_t* data, size_t size, size_t& sent) {
         return SocketResult::NotConnected;
     }
 
+
+#ifndef TEST_BUILD
+    if (m_use_tls && m_tls_ctx) {
+        TlsContext* tls = static_cast<TlsContext*>(m_tls_ctx);
+        int ret = mbedtls_ssl_write(&tls->ssl, data, size);
+        if (ret < 0) {
+            if (ret == MBEDTLS_ERR_SSL_WANT_WRITE || ret == MBEDTLS_ERR_SSL_WANT_READ) {
+                return SocketResult::WouldBlock;
+            }
+            m_connected = false;
+            return SocketResult::SocketError;
+        }
+        sent = static_cast<size_t>(ret);
+        return SocketResult::Success;
+    }
+#endif
     // MSG_NOSIGNAL prevents SIGPIPE if the connection is broken
+
     // Without this, writing to a closed socket would kill the process
     ssize_t ret = ::send(m_fd, data, size, MSG_NOSIGNAL);
 
@@ -622,7 +731,27 @@ SocketResult Socket::recv(uint8_t* buffer, size_t buffer_size, size_t& received,
             fcntl(m_fd, F_SETFL, flags | O_NONBLOCK);
         }
 
-        ssize_t ret = ::recv(m_fd, buffer, buffer_size, 0);
+        ssize_t ret = 0;
+
+#ifndef TEST_BUILD
+        if (m_use_tls && m_tls_ctx) {
+            TlsContext* tls = static_cast<TlsContext*>(m_tls_ctx);
+            ret = mbedtls_ssl_read(&tls->ssl, buffer, buffer_size);
+            if (ret == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY) {
+                ret = 0;
+            } else if (ret < 0) {
+                if (ret == MBEDTLS_ERR_SSL_WANT_READ || ret == MBEDTLS_ERR_SSL_WANT_WRITE) {
+                    return SocketResult::WouldBlock;
+                }
+                m_connected = false;
+                return SocketResult::SocketError;
+            }
+        } else
+#endif
+        {
+            ret = ::recv(m_fd, buffer, buffer_size, 0);
+        }
+
 
         // Restore original mode
         if (was_blocking) {
@@ -648,7 +777,27 @@ SocketResult Socket::recv(uint8_t* buffer, size_t buffer_size, size_t& received,
     }
 
     // Blocking receive (timeout_ms < 0)
-    ssize_t ret = ::recv(m_fd, buffer, buffer_size, 0);
+    ssize_t ret = 0;
+
+#ifndef TEST_BUILD
+        if (m_use_tls && m_tls_ctx) {
+            TlsContext* tls = static_cast<TlsContext*>(m_tls_ctx);
+            ret = mbedtls_ssl_read(&tls->ssl, buffer, buffer_size);
+            if (ret == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY) {
+                ret = 0;
+            } else if (ret < 0) {
+                if (ret == MBEDTLS_ERR_SSL_WANT_READ || ret == MBEDTLS_ERR_SSL_WANT_WRITE) {
+                    return SocketResult::WouldBlock;
+                }
+                m_connected = false;
+                return SocketResult::SocketError;
+            }
+        } else
+#endif
+        {
+            ret = ::recv(m_fd, buffer, buffer_size, 0);
+        }
+
 
     if (ret < 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
@@ -682,7 +831,22 @@ void Socket::close() {
         // this prevents the server from interpreting the close as an
         // abnormal connection loss.
         if (m_connected) {
+
+#ifndef TEST_BUILD
+            if (m_use_tls && m_tls_ctx) {
+                TlsContext* tls = static_cast<TlsContext*>(m_tls_ctx);
+                mbedtls_ssl_close_notify(&tls->ssl);
+                mbedtls_ssl_free(&tls->ssl);
+                mbedtls_ssl_config_free(&tls->conf);
+                mbedtls_ctr_drbg_free(&tls->ctr_drbg);
+                mbedtls_entropy_free(&tls->entropy);
+                delete tls;
+                m_tls_ctx = nullptr;
+                m_use_tls = false;
+            }
+#endif
             ::shutdown(m_fd, SHUT_WR);
+
         }
         ::close(m_fd);
         m_fd = -1;

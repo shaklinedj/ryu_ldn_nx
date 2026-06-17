@@ -179,6 +179,11 @@ struct RyuLdnClientConfig {
     char passphrase[config::MAX_PASSPHRASE_LENGTH + 1];
 
     /**
+     * @brief Whether to use TLS encryption
+     */
+    bool use_tls;
+
+    /**
      * @brief Default constructor with sensible defaults
      */
     RyuLdnClientConfig();
