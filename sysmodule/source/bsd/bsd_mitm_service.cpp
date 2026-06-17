@@ -47,6 +47,8 @@
  * @license GPL-2.0-or-later
  */
 
+
+#include <algorithm>
 #include "bsd_mitm_service.hpp"
 #include "proxy_socket_manager.hpp"
 #include "bsd_types.hpp"
@@ -112,7 +114,13 @@ static os::Mutex g_socket_info_mutex{false};
  * Value: number of BSD sessions intercepted for this PID.
  */
 static std::unordered_map<u64, u32> g_mitm_pid_count;
+static std::unordered_map<u64, u32> g_active_intercepted_sessions_count;
 static os::Mutex g_mitm_pids_mutex{false};
+
+struct AbandonedService {
+    u64 client_pid;
+    std::shared_ptr<::Service> service;
+};
 
 /**
  * @brief List of abandoned forward services (sessions that never got RegisterClient)
@@ -124,7 +132,7 @@ static os::Mutex g_mitm_pids_mutex{false};
  * These services will be cleaned up when the game process exits or when
  * we explicitly clean them (e.g., on LDN disconnect).
  */
-static std::vector<std::shared_ptr<::Service>> g_abandoned_forward_services;
+static std::vector<AbandonedService> g_abandoned_forward_services;
 static os::Mutex g_abandoned_services_mutex{false};
 
 // =============================================================================
@@ -152,8 +160,7 @@ static os::Mutex g_abandoned_services_mutex{false};
  *
  * @param s Shared pointer to the original bsd:u service session
  * @param c Process information for the client (PID, program ID, etc.)
- */
-BsdMitmService::BsdMitmService(std::shared_ptr<::Service>&& s, const sm::MitmProcessInfo& c)
+ */BsdMitmService::BsdMitmService(std::shared_ptr<::Service>&& s, const sm::MitmProcessInfo& c)
     : MitmServiceImplBase(std::forward<std::shared_ptr<::Service>>(s), c)
     , m_client_pid(c.process_id.value)
     , m_session_id(++s_next_session_id)
@@ -166,8 +173,13 @@ BsdMitmService::BsdMitmService(std::shared_ptr<::Service>&& s, const sm::MitmPro
 
     LOG_INFO("[BSD#%u] CONSTRUCTOR: program_id=0x%016lx, pid=%lu, fwd_srv=%p (handle=0x%x, domain=%d, object_id=%u)",
              m_session_id, c.program_id.value, m_client_pid, fwd, session_handle, is_domain, object_id);
-}
 
+    // Increment active intercepted sessions count for this PID
+    {
+        std::scoped_lock lock(g_mitm_pids_mutex);
+        g_active_intercepted_sessions_count[m_client_pid]++;
+    }
+}
 /**
  * @brief Destroy BSD MITM service
  *
@@ -215,20 +227,6 @@ BsdMitmService::~BsdMitmService() {
         }
     }
 
-    // Decrement the session count for this PID
-    {
-        std::scoped_lock lock(g_mitm_pids_mutex);
-        auto it = g_mitm_pid_count.find(m_client_pid);
-        if (it != g_mitm_pid_count.end()) {
-            if (it->second > 0) {
-                it->second--;
-            }
-            if (it->second == 0) {
-                g_mitm_pid_count.erase(it);
-            }
-        }
-    }
-
     ::Service* fwd = m_forward_service.get();
     Handle session_handle = fwd ? fwd->session : INVALID_HANDLE;
     LOG_INFO("[BSD#%u] DESTRUCTOR: pid=%lu, fwd_srv=%p (handle=0x%x), commands=%u, registered=%d",
@@ -244,12 +242,36 @@ BsdMitmService::~BsdMitmService() {
             LOG_WARN("[BSD#%u] Session never registered - moving forward_service to abandoned list to prevent freeze",
                      m_session_id);
             std::scoped_lock lock(g_abandoned_services_mutex);
-            g_abandoned_forward_services.push_back(std::move(m_forward_service));
+            g_abandoned_forward_services.push_back({ m_client_pid, std::move(m_forward_service) });
             LOG_INFO("[BSD#%u] Abandoned services count: %zu", m_session_id, g_abandoned_forward_services.size());
         }
     }
     // For registered sessions, m_forward_service will be closed normally
     // when the base class destructor runs (shared_ptr goes out of scope)
+
+    // Decrement the active intercepted sessions count for this PID
+    bool is_last_session = false;
+    {
+        std::scoped_lock lock(g_mitm_pids_mutex);
+        auto it = g_active_intercepted_sessions_count.find(m_client_pid);
+        if (it != g_active_intercepted_sessions_count.end()) {
+            if (it->second > 0) {
+                it->second--;
+            }
+            if (it->second == 0) {
+                g_active_intercepted_sessions_count.erase(it);
+                is_last_session = true;
+            }
+        }
+    }
+
+    if (is_last_session) {
+        LOG_INFO("Last active BSD session for pid=%lu destroyed. Cleaning up process resources.", m_client_pid);
+        CleanupAbandonedServicesForPid(m_client_pid);
+
+        std::scoped_lock lock(g_mitm_pids_mutex);
+        g_mitm_pid_count.erase(m_client_pid);
+    }
 }
 
 /**
@@ -350,6 +372,34 @@ void BsdMitmService::CleanupAbandonedServices() {
     g_abandoned_forward_services.clear();
 
     LOG_INFO("BSD CleanupAbandonedServices: cleanup complete");
+}
+
+void BsdMitmService::CleanupAbandonedServicesForPid(u64 pid) {
+    std::scoped_lock lock(g_abandoned_services_mutex);
+
+    if (g_abandoned_forward_services.empty()) {
+        return;
+    }
+
+    LOG_INFO("BSD CleanupAbandonedServicesForPid: checking abandoned services for pid=%lu", pid);
+
+    auto it = std::remove_if(g_abandoned_forward_services.begin(), g_abandoned_forward_services.end(),
+        [pid](const AbandonedService& entry) {
+            if (entry.client_pid == pid) {
+                LOG_INFO("BSD CleanupAbandonedServicesForPid: cleaning up abandoned service for pid=%lu", pid);
+                return true;
+            }
+            return false;
+        });
+
+    size_t count_before = g_abandoned_forward_services.size();
+    g_abandoned_forward_services.erase(it, g_abandoned_forward_services.end());
+    size_t count_after = g_abandoned_forward_services.size();
+
+    if (count_before != count_after) {
+        LOG_INFO("BSD CleanupAbandonedServicesForPid: cleared %zu services for pid=%lu, remaining: %zu",
+                 count_before - count_after, pid, count_after);
+    }
 }
 
 // =============================================================================

@@ -50,11 +50,17 @@ alignas(os::ThreadStackAlignment) static u8 g_p2p_connect_thread_stack[0x4000];
  * Like Ryujinx _timeout callback that calls DisconnectInternal().
  */
 void ICommunicationService::OnInactivityTimeout() {
-    std::scoped_lock lock(g_active_service_mutex);
+    ICommunicationService* service = nullptr;
+    {
+        std::scoped_lock lock(g_active_service_mutex);
+        if (g_active_ldn_service != nullptr && !g_active_ldn_service->m_network_connected) {
+            service = g_active_ldn_service;
+        }
+    }
 
-    if (g_active_ldn_service != nullptr && !g_active_ldn_service->m_network_connected) {
+    if (service != nullptr) {
         LOG_INFO("Inactivity timeout - disconnecting from server");
-        g_active_ldn_service->DisconnectFromServer();
+        service->DisconnectFromServer();
     }
 }
 
@@ -381,25 +387,24 @@ void ICommunicationService::DisconnectFromServer() {
     // Disconnect P2P proxy first if connected
     DisconnectP2pProxy();
 
+    // Reset active LDN service pointer
+    {
+        std::scoped_lock lock(g_active_service_mutex);
+        if (g_active_ldn_service == this) {
+            g_active_ldn_service = nullptr;
+        }
+    }
+
+    // Reset the ProxySocketManager - clears all sockets, pending packets, callbacks
+    // This prevents memory leaks when the game disconnects and reconnects
+    mitm::bsd::ProxySocketManager::GetInstance().Reset();
+
+    // Clean up abandoned BSD forward services (sessions that never got RegisterClient)
+    // This is safe to do now because we're disconnecting from LDN
+    mitm::bsd::BsdMitmService::CleanupAbandonedServices();
+
     if (m_server_connected) {
         LOG_INFO("Disconnecting from RyuLdn server");
-
-        // Unregister BSD MITM callback
-        {
-            std::scoped_lock lock(g_active_service_mutex);
-            if (g_active_ldn_service == this) {
-                g_active_ldn_service = nullptr;
-            }
-        }
-
-        // Reset the ProxySocketManager - clears all sockets, pending packets, callbacks
-        // This prevents memory leaks when the game disconnects and reconnects
-        mitm::bsd::ProxySocketManager::GetInstance().Reset();
-
-        // Clean up abandoned BSD forward services (sessions that never got RegisterClient)
-        // This is safe to do now because we're disconnecting from LDN
-        mitm::bsd::BsdMitmService::CleanupAbandonedServices();
-
         m_server_client.disconnect();
         m_server_connected = false;
     }
