@@ -210,7 +210,7 @@ The P2P subsystem (`sysmodule/source/p2p/`) provides an optional direct P2P path
 - `P2pProxyClient` — connects to peer proxy servers for data relay
 - `UpnpPortMapper` — handles UPnP port forward discovery and mapping
 
-DNS resolution for UPnP is handled via `dns_wrap.cpp` which wraps `getaddrinfo`/`freeaddrinfo`/`getnameinfo` to `inet_pton`-based stubs, because `sfdnsres` causes DABRT in the boot2 context. Linker flags `--wrap=getaddrinfo --wrap=freeaddrinfo --wrap=getnameinfo` redirect all calls (including from miniupnpc) to these stubs.
+DNS resolution is handled via `dns_wrap.cpp` which wraps `getaddrinfo`/`freeaddrinfo`/`getnameinfo` to avoid using the `sfdnsres` system service (which causes DABRT in the boot2 context). Linker flags `--wrap=getaddrinfo --wrap=freeaddrinfo --wrap=getnameinfo` redirect all calls (including from miniupnpc and the core network client) to these stubs. IP literals are parsed immediately, and domain names (like `ldn.ryujinx.app`) are resolved by direct UDP queries to the Switch's configured DNS servers (with fallback to Google DNS `8.8.8.8`).
 
 The `bsd:s` service type is used instead of `bsd:u` because UPnP's `upnpDiscover()` requires privileged socket options (`IP_MULTICAST_TTL`, `IP_ADD_MEMBERSHIP`) that `bsd:u` blocks with EPERM.
 
