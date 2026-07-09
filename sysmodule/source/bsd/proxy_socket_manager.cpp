@@ -347,6 +347,14 @@ bool ProxySocketManager::RouteIncomingData(uint32_t source_ip, uint16_t source_p
                                             const void* data, size_t data_len) {
     std::scoped_lock lock(m_mutex);
 
+    // Filter out loopback packets (packets sent by ourselves that the server echoed back).
+    // The game's network stack does not expect to receive its own sent packets,
+    // and processing them causes duplicate packet conflicts in Nintendo's PIA mesh.
+    if (m_local_ip != 0 && source_ip == m_local_ip) {
+        LOG_VERBOSE("ProxyData: dropped loopback packet from ourselves (src=0x%08X)", source_ip);
+        return false;
+    }
+
     // For broadcast/multicast packets, deliver to ALL matching sockets.
     // PIA mesh discovery relies on broadcast UDP reaching every listener
     // on the same port. For unicast, only one socket matches.

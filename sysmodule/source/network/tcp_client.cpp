@@ -133,6 +133,10 @@ ClientResult TcpClient::connect(const char* host, uint16_t port, uint32_t timeou
     // Enable TCP_NODELAY by default for lower latency
     m_socket.set_nodelay(true);
 
+    // Increase socket buffers to help absorb WiFi jitter/bursts
+    m_socket.set_send_buffer_size(128 * 1024);
+    m_socket.set_recv_buffer_size(128 * 1024);
+
     LOG_VERBOSE("TcpClient connected successfully");
     return ClientResult::Success;
 }

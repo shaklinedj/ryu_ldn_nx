@@ -83,7 +83,7 @@ Games on Switch use Nintendo's PIA library on top of LDN for peer-to-peer mesh n
 
 ### Byte order — critical invariant
 
-LDN IPs in `NetworkInfo`, `ProxyConfig`, `m_ipv4_address`, and `GetIpv4Address()` are all in **Ryujinx format** — big-endian read as `uint32` (e.g., `10.114.0.1` = `0x0A720001`). BSD `sockaddr_in.sin_addr` uses **network byte order**. `GetAddr()` does `bswap32`, `sin_addr` is stored in Ryujinx format (no bswap in `Bind`). Never double-convert.
+LDN IPs in `NetworkInfo`, `ProxyConfig`, `m_ipv4_address`, and `GetIpv4Address()` are all in **Ryujinx format** — big-endian read as `uint32` (e.g., `10.114.0.1` = `0x0A720001`). BSD `sockaddr_in.sin_addr` uses **network byte order**. `GetAddr()` does `bswap32`, `sin_addr` is stored in network byte order; `bswap32` converts Ryujinx format → network byte order (so `GetAddr()`, which does another `bswap32`, returns the original Ryujinx-format value). Never double-convert.
 
 ### Tesla overlay
 
