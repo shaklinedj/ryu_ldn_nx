@@ -620,7 +620,7 @@ private:
     // Packet Buffering (for packets arriving before socket bind)
     // =========================================================================
 
-    static constexpr size_t MaxPendingPackets = 16;
+    static constexpr size_t MaxPendingPackets = 32;
     static constexpr size_t PendingPayloadMax = 1400;
 
     struct PendingPacket {

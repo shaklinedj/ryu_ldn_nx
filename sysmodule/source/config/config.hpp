@@ -125,7 +125,7 @@ constexpr const char* DEFAULT_HOST = "ldn.ryujinx.app";
 constexpr uint16_t DEFAULT_PORT = 30456;
 
 /** @brief Default TLS setting — Use TLS for the official production server */
-constexpr bool DEFAULT_USE_TLS = true;
+constexpr bool DEFAULT_USE_TLS = false;
 
 // -----------------------------------------------------------------------------
 // Default Values - Network
@@ -150,8 +150,8 @@ constexpr uint32_t DEFAULT_MAX_RECONNECT_ATTEMPTS = 5;
 /** @brief Default LDN enabled state */
 constexpr bool DEFAULT_LDN_ENABLED = true;
 
-/** @brief Default P2P proxy disabled state (matches config.ini.example: disable_p2p = 1) */
-constexpr bool DEFAULT_DISABLE_P2P = true;
+/** @brief Default P2P proxy disabled state (matches config.ini.example: disable_p2p = 0) */
+constexpr bool DEFAULT_DISABLE_P2P = false;
 
 // -----------------------------------------------------------------------------
 // Default Values - Debug

@@ -660,6 +660,11 @@ private:
     bool is_handshake_timeout(uint64_t current_time_ms) const;
 
     /**
+     * @brief Generate a unique session ID
+     */
+    void generate_session_id();
+
+    /**
      * @brief Generate a unique MAC address
      */
     /// @gdb{tag="NETWORK:PACKET", msg="Generating MAC address"}

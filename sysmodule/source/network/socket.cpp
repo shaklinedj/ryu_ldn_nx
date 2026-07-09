@@ -434,6 +434,11 @@ SocketResult Socket::connect(const char* host, uint16_t port, uint32_t timeout_m
         return SocketResult::AlreadyConnected;
     }
 
+    // Clean up any stale socket descriptor before reconnecting
+    if (m_fd >= 0) {
+        close();
+    }
+
     // Create the underlying socket
     SocketResult result = create();
     if (result != SocketResult::Success) {

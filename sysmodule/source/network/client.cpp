@@ -44,6 +44,8 @@
 #include "../debug/log.hpp"
 #include <cstring>
 #include <memory>
+#include <cstdlib>
+#include <ctime>
 
 namespace ryu_ldn {
 namespace network {
@@ -158,6 +160,7 @@ RyuLdnClient::RyuLdnClient()
     , m_last_rtt_ms(0)
     , m_ping_id(0)
 {
+    generate_session_id();
     generate_mac_address();
 }
 
@@ -192,6 +195,7 @@ RyuLdnClient::RyuLdnClient(const RyuLdnClientConfig& config)
     , m_last_rtt_ms(0)
     , m_ping_id(0)
 {
+    generate_session_id();
     generate_mac_address();
 }
 
@@ -221,6 +225,7 @@ RyuLdnClient::RyuLdnClient(const RyuLdnClientConfig& config, std::unique_ptr<ITc
     , m_last_rtt_ms(0)
     , m_ping_id(0)
 {
+    generate_session_id();
     generate_mac_address();
 }
 
@@ -1213,12 +1218,8 @@ ClientOpResult RyuLdnClient::send_initialize() {
 
     protocol::InitializeMessage msg{};
 
-    // Generate a session ID (in real use, this would be a proper UUID)
-    for (size_t i = 0; i < sizeof(msg.id.data); i++) {
-        msg.id.data[i] = static_cast<uint8_t>(i ^ 0xAB);
-    }
-
-    // Copy our MAC address
+    // Always send our stored session ID and MAC address
+    std::memcpy(msg.id.data, m_session_id.data, sizeof(msg.id.data));
     std::memcpy(msg.mac_address.data, m_mac_address.data, sizeof(msg.mac_address.data));
 
     ClientResult result = m_tcp_client->send_initialize(msg);
@@ -1243,6 +1244,18 @@ ClientOpResult RyuLdnClient::send_initialize() {
 }
 
 /**
+ * @brief Generate a unique session ID
+ *
+ * Generates a random 16-byte session ID for this client instance.
+ * Ryujinx emulator generates a random node ID upon startup.
+ */
+void RyuLdnClient::generate_session_id() {
+    for (size_t i = 0; i < sizeof(m_session_id.data); i++) {
+        m_session_id.data[i] = static_cast<uint8_t>(std::rand() & 0xFF);
+    }
+}
+
+/**
  * @brief Generate a unique MAC address
  *
  * Generates a statically assigned locally administered MAC address.
@@ -1254,11 +1267,11 @@ ClientOpResult RyuLdnClient::send_initialize() {
  * (not the MAC) for identification.
  */
 void RyuLdnClient::generate_mac_address() {
-    // Statically assigned MAC matching Ryujinx convention.
-    // The server identifies nodes by ID, not by MAC.
-    m_mac_address.data[0] = 0x02;  // Locally administered
+    // Generate a unique unicast locally administered MAC address
+    // Format: 02:XX:XX:XX:XX:XX to avoid conflicts on the virtual network.
+    m_mac_address.data[0] = 0x02;  // Locally administered, unicast
     m_mac_address.data[1] = 0x00;
-    m_mac_address.data[2] = 0x5E;
+    m_mac_address.data[2] = 0x5e;
     m_mac_address.data[3] = 0x00;
     m_mac_address.data[4] = 0x53;
     m_mac_address.data[5] = 0x01;

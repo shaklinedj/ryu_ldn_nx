@@ -116,6 +116,9 @@ ClientResult TcpClient::connect(const char* host, uint16_t port, uint32_t timeou
         return ClientResult::AlreadyConnected;
     }
 
+    // Ensure any previous stale socket state is cleaned up before reconnecting
+    disconnect();
+
     // Attempt connection
     SocketResult result = m_socket.connect(host, port, timeout_ms, use_tls);
 

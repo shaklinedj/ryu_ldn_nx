@@ -107,7 +107,7 @@ TEST(default_values) {
     // Server defaults
     ASSERT_STREQ(config.server.host, "ldn.ryujinx.app");
     ASSERT_EQ(config.server.port, 30456);
-    ASSERT_EQ(config.server.use_tls, true);
+    ASSERT_EQ(config.server.use_tls, false);
 
     // Network defaults
     ASSERT_EQ(config.network.connect_timeout_ms, 5000u);

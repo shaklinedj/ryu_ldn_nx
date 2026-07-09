@@ -30,17 +30,38 @@ namespace ams::mitm::ldn {
 static ICommunicationService* g_active_ldn_service = nullptr;
 static os::Mutex g_active_service_mutex{false};
 
-// Background thread stack - allocated statically to avoid bloating class size
-alignas(os::ThreadStackAlignment) static u8 g_background_thread_stack[0x4000];
+// =============================================================================
+// Session Thread Stack Pool
+// =============================================================================
+// Games can sometimes open multiple ldn:u sessions simultaneously or leak them
+// temporarily during connection errors (e.g., Mario Kart 8). 
+// Using a single static stack for the background thread causes stack corruption
+// and kernel panics when multiple ICommunicationService instances exist.
+// We use a pool of stacks in BSS because os::CreateThread requires 4KB alignment,
+// which is difficult to guarantee with heap allocation in our custom sysmodule heap.
+constexpr int LDN_SESSION_STACK_COUNT = 12;
+constexpr size_t LDN_SESSION_STACK_SIZE = 0x4000;
+alignas(os::ThreadStackAlignment) constinit static u8 g_ldn_recv_stacks[LDN_SESSION_STACK_COUNT][LDN_SESSION_STACK_SIZE];
+alignas(os::ThreadStackAlignment) constinit static u8 g_ldn_p2p_connect_stacks[LDN_SESSION_STACK_COUNT][LDN_SESSION_STACK_SIZE];
+constinit static bool g_ldn_session_stack_used[LDN_SESSION_STACK_COUNT] = {};
+constinit static os::SdkMutex g_ldn_session_stack_mutex;
 
-// Async ExternalProxy connect thread stack — see m_p2p_connect_thread comment
-// in the header. The connect+auth+EnsureProxyReady chain takes 1–4 s and used
-// to run inline inside HandleServerPacket from the WaitForResponse poll loop,
-// freezing further packet dispatch (including the master server's `Connected`
-// reply, which arrives right after `ExternalProxy`). Ryujinx runs the same
-// HandleExternalProxy on the receive thread (NetCoreServer.OnReceived); we
-// approximate that by spawning a dedicated worker once per ExternalProxy.
-alignas(os::ThreadStackAlignment) static u8 g_p2p_connect_thread_stack[0x4000];
+static int AllocateLdnStackSlot() {
+    std::scoped_lock lock(g_ldn_session_stack_mutex);
+    for (int i = 0; i < LDN_SESSION_STACK_COUNT; ++i) {
+        if (!g_ldn_session_stack_used[i]) {
+            g_ldn_session_stack_used[i] = true;
+            return i;
+        }
+    }
+    return -1;
+}
+
+static void ReleaseLdnStackSlot(int slot) {
+    if (slot < 0 || slot >= LDN_SESSION_STACK_COUNT) return;
+    std::scoped_lock lock(g_ldn_session_stack_mutex);
+    g_ldn_session_stack_used[slot] = false;
+}
 
 /**
  * @brief Static callback for inactivity timeout
@@ -230,6 +251,10 @@ ICommunicationService::ICommunicationService(ncm::ProgramId program_id)
         this
     );
 
+    // Allocate a thread stack slot from the pool
+    m_stack_slot_index = AllocateLdnStackSlot();
+    AMS_ABORT_UNLESS(m_stack_slot_index >= 0); // Too many concurrent sessions!
+
     // Start dedicated receive thread for asynchronous packet dispatch.
     // This mirrors Ryujinx's NetCoreServer pattern: packets are received and
     // dispatched immediately on a background thread, while IPC handlers wait
@@ -239,8 +264,8 @@ ICommunicationService::ICommunicationService(ncm::ProgramId program_id)
         &m_recv_thread,
         ReceiveThreadEntry,
         this,
-        g_background_thread_stack,
-        sizeof(g_background_thread_stack),
+        g_ldn_recv_stacks[m_stack_slot_index],
+        sizeof(g_ldn_recv_stacks[m_stack_slot_index]),
         16  // Higher priority than before (lower number = higher priority)
             // so receive thread preempts IPC handlers for lower latency
     ));
@@ -273,6 +298,12 @@ ICommunicationService::~ICommunicationService() {
     DisconnectP2pProxy();
     // Ensure server is disconnected
     DisconnectFromServer();
+
+    // Release our thread stack slot back to the pool
+    if (m_stack_slot_index >= 0) {
+        ReleaseLdnStackSlot(m_stack_slot_index);
+        m_stack_slot_index = -1;
+    }
 
     // NOTE: Do NOT clear LDN PID here!
     // The game may open BSD sockets between LDN sessions (e.g., after connection
@@ -891,7 +922,12 @@ Result ICommunicationService::CreateNetwork(const CreateNetworkConfig &data) {
         // Like Ryujinx: request.PrivateIp = GetLocalIPv4(), request.ExternalProxyPort = public_port
         LOG_INFO("CreateNetwork: calling GetLocalIPv4()");
         uint32_t local_ip = p2p::UpnpPortMapper::GetInstance().GetLocalIPv4();
-        LOG_INFO("CreateNetwork: GetLocalIPv4 returned 0x%08X", local_ip);
+        if (local_ip == 0) {
+            local_ip = p2p::UpnpPortMapper::GetLocalIPv4Nifm();
+            LOG_INFO("CreateNetwork: GetLocalIPv4 returned 0, fallback to GetLocalIPv4Nifm returned 0x%08X", local_ip);
+        } else {
+            LOG_INFO("CreateNetwork: GetLocalIPv4 returned 0x%08X", local_ip);
+        }
 
         // Store local IP as 16-byte buffer (first 4 bytes for IPv4).
         //
@@ -910,11 +946,11 @@ Result ICommunicationService::CreateNetwork(const CreateNetworkConfig &data) {
         std::memcpy(request.ryu_network_config.private_ip, &local_ip_net, sizeof(local_ip_net));
 
         request.ryu_network_config.address_family = 2;  // AF_INET (IPv4)
-        request.ryu_network_config.external_proxy_port = public_port;
+        request.ryu_network_config.external_proxy_port = (public_port != 0) ? public_port : m_p2p_server->GetPrivatePort();
         request.ryu_network_config.internal_proxy_port = m_p2p_server->GetPrivatePort();
 
-        LOG_INFO("CreateNetwork: P2P enabled, local_ip=0x%08X, public_port=%u, private_port=%u",
-                 local_ip, public_port, m_p2p_server->GetPrivatePort());
+        LOG_INFO("CreateNetwork: P2P enabled, local_ip=0x%08X, public_port=%u, private_port=%u, external_port=%u",
+                 local_ip, public_port, m_p2p_server->GetPrivatePort(), request.ryu_network_config.external_proxy_port);
     } else {
         // P2P disabled or failed - zero out proxy ports
         std::memset(request.ryu_network_config.private_ip, 0, sizeof(request.ryu_network_config.private_ip));
@@ -954,7 +990,7 @@ Result ICommunicationService::CreateNetwork(const CreateNetworkConfig &data) {
     LOG_INFO("CreateNetwork: sent CreateAccessPoint to server, waiting for Connected response...");
 
     // Wait for Connected response from server (contains NetworkInfo)
-    constexpr uint64_t response_timeout_ms = 5000;
+    constexpr uint64_t response_timeout_ms = 8000;
     if (!WaitForResponse(ryu_ldn::protocol::PacketId::Connected, response_timeout_ms)) {
         LOG_ERROR("CreateNetwork: did not receive Connected response from server");
         // Rollback state and P2P server on timeout/error
@@ -1203,7 +1239,7 @@ Result ICommunicationService::Connect(const ConnectNetworkData &dat, const Netwo
     }
 
     LOG_INFO("Connect: sent request, waiting for Connected response...");
-    if (!WaitForResponse(ryu_ldn::protocol::PacketId::Connected, 5000)) {
+    if (!WaitForResponse(ryu_ldn::protocol::PacketId::Connected, 8000)) {
         LOG_ERROR("Connect: did not receive Connected response from server");
         m_state_machine.Disconnect();
         R_RETURN(MAKERESULT(0x10, 5)); // Response timeout
@@ -1344,7 +1380,7 @@ Result ICommunicationService::CreateNetworkPrivate(
     LOG_INFO("CreateNetworkPrivate: sent request, waiting for Connected response...");
 
     // Wait for Connected response from server (like Ryujinx CreateNetworkCommon)
-    constexpr uint64_t response_timeout_ms = 4000; // FailureTimeout in Ryujinx
+    constexpr uint64_t response_timeout_ms = 8000; // FailureTimeout in Ryujinx
     if (!WaitForResponse(ryu_ldn::protocol::PacketId::Connected, response_timeout_ms)) {
         LOG_ERROR("CreateNetworkPrivate: did not receive Connected response from server");
         m_state_machine.DestroyNetwork();
@@ -1409,7 +1445,7 @@ Result ICommunicationService::ConnectPrivate(const ConnectPrivateData &data) {
     LOG_INFO("ConnectPrivate: sent request, waiting for Connected response...");
 
     // Wait for Connected response from server (like Ryujinx ConnectCommon)
-    constexpr uint64_t response_timeout_ms = 4000; // FailureTimeout in Ryujinx
+    constexpr uint64_t response_timeout_ms = 8000; // FailureTimeout in Ryujinx
     if (!WaitForResponse(ryu_ldn::protocol::PacketId::Connected, response_timeout_ms)) {
         LOG_ERROR("ConnectPrivate: did not receive Connected response from server");
         m_state_machine.Disconnect();
@@ -1658,20 +1694,14 @@ void ICommunicationService::HandleServerPacket(ryu_ldn::protocol::PacketId id, c
 
         case ryu_ldn::protocol::PacketId::SyncNetwork: {
             // Server sends updated network state - contains NetworkInfo
-            LOG_INFO("HandleServerPacket: SyncNetwork ENTRY (size=%zu)", size);
-            ryu_ldn::debug::g_logger.flush();
+            LOG_VERBOSE("HandleServerPacket: SyncNetwork ENTRY (size=%zu)", size);
             if (size >= sizeof(ryu_ldn::protocol::NetworkInfo)) {
                 const auto* net_info = reinterpret_cast<const ryu_ldn::protocol::NetworkInfo*>(data);
-                LOG_INFO("SyncNetwork step1: about to memcpy NetworkInfo (sizeof=%zu, src=%p, dst=%p)",
-                         sizeof(m_network_info),
-                         static_cast<const void*>(net_info),
-                         static_cast<void*>(&m_network_info));
-                ryu_ldn::debug::g_logger.flush();
+                LOG_VERBOSE("SyncNetwork: about to memcpy NetworkInfo");
                 std::memcpy(&m_network_info, net_info, sizeof(m_network_info));
-                LOG_INFO("SyncNetwork step2: memcpy done, node_count=%u, max=%u",
-                         m_network_info.ldn.nodeCount,
-                         m_network_info.ldn.nodeCountMax);
-                ryu_ldn::debug::g_logger.flush();
+                LOG_VERBOSE("SyncNetwork: memcpy done, node_count=%u, max=%u",
+                            m_network_info.ldn.nodeCount,
+                            m_network_info.ldn.nodeCountMax);
 
                 // Fix sceneId and localCommunicationId (same as Connected handler)
                 if (m_expected_scene_id != 0 && m_network_info.networkId.intentId.sceneId != m_expected_scene_id) {
@@ -1681,34 +1711,22 @@ void ICommunicationService::HandleServerPacket(ryu_ldn::protocol::PacketId id, c
                     m_network_info.networkId.intentId.localCommunicationId != m_local_communication_id) {
                     m_network_info.networkId.intentId.localCommunicationId = m_local_communication_id;
                 }
-                LOG_INFO("SyncNetwork step3: scene/comm-id fix done");
-                ryu_ldn::debug::g_logger.flush();
 
                 // Update session info
-                LOG_INFO("SyncNetwork step4: calling FindLocalNodeId()");
-                ryu_ldn::debug::g_logger.flush();
                 int local_id = FindLocalNodeId();
-                LOG_INFO("SyncNetwork step4b: FindLocalNodeId() returned %d", local_id);
-                ryu_ldn::debug::g_logger.flush();
+                LOG_VERBOSE("SyncNetwork: FindLocalNodeId() returned %d", local_id);
 
-                LOG_INFO("SyncNetwork step5: getting SharedState::GetInstance()");
-                ryu_ldn::debug::g_logger.flush();
                 auto& shared_state = SharedState::GetInstance();
-                LOG_INFO("SyncNetwork step6: calling SetSessionInfo");
-                ryu_ldn::debug::g_logger.flush();
                 shared_state.SetSessionInfo(
                     m_network_info.ldn.nodeCount,
                     m_network_info.ldn.nodeCountMax,
                     local_id,
                     m_state_machine.GetState() == CommState::AccessPointCreated
                 );
-                LOG_INFO("SyncNetwork step7: SetSessionInfo done");
-                ryu_ldn::debug::g_logger.flush();
 
                 // Signal state change event so game knows network updated
                 m_state_machine.SignalStateChange();
-                LOG_INFO("SyncNetwork step8: SignalStateChange done");
-                ryu_ldn::debug::g_logger.flush();
+                LOG_VERBOSE("SyncNetwork: SignalStateChange done");
             }
             break;
         }
@@ -1762,6 +1780,7 @@ void ICommunicationService::HandleServerPacket(ryu_ldn::protocol::PacketId id, c
 
         case ryu_ldn::protocol::PacketId::NetworkError: {
             // Server reports an error - like Ryujinx HandleNetworkError
+            bool is_port_unreachable = false;
             if (size >= sizeof(ryu_ldn::protocol::NetworkErrorMessage)) {
                 const auto* err = reinterpret_cast<const ryu_ldn::protocol::NetworkErrorMessage*>(data);
                 auto error_code = static_cast<ryu_ldn::protocol::NetworkErrorCode>(err->error_code);
@@ -1788,13 +1807,16 @@ void ICommunicationService::HandleServerPacket(ryu_ldn::protocol::PacketId id, c
                     // CreateNetworkCommon `if (!_useP2pProxy && _hostedProxy != null) DisposeProxy();`).
                     LOG_WARN("Received NetworkError: PortUnreachable — disabling P2P (cleanup deferred)");
                     m_use_p2p_proxy = false;
+                    is_port_unreachable = true;
                 } else {
                     m_last_network_error = error_code;
                     LOG_ERROR("Received NetworkError: code=%u", err->error_code);
                 }
             }
-            // Signal error event (like Ryujinx _error.Set())
-            m_error_event.Signal();
+            // Signal error event (like Ryujinx _error.Set()) for fatal errors only
+            if (!is_port_unreachable) {
+                m_error_event.Signal();
+            }
             break;
         }
 
@@ -1924,8 +1946,8 @@ void ICommunicationService::HandleServerPacket(ryu_ldn::protocol::PacketId id, c
                             &m_p2p_connect_thread,
                             ICommunicationService::P2pConnectThreadEntry,
                             this,
-                            g_p2p_connect_thread_stack,
-                            sizeof(g_p2p_connect_thread_stack),
+                            g_ldn_p2p_connect_stacks[m_stack_slot_index],
+                            sizeof(g_ldn_p2p_connect_stacks[m_stack_slot_index]),
                             7);
                         if (R_FAILED(rc)) {
                             LOG_ERROR("Failed to spawn P2P connect thread: rc=0x%X",
@@ -1983,8 +2005,7 @@ void ICommunicationService::HandleServerPacket(ryu_ldn::protocol::PacketId id, c
         case ryu_ldn::protocol::PacketId::ProxyData: {
             // Server relays game data from other players (like Ryujinx HandleProxyData)
             // Route to BSD MITM proxy sockets for transparent game socket interception
-            LOG_INFO("HandleServerPacket: ProxyData ENTRY (size=%zu)", size);
-            ryu_ldn::debug::g_logger.flush();
+            LOG_VERBOSE("HandleServerPacket: ProxyData ENTRY (size=%zu)", size);
             if (size >= sizeof(ryu_ldn::protocol::ProxyDataHeader)) {
                 const auto* proxy_header = reinterpret_cast<const ryu_ldn::protocol::ProxyDataHeader*>(data);
                 const uint8_t* payload = data + sizeof(ryu_ldn::protocol::ProxyDataHeader);
@@ -2035,11 +2056,9 @@ void ICommunicationService::HandleServerPacket(ryu_ldn::protocol::PacketId id, c
                     if (routed) {
                         LOG_VERBOSE("ProxyData: routed to proxy socket");
                     } else {
-                        // No matching proxy socket - fallback to legacy buffer for direct reads
-                        LOG_VERBOSE("ProxyData: no matching proxy socket, storing in buffer");
-                        if (!m_proxy_buffer.Write(*proxy_header, payload, proxy_header->data_length)) {
-                            LOG_WARN("ProxyData: buffer full, dropping packet");
-                        }
+                        // No matching proxy socket — packet is buffered in ProxySocketManager's
+                        // pending ring and will be delivered when the game calls bind().
+                        LOG_VERBOSE("ProxyData: no matching proxy socket (buffered in pending ring)");
                     }
                 } else {
                     LOG_WARN("ProxyData: payload size mismatch (%zu < %u)",
@@ -2061,12 +2080,25 @@ void ICommunicationService::HandleServerPacket(ryu_ldn::protocol::PacketId id, c
     // should not wake WaitForResponse — doing so causes spurious wake-ups
     // that can lead to false timeout errors when the expected response
     // arrives shortly after an async packet.
-    const bool is_response = (id == ryu_ldn::protocol::PacketId::Connected ||
-                               id == ryu_ldn::protocol::PacketId::ScanReply ||
-                               id == ryu_ldn::protocol::PacketId::ScanReplyEnd ||
-                               id == ryu_ldn::protocol::PacketId::RejectReply ||
-                               id == ryu_ldn::protocol::PacketId::ProxyConnectReply ||
-                               id == ryu_ldn::protocol::PacketId::NetworkError);
+    bool is_response = (id == ryu_ldn::protocol::PacketId::Connected ||
+                        id == ryu_ldn::protocol::PacketId::ScanReply ||
+                        id == ryu_ldn::protocol::PacketId::ScanReplyEnd ||
+                        id == ryu_ldn::protocol::PacketId::RejectReply ||
+                        id == ryu_ldn::protocol::PacketId::ProxyConnectReply);
+    if (id == ryu_ldn::protocol::PacketId::NetworkError) {
+        // Only treat NetworkError as a response if it is NOT PortUnreachable.
+        // PortUnreachable is non-fatal and should not interrupt WaitForResponse.
+        bool is_port_unreachable = false;
+        if (size >= sizeof(ryu_ldn::protocol::NetworkErrorMessage)) {
+            const auto* err = reinterpret_cast<const ryu_ldn::protocol::NetworkErrorMessage*>(data);
+            if (err->error_code == 1) { // kPortUnreachableWire
+                is_port_unreachable = true;
+            }
+        }
+        if (!is_port_unreachable) {
+            is_response = true;
+        }
+    }
     if (is_response) {
         m_last_response_id = id;
         m_response_event.Signal();
@@ -2238,15 +2270,19 @@ ryu_ldn::network::ClientOpResult ICommunicationService::SendProxyDataToServer(
     // host would otherwise dial its own P2pProxyServer to register itself
     // in _players and reuse the same SendAsync path as joiners).
     if (m_p2p_server != nullptr && m_p2p_server->IsRunning()) {
-        if (m_p2p_server->BroadcastFromHost(const_cast<ryu_ldn::protocol::ProxyDataHeader&>(header),
-                                             static_cast<const uint8_t*>(data), data_len)) {
+        bool p2p_sent = m_p2p_server->BroadcastFromHost(const_cast<ryu_ldn::protocol::ProxyDataHeader&>(header),
+                                             static_cast<const uint8_t*>(data), data_len);
+        
+        // If successfully sent to a specific client via P2P (unicast), we don't
+        // need to fallback to the master server. But if it's a broadcast packet
+        // or P2P delivery failed (joiner is in Relay mode), we MUST fall through
+        // to the master server to ensure Relay-mode joiners receive it.
+        uint32_t dest_ip = header.info.dest_ipv4;
+        bool is_broadcast = (dest_ip == 0x0A72FFFF || dest_ip == 0xc0a800ff || dest_ip == 0xFFFFFFFF);
+        
+        if (p2p_sent && !is_broadcast) {
             return ryu_ldn::network::ClientOpResult::Success;
         }
-        // Empty room (no authenticated joiners yet) is the common case here;
-        // don't fall back to the master because the master only relays for
-        // RELAY-mode joiners which by construction don't exist when we're
-        // hosting via P2P.
-        return ryu_ldn::network::ClientOpResult::Success;
     }
 
     // If P2P client is connected, send through P2P instead of master server.
@@ -2273,8 +2309,8 @@ ryu_ldn::network::ClientOpResult ICommunicationService::SendProxyDataToServer(
 void ICommunicationService::HandleExternalProxyConnect(
     const ryu_ldn::protocol::ExternalProxyConfig& config)
 {
-    // Like Ryujinx HandleExternalProxy - create P2pProxyClient and connect to host
-    LOG_INFO("HandleExternalProxyConnect: connecting to P2P host port=%u", config.proxy_port);
+    uint16_t connect_port = (config.proxy_port != 0) ? config.proxy_port : 39990;
+    LOG_INFO("HandleExternalProxyConnect: connecting to P2P host port=%u (config port=%u)", connect_port, config.proxy_port);
 
     // Clean up any existing P2P client
     DisconnectP2pProxy();
@@ -2329,7 +2365,7 @@ void ICommunicationService::HandleExternalProxyConnect(
     bool connected = false;
     if (config.address_family == 2) {  // AF_INET
         // IPv4 address - first 4 bytes of proxy_ip
-        connected = m_p2p_client->Connect(config.proxy_ip, 4, config.proxy_port);
+        connected = m_p2p_client->Connect(config.proxy_ip, 4, connect_port);
     } else {
         LOG_WARN("Unsupported address family: %u", config.address_family);
     }

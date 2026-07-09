@@ -216,6 +216,16 @@ public:
      */
     uint32_t GetLocalIPv4() const;
 
+    /**
+     * @brief Get local IPv4 address via nifm (fallback when UPnP unavailable)
+     *
+     * Uses nifmGetCurrentIpConfigInfo to get the Switch's current WiFi IP.
+     * This works regardless of UPnP availability.
+     *
+     * @return Local IP in host byte order, or 0 on failure
+     */
+    static uint32_t GetLocalIPv4Nifm();
+
     // =========================================================================
     // Cleanup
     // =========================================================================
