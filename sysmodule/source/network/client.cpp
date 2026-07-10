@@ -518,93 +518,11 @@ void RyuLdnClient::update(uint64_t current_time_ms) {
             break;
 
         case ConnectionState::Handshaking:
-            // Check for handshake timeout
-            if (is_handshake_timeout(current_time_ms)) {
-                m_last_error_code = protocol::NetworkErrorCode::HandshakeTimeout;
-                ConnectionState before_state = m_state_machine.get_state();
-                m_state_machine.process_event(ConnectionEvent::HandshakeFailed);
-                if (m_config.auto_reconnect) {
-                    start_backoff();
-                }
-                if (m_state_callback && before_state != m_state_machine.get_state()) {
-                    m_state_callback(before_state, m_state_machine.get_state(), m_state_callback_user_data);
-                }
-                break;
-            }
-
-            // Try to receive and process handshake response
-            {
-                uint8_t recv_buffer[2048];
-                size_t recv_size = 0;
-                protocol::PacketId packet_id;
-
-                ClientResult result = m_tcp_client->receive_packet(
-                    packet_id,
-                    recv_buffer,
-                    sizeof(recv_buffer),
-                    recv_size,
-                    static_cast<int32_t>(m_config.recv_timeout_ms)
-                );
-
-                if (result == ClientResult::Success) {
-                    // Process the handshake response
-                    ConnectionState before_state = m_state_machine.get_state();
-                    if (process_handshake_response(packet_id, recv_buffer, recv_size)) {
-                        // Handshake completed — notify via state callback
-                        ConnectionState after_state = m_state_machine.get_state();
-                        if (m_state_callback && before_state != after_state) {
-                            m_state_callback(before_state, after_state, m_state_callback_user_data);
-                        }
-                    }
-                } else if (result == ClientResult::ConnectionLost) {
-                    ConnectionState before_state = m_state_machine.get_state();
-                    m_state_machine.process_event(ConnectionEvent::ConnectionLost);
-                    if (m_config.auto_reconnect) {
-                        start_backoff();
-                    }
-                    if (m_state_callback) {
-                        m_state_callback(before_state, m_state_machine.get_state(), m_state_callback_user_data);
-                    }
-                }
-                // Timeout is expected - just keep waiting
-            }
+            handle_handshaking_state(current_time_ms);
             break;
 
         case ConnectionState::Ready:
-            // Normal operation - process packets and send keepalives
-            process_packets();
-
-            // Check for ping timeout (no pong received)
-            if (m_pending_ping_count > 0 && m_ping_timeout_ms > 0) {
-                if (current_time_ms - m_last_ping_time_ms >= m_ping_timeout_ms) {
-                    LOG_INFO("update(Ready): ping timeout (%u pending, %lu ms since last ping)",
-                             m_pending_ping_count, current_time_ms - m_last_ping_time_ms);
-                    ConnectionState before_state = m_state_machine.get_state();
-                    m_state_machine.process_event(ConnectionEvent::ConnectionLost);
-                    if (m_config.auto_reconnect) {
-                        start_backoff();
-                    }
-                    if (m_state_callback) {
-                        m_state_callback(before_state, m_state_machine.get_state(), m_state_callback_user_data);
-                    }
-                    break;
-                }
-            }
-
-            // Send ping if interval elapsed
-            if (m_config.ping_interval_ms > 0) {
-                if (current_time_ms - m_last_ping_time_ms >= m_config.ping_interval_ms) {
-                    ClientOpResult ping_result = send_ping();
-                    if (ping_result == ClientOpResult::Success) {
-                        LOG_INFO("update(Ready): sent ping (pending=%u)", m_pending_ping_count + 1);
-                        m_last_ping_time_ms = current_time_ms;
-                        m_pending_ping_count++;
-                    } else {
-                        LOG_INFO("update(Ready): send_ping failed: %s",
-                                 client_op_result_to_string(ping_result));
-                    }
-                }
-            }
+            handle_ready_state(current_time_ms);
             break;
 
         case ConnectionState::Backoff:
@@ -637,6 +555,111 @@ void RyuLdnClient::update(uint64_t current_time_ms) {
     }
 }
 
+
+
+/**
+ * @brief Handle Handshaking state in update loop
+ *
+ * Checks for handshake timeout, then attempts to receive and
+ * process the handshake response from the server.
+ *
+ * @param current_time_ms Current time in milliseconds
+ */
+void RyuLdnClient::handle_handshaking_state(uint64_t current_time_ms) {
+    // Check for handshake timeout
+    if (is_handshake_timeout(current_time_ms)) {
+        m_last_error_code = protocol::NetworkErrorCode::HandshakeTimeout;
+        ConnectionState before_state = m_state_machine.get_state();
+        m_state_machine.process_event(ConnectionEvent::HandshakeFailed);
+        if (m_config.auto_reconnect) {
+            start_backoff();
+        }
+        if (m_state_callback && before_state != m_state_machine.get_state()) {
+            m_state_callback(before_state, m_state_machine.get_state(), m_state_callback_user_data);
+        }
+        return;
+    }
+
+    // Try to receive and process handshake response
+    uint8_t recv_buffer[2048];
+    size_t recv_size = 0;
+    protocol::PacketId packet_id;
+
+    ClientResult result = m_tcp_client->receive_packet(
+        packet_id,
+        recv_buffer,
+        sizeof(recv_buffer),
+        recv_size,
+        static_cast<int32_t>(m_config.recv_timeout_ms)
+    );
+
+    if (result == ClientResult::Success) {
+        // Process the handshake response
+        ConnectionState before_state = m_state_machine.get_state();
+        if (process_handshake_response(packet_id, recv_buffer, recv_size)) {
+            // Handshake completed - notify via state callback
+            ConnectionState after_state = m_state_machine.get_state();
+            if (m_state_callback && before_state != after_state) {
+                m_state_callback(before_state, after_state, m_state_callback_user_data);
+            }
+        }
+    } else if (result == ClientResult::ConnectionLost) {
+        ConnectionState before_state = m_state_machine.get_state();
+        m_state_machine.process_event(ConnectionEvent::ConnectionLost);
+        if (m_config.auto_reconnect) {
+            start_backoff();
+        }
+        if (m_state_callback) {
+            m_state_callback(before_state, m_state_machine.get_state(), m_state_callback_user_data);
+        }
+    }
+    // Timeout is expected - just keep waiting
+}
+
+/**
+ * @brief Handle Ready state in update loop
+ *
+ * Processes incoming packets and sends keepalive pings.
+ * Detects connection loss via ping timeout.
+ *
+ * @param current_time_ms Current time in milliseconds
+ */
+void RyuLdnClient::handle_ready_state(uint64_t current_time_ms) {
+    // Normal operation - process packets and send keepalives
+    process_packets();
+
+    // Check for ping timeout (no pong received)
+    if (m_pending_ping_count > 0 && m_ping_timeout_ms > 0) {
+        if (current_time_ms - m_last_ping_time_ms >= m_ping_timeout_ms) {
+            LOG_INFO("update(Ready): ping timeout (%u pending, %lu ms since last ping)",
+                     m_pending_ping_count, current_time_ms - m_last_ping_time_ms);
+            ConnectionState before_state = m_state_machine.get_state();
+            m_state_machine.process_event(ConnectionEvent::ConnectionLost);
+            if (m_config.auto_reconnect) {
+                start_backoff();
+            }
+            if (m_state_callback) {
+                m_state_callback(before_state, m_state_machine.get_state(), m_state_callback_user_data);
+            }
+            return;
+        }
+    }
+
+    // Send ping if interval elapsed
+    if (m_config.ping_interval_ms > 0) {
+        if (current_time_ms - m_last_ping_time_ms >= m_config.ping_interval_ms) {
+            ClientOpResult ping_result = send_ping();
+            if (ping_result == ClientOpResult::Success) {
+                LOG_INFO("update(Ready): sent ping (pending=%u)", m_pending_ping_count + 1);
+                m_last_ping_time_ms = current_time_ms;
+                m_pending_ping_count++;
+            } else {
+                LOG_INFO("update(Ready): send_ping failed: %s",
+                         client_op_result_to_string(ping_result));
+            }
+        }
+    }
+}
 // ============================================================================
 // State Queries
 // ============================================================================
@@ -1354,7 +1377,7 @@ bool RyuLdnClient::process_handshake_response(protocol::PacketId id,
                                                size_t size) {
     LOG_VERBOSE("Received handshake response: packet_id=%u", static_cast<uint32_t>(id));
 
-    switch (id) {
+    switch (id) { // codeql[cpp/long-switch] natural dispatch: 4 handshake packet types
         case protocol::PacketId::Initialize: {
             // Server responds with Initialize containing assigned ID and MAC
             // This is the expected response from RyuLDN server

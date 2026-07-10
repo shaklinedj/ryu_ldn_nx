@@ -386,6 +386,73 @@ private:
      */
     /// @gdb{tag="LDN:ASYNC", msg="HandleServerPacket: id=%u size=%zu", args="$x2, $x3"}
     void HandleServerPacket(ryu_ldn::protocol::PacketId id, const uint8_t* data, size_t size);
+    /**
+     * @brief Handle Connected packet from server
+     *
+     * Server confirms we joined/created a network. Contains NetworkInfo
+     * with node data, which we fix up (sceneId, localCommId, channel)
+     * and then signal state change.
+     *
+     * @param data Packet payload
+     * @param size Payload size
+     */
+    void HandleConnectedPacket(const uint8_t* data, size_t size);
+
+    /**
+     * @brief Handle SyncNetwork packet from server
+     *
+     * Server sends updated network state. We update NetworkInfo,
+     * fix sceneId/localCommId, and signal state change.
+     *
+     * @param data Packet payload
+     * @param size Payload size
+     */
+    void HandleSyncNetworkPacket(const uint8_t* data, size_t size);
+
+    /**
+     * @brief Handle ExternalProxy packet from server
+     *
+     * Server sends P2P proxy info. We skip self-loopback, ignore
+     * if P2P disabled, or spawn a connect thread for remote peers.
+     *
+     * @param data Packet payload
+     * @param size Payload size
+     */
+    void HandleExternalProxyPacket(const uint8_t* data, size_t size);
+
+    /**
+     * @brief Handle ProxyData packet from server
+     *
+     * Server relays game data from other players. Routes to BSD MITM
+     * proxy sockets or falls back to legacy buffer.
+     *
+     * @param data Packet payload
+     * @param size Payload size
+     */
+    void HandleProxyDataPacket(const uint8_t* data, size_t size);
+
+    /**
+     * @brief Handle NetworkError packet from server
+     *
+     * Server reports a network error. Disables P2P on PortUnreachable
+     * and signals the error event.
+     *
+     * @param data Packet payload
+     * @param size Payload size
+     */
+    void HandleNetworkErrorPacket(const uint8_t* data, size_t size);
+
+    /**
+     * @brief Handle ScanReply packet from server
+     *
+     * Server sends one network info for each discovered network.
+     * Results are stored in the scan buffer and sceneId/localCommId
+     * are fixed for Ryujinx compatibility.
+     *
+     * @param data Packet payload
+     * @param size Payload size
+     */
+    void HandleScanReplyPacket(const uint8_t* data, size_t size);
 
     /**
      * @brief Wait for a specific packet response from server

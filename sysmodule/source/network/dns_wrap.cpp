@@ -33,6 +33,8 @@
 #include <netdb.h>
 #include <errno.h>
 
+#include "../debug/log.hpp"
+
 #ifdef __SWITCH__
 /**
  * Declare nifmGetCurrentIpConfigInfo with C linkage to match the
@@ -62,9 +64,11 @@ extern "C" void __wrap_freeaddrinfo(struct addrinfo* res);
  * @brief Storage struct for contiguous addrinfo + sockaddr_in allocation.
  *
  * addrinfo and sockaddr_in are allocated together to keep the ai_addr
- * pointer valid after a single malloc/free. The struct guarantees correct
- * alignment for both types and makes sizeof(AddrinfoStorage) a multiple
- * of sizeof(addrinfo) — silencing cpp/allocation-too-small.
+ * pointer valid after a single malloc/free. Using a struct (not union)
+ * ensures ai_family and sa.sin_addr.s_addr occupy separate memory,
+ * preventing the overlap bug where assigning ai_family = AF_INET (2)
+ * corrupted the resolved IP address on ARM64.
+ * The struct also guarantees correct alignment for both types.
  */
 struct AddrinfoStorage {
     struct addrinfo ai;
@@ -312,7 +316,7 @@ static int ParseDnsResponse(const uint8_t* response, size_t resp_len,
 
     uint16_t ancount = (static_cast<uint16_t>(response[6]) << 8) | response[7];
     if (ancount == 0) {
-        return EAI_NONAME;
+        return -EAI_NONAME;
     }
 
     uint16_t qdcount = (static_cast<uint16_t>(response[4]) << 8) | response[5];
@@ -340,7 +344,11 @@ static int ParseDnsResponse(const uint8_t* response, size_t resp_len,
         // TYPE (2), CLASS (2), TTL (4), RDLENGTH (2)
         uint16_t rtype = (static_cast<uint16_t>(p[0]) << 8) | p[1];
         uint16_t rclass = (static_cast<uint16_t>(p[2]) << 8) | p[3];
+        uint32_t rttl = (static_cast<uint32_t>(p[4]) << 24) | (static_cast<uint32_t>(p[5]) << 16) |
+                        (static_cast<uint32_t>(p[6]) << 8)  | p[7];
         uint16_t rdlength = (static_cast<uint16_t>(p[8]) << 8) | p[9];
+        LOG_INFO("DNS answer[%u]: type=%u class=%u ttl=%u rdlen=%u offset=%td",
+                 i, rtype, rclass, rttl, rdlength, p - response);
         p += 10;
 
         if (p + rdlength > end) {
@@ -350,8 +358,12 @@ static int ParseDnsResponse(const uint8_t* response, size_t resp_len,
         // A record: TYPE=1, CLASS=1, RDLENGTH=4
         if (rtype == 1 && rclass == 1 && rdlength == 4) {
             if (ip_count < max_ips) {
-                uint32_t ip;
-                std::memcpy(&ip, p, 4);
+                uint32_t ip = (static_cast<uint32_t>(p[0]) << 24) |
+                              (static_cast<uint32_t>(p[1]) << 16) |
+                              (static_cast<uint32_t>(p[2]) << 8)  |
+                              static_cast<uint32_t>(p[3]);
+                LOG_INFO("DNS A record: raw_ip=0x%08X -> %u.%u.%u.%u",
+                         ip, p[0], p[1], p[2], p[3]);
                 out_ips[ip_count++] = ip;
             }
         }
@@ -412,6 +424,8 @@ static int ResolveHostnameDns(const char* hostname, uint32_t* out_ips, int max_i
     dns_addr.sin_port = htons(53);
     dns_addr.sin_addr.s_addr = dns_ip;
 
+    LOG_VERBOSE("DNS query for '%s': sending %zd bytes to DNS server", hostname, query_len);
+
     ssize_t sent = sendto(sock, query_buf, static_cast<size_t>(query_len), 0,
                            reinterpret_cast<struct sockaddr*>(&dns_addr),
                            sizeof(dns_addr));
@@ -429,6 +443,45 @@ static int ResolveHostnameDns(const char* hostname, uint32_t* out_ips, int max_i
                                  reinterpret_cast<struct sockaddr*>(&from_addr),
                                  &from_len);
 
+    // Diagnostic logging: dump key DNS response fields
+    if (recv_len >= 12) {
+        uint16_t resp_id  = (static_cast<uint16_t>(resp_buf[0]) << 8) | resp_buf[1];
+        uint16_t resp_fl  = (static_cast<uint16_t>(resp_buf[2]) << 8) | resp_buf[3];
+        uint16_t resp_qd  = (static_cast<uint16_t>(resp_buf[4]) << 8) | resp_buf[5];
+        uint16_t resp_an  = (static_cast<uint16_t>(resp_buf[6]) << 8) | resp_buf[7];
+        uint16_t resp_ns  = (static_cast<uint16_t>(resp_buf[8]) << 8) | resp_buf[9];
+        uint16_t resp_ar  = (static_cast<uint16_t>(resp_buf[10]) << 8) | resp_buf[11];
+        LOG_INFO("DNS response: %zu bytes, id=0x%04X flags=0x%04X QD=%u AN=%u NS=%u AR=%u",
+                 recv_len, resp_id, resp_fl, resp_qd, resp_an, resp_ns, resp_ar);
+        LOG_INFO("DNS query id=0x%04X, response id=0x%04X", query_id, resp_id);
+    }
+
+    // Hex dump of DNS response — one LOG_INFO per 16-byte line
+    {
+        size_t dump_len = (recv_len < 64) ? static_cast<size_t>(recv_len) : 64;
+        for (size_t i = 0; i < dump_len; i += 16) {
+            LOG_INFO("DNS hex %04zx: %02x %02x %02x %02x %02x %02x %02x %02x  "
+                     "%02x %02x %02x %02x %02x %02x %02x %02x",
+                     i,
+                     (i+0 < dump_len) ? resp_buf[i+0] : 0,
+                     (i+1 < dump_len) ? resp_buf[i+1] : 0,
+                     (i+2 < dump_len) ? resp_buf[i+2] : 0,
+                     (i+3 < dump_len) ? resp_buf[i+3] : 0,
+                     (i+4 < dump_len) ? resp_buf[i+4] : 0,
+                     (i+5 < dump_len) ? resp_buf[i+5] : 0,
+                     (i+6 < dump_len) ? resp_buf[i+6] : 0,
+                     (i+7 < dump_len) ? resp_buf[i+7] : 0,
+                     (i+8 < dump_len) ? resp_buf[i+8] : 0,
+                     (i+9 < dump_len) ? resp_buf[i+9] : 0,
+                     (i+10 < dump_len) ? resp_buf[i+10] : 0,
+                     (i+11 < dump_len) ? resp_buf[i+11] : 0,
+                     (i+12 < dump_len) ? resp_buf[i+12] : 0,
+                     (i+13 < dump_len) ? resp_buf[i+13] : 0,
+                     (i+14 < dump_len) ? resp_buf[i+14] : 0,
+                     (i+15 < dump_len) ? resp_buf[i+15] : 0);
+        }
+    }
+
     close(sock);
 
     if (recv_len <= 0) {
@@ -436,7 +489,13 @@ static int ResolveHostnameDns(const char* hostname, uint32_t* out_ips, int max_i
     }
 
     // Step 7: Parse response
-    return ParseDnsResponse(resp_buf, static_cast<size_t>(recv_len), out_ips, max_ips);
+    int result = ParseDnsResponse(resp_buf, static_cast<size_t>(recv_len), out_ips, max_ips);
+    if (result > 0) {
+        LOG_INFO("DNS resolved '%s' to %d IP(s)", hostname, result);
+    } else {
+        LOG_WARN("DNS resolve '%s' failed: result=%d", hostname, result);
+    }
+    return result;
 }
 
 } // anonymous namespace
@@ -488,8 +547,10 @@ int __wrap_getaddrinfo(const char* node, const char* service,
                 struct sockaddr_in ip_sa{};
                 ip_sa.sin_family = AF_INET;
                 ip_sa.sin_port = htons(port);
-                ip_sa.sin_addr.s_addr = resolved_ips[i];
+                ip_sa.sin_addr.s_addr = htonl(resolved_ips[i]);
 
+                // codeql[cpp/suspicious-allocation-size] — AddrinfoStorage is a struct
+                // containing addrinfo + sockaddr_in, not an array of addrinfo.
                 auto* storage = static_cast<AddrinfoStorage*>(
                     std::malloc(sizeof(AddrinfoStorage)));
                 if (!storage) {
@@ -524,6 +585,8 @@ int __wrap_getaddrinfo(const char* node, const char* service,
         sa.sin_addr.s_addr = htonl(passive ? INADDR_ANY : INADDR_LOOPBACK);
     }
 
+    // codeql[cpp/suspicious-allocation-size] — AddrinfoStorage is a struct
+    // containing addrinfo + sockaddr_in, not an array of addrinfo.
     auto* storage = static_cast<AddrinfoStorage*>(
         std::malloc(sizeof(AddrinfoStorage)));
     if (!storage) return EAI_MEMORY;
