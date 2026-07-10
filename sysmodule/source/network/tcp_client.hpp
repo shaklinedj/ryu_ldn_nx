@@ -154,6 +154,7 @@ public:
      * @param host Server hostname or IP address
      * @param port Server port number (default: 30456)
      * @param timeout_ms Connection timeout in milliseconds (0 = blocking)
+     * @param use_tls Whether to use TLS encryption
      *
      * @return ClientResult::Success on successful connection
      * @return ClientResult::AlreadyConnected if already connected
@@ -165,7 +166,7 @@ public:
      * @note Recommended timeout: 5000ms (5 seconds)
      */
     /// @gdb{tag="NETWORK:TCP", msg="TcpClient::connect"}
-    ClientResult connect(const char* host, uint16_t port, uint32_t timeout_ms = 5000) override;
+    ClientResult connect(const char* host, uint16_t port, uint32_t timeout_ms = 5000, bool use_tls = false) override;
 
     /**
      * @brief Disconnect from server

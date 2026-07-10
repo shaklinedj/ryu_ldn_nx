@@ -347,6 +347,14 @@ bool ProxySocketManager::RouteIncomingData(uint32_t source_ip, uint16_t source_p
                                             const void* data, size_t data_len) {
     std::scoped_lock lock(m_mutex);
 
+    // Filter out loopback packets (packets sent by ourselves that the server echoed back).
+    // The game's network stack does not expect to receive its own sent packets,
+    // and processing them causes duplicate packet conflicts in Nintendo's PIA mesh.
+    if (m_local_ip != 0 && source_ip == m_local_ip) {
+        LOG_VERBOSE("ProxyData: dropped loopback packet from ourselves (src=0x%08X)", source_ip);
+        return false;
+    }
+
     // For broadcast/multicast packets, deliver to ALL matching sockets.
     // PIA mesh discovery relies on broadcast UDP reaching every listener
     // on the same port. For unicast, only one socket matches.
@@ -440,12 +448,12 @@ ProxySocket* ProxySocketManager::FindSocketByDestination(uint32_t dest_ip, uint1
         }
 
         // IP matching:
-        // CRITICAL: sin_addr is now in Ryujinx format (NO bswap was applied in Bind).
-        // Use sin_addr directly instead of GetAddr() which does bswap32.
+        // Use GetAddr() to convert sin_addr from network byte order to host byte order
+        // to properly match against dest_ip which is in Ryujinx host format (0x0A72xxxx).
         // 1. INADDR_ANY (bound to 0.0.0.0 - accepts any destination)
         // 2. Exact match (bound to specific IP)
         // 3. Broadcast: any socket on the same port receives broadcast packets
-        uint32_t local_ip = local_addr.sin_addr;  // Direct access - Ryujinx format
+        uint32_t local_ip = local_addr.GetAddr();  // Host byte order
         if (local_ip == 0) {
             // Bound to INADDR_ANY - accepts all
             return socket.get();
@@ -496,7 +504,7 @@ size_t ProxySocketManager::FindAllSocketsByDestination(uint32_t dest_ip, uint16_
             continue;
         }
 
-        uint32_t local_ip = local_addr.sin_addr;
+        uint32_t local_ip = local_addr.GetAddr();
 
         if (local_ip == 0) {
             out_sockets[count++] = socket.get();

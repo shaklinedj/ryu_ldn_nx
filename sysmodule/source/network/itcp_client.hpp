@@ -119,9 +119,10 @@ public:
      * @param host Server hostname or IP address
      * @param port Server port number
      * @param timeout_ms Connection timeout in milliseconds
+     * @param use_tls Whether to use TLS encryption
      * @return ClientResult indicating success or failure
      */
-    virtual ClientResult connect(const char* host, uint16_t port, uint32_t timeout_ms = 5000) = 0;
+    virtual ClientResult connect(const char* host, uint16_t port, uint32_t timeout_ms = 5000, bool use_tls = false) = 0;
 
     /**
      * @brief Disconnect from the server

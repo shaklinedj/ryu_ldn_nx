@@ -212,10 +212,9 @@ s32 ProxySocket::SendTo(const void* data, size_t len, s32 flags, const ryu_ldn::
     }
 
     // Send via ProxySocketManager which routes to LDN server.
-    // m_local_addr.sin_addr is stored in Ryujinx format (no bswap was applied in Bind),
-    // so read it directly. dest comes from the game in network byte order, so GetAddr()
-    // bswaps it into Ryujinx format — which is what the server expects on the wire.
-    uint32_t source_ip = m_local_addr.sin_addr;
+    // m_local_addr.sin_addr is stored in network byte order, so GetAddr()
+    // converts it back to Ryujinx format (big-endian host format) expected by the server.
+    uint32_t source_ip = m_local_addr.GetAddr();
     uint16_t source_port = m_local_addr.GetPort();
     uint32_t dest_ip = dest.GetAddr();
     uint16_t dest_port = dest.GetPort();
@@ -556,11 +555,13 @@ void ProxySocket::IncomingConnection(const ryu_ldn::protocol::ProxyConnectReques
     accepted->m_local_addr = m_local_addr;
     accepted->m_state = ProxySocketState::Bound;
 
-    // Set remote address from request
-    // CRITICAL: Do NOT bswap32 the IP - must match Ryujinx/NetworkInfo format
+    // Set remote address from request.
+    // request.info.source_ipv4 is in Ryujinx format (big-endian uint32, e.g. 0x0A720001).
+    // sin_addr stores network byte order; bswap32 converts Ryujinx format → network byte order
+    // so that GetAddr() (which does another bswap32) returns the original Ryujinx-format value.
     accepted->m_remote_addr.sin_family = static_cast<uint8_t>(ryu_ldn::bsd::AddressFamily::Inet);
     accepted->m_remote_addr.sin_len = sizeof(ryu_ldn::bsd::SockAddrIn);
-    accepted->m_remote_addr.sin_addr = request.info.source_ipv4;  // NO bswap32 - Ryujinx format
+    accepted->m_remote_addr.sin_addr = __builtin_bswap32(request.info.source_ipv4);  // Ryujinx format → network byte order
     accepted->m_remote_addr.sin_port = __builtin_bswap16(request.info.source_port);
 
     // Mark as connected

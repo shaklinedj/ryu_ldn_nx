@@ -58,6 +58,7 @@ public:
     std::string last_connect_host;
     uint16_t last_connect_port = 0;
     uint32_t last_connect_timeout_ms = 0;
+    bool last_connect_use_tls = false;
 
     bool initialize() override {
         if (initialize_should_fail) return false;
@@ -65,11 +66,12 @@ public:
         return true;
     }
 
-    ClientResult connect(const char* host, uint16_t port, uint32_t timeout_ms) override {
+    ClientResult connect(const char* host, uint16_t port, uint32_t timeout_ms, bool use_tls = false) override {
         connect_call_count++;
         last_connect_host = host ? host : "";
         last_connect_port = port;
         last_connect_timeout_ms = timeout_ms;
+        last_connect_use_tls = use_tls;
         if (next_connect_result == ClientResult::Success) {
             connected = true;
         }

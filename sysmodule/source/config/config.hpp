@@ -118,13 +118,13 @@ constexpr const char* LOG_PATH = "sdmc:/config/ryu_ldn_nx/ryu_ldn_nx.log";
 // Default Values - Server
 // -----------------------------------------------------------------------------
 
-/** @brief Default server hostname (Temporary private RyuLDN server for development and testing) */
-constexpr const char* DEFAULT_HOST = "90.93.156.13";
+/** @brief Default server hostname (Official Ryujinx LDN production server) */
+constexpr const char* DEFAULT_HOST = "ldn.ryujinx.app";
 
 /** @brief Default server port */
 constexpr uint16_t DEFAULT_PORT = 30456;
 
-/** @brief Default TLS setting — NOT IMPLEMENTED, always plain TCP regardless of this value */
+/** @brief Default TLS setting — Use TLS for the official production server */
 constexpr bool DEFAULT_USE_TLS = false;
 
 // -----------------------------------------------------------------------------
@@ -150,8 +150,8 @@ constexpr uint32_t DEFAULT_MAX_RECONNECT_ATTEMPTS = 5;
 /** @brief Default LDN enabled state */
 constexpr bool DEFAULT_LDN_ENABLED = true;
 
-/** @brief Default P2P proxy disabled state (matches config.ini.example: disable_p2p = 1) */
-constexpr bool DEFAULT_DISABLE_P2P = true;
+/** @brief Default P2P proxy disabled state (matches config.ini.example: disable_p2p = 0) */
+constexpr bool DEFAULT_DISABLE_P2P = false;
 
 // -----------------------------------------------------------------------------
 // Default Values - Debug

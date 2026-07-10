@@ -13,6 +13,7 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <atomic>
 
 namespace ryu_ldn::network {
 
@@ -89,10 +90,11 @@ public:
      * @param host Hostname or IP address
      * @param port Port number
      * @param timeout_ms Connection timeout in milliseconds (0 = blocking)
+     * @param use_tls Whether to use TLS encryption
      * @return SocketResult::Success or error
      */
     /// @gdb{tag="NETWORK:STATE_MACHINE", msg="Socket connect"}
-    SocketResult connect(const char* host, uint16_t port, uint32_t timeout_ms = 0);
+    SocketResult connect(const char* host, uint16_t port, uint32_t timeout_ms = 0, bool use_tls = false);
 
     /**
      * @brief Send data (blocking)
@@ -176,7 +178,9 @@ public:
 
 private:
     int m_fd;
-    bool m_connected;
+    std::atomic<bool> m_connected;
+    bool m_use_tls;
+    void* m_tls_ctx; // Pointer to internal TlsContext
 
     /**
      * @brief Create TCP socket

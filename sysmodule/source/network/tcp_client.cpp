@@ -107,7 +107,7 @@ TcpClient& TcpClient::operator=(TcpClient&& other) noexcept {
  * Establishes TCP connection and prepares for protocol communication.
  * The receive buffer is reset to ensure clean state.
  */
-ClientResult TcpClient::connect(const char* host, uint16_t port, uint32_t timeout_ms) {
+ClientResult TcpClient::connect(const char* host, uint16_t port, uint32_t timeout_ms, bool use_tls) {
     LOG_VERBOSE("TcpClient::connect(%s, %u, %u)", host, port, timeout_ms);
 
     // Check if already connected
@@ -116,8 +116,11 @@ ClientResult TcpClient::connect(const char* host, uint16_t port, uint32_t timeou
         return ClientResult::AlreadyConnected;
     }
 
+    // Ensure any previous stale socket state is cleaned up before reconnecting
+    disconnect();
+
     // Attempt connection
-    SocketResult result = m_socket.connect(host, port, timeout_ms);
+    SocketResult result = m_socket.connect(host, port, timeout_ms, use_tls);
 
     if (result != SocketResult::Success) {
         LOG_VERBOSE("Socket connect failed: %s", socket_result_to_string(result));
@@ -129,6 +132,10 @@ ClientResult TcpClient::connect(const char* host, uint16_t port, uint32_t timeou
 
     // Enable TCP_NODELAY by default for lower latency
     m_socket.set_nodelay(true);
+
+    // Increase socket buffers to help absorb WiFi jitter/bursts
+    m_socket.set_send_buffer_size(128 * 1024);
+    m_socket.set_recv_buffer_size(128 * 1024);
 
     LOG_VERBOSE("TcpClient connected successfully");
     return ClientResult::Success;

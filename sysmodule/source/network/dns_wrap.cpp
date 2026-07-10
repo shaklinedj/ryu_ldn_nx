@@ -68,6 +68,7 @@ extern "C" void __wrap_freeaddrinfo(struct addrinfo* res);
  * ensures ai_family and sa.sin_addr.s_addr occupy separate memory,
  * preventing the overlap bug where assigning ai_family = AF_INET (2)
  * corrupted the resolved IP address on ARM64.
+ * The struct also guarantees correct alignment for both types.
  */
 struct AddrinfoStorage {
     struct addrinfo ai;
@@ -535,12 +536,7 @@ int __wrap_getaddrinfo(const char* node, const char* service,
             int num_ips = ResolveHostnameDns(node, resolved_ips, 8);
 
             if (num_ips <= 0) {
-                if (num_ips == 0) return EAI_NONAME;
-                // Map negative EAI codes back to positive for getaddrinfo
-                if (num_ips == -EAI_AGAIN) return EAI_AGAIN;
-                if (num_ips == -EAI_NONAME) return EAI_NONAME;
-                if (num_ips == -EAI_FAIL)   return EAI_FAIL;
-                return EAI_AGAIN;  // unknown error → retryable
+                return (num_ips == 0) ? EAI_NONAME : -num_ips;
             }
 
             // Build addrinfo linked list from resolved IPs

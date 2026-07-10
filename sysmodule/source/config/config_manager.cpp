@@ -64,7 +64,13 @@ void GenerateRandomPassphrase(char* out, size_t out_size) {
 
     static bool seeded = false;
     if (!seeded) {
+#ifdef __SWITCH__
+        uint64_t ticks = 0;
+        __asm__ __volatile__("mrs %0, cntpct_el0" : "=r"(ticks));
+        std::srand(static_cast<unsigned>(ticks ^ (ticks >> 32)));
+#else
         std::srand(static_cast<unsigned>(std::time(nullptr)));
+#endif
         seeded = true;
     }
 

@@ -49,6 +49,7 @@
 #include <memory>
 #include "../protocol/types.hpp"
 #include "../protocol/ryu_protocol.hpp"
+#include "../protocol/packet_buffer.hpp"
 #include "upnp_port_mapper.hpp"
 
 namespace ams::mitm::p2p {
@@ -230,7 +231,7 @@ public:
      * session whose m_thread_done atomic has flipped to true, then
      * `delete`s the session and shrinks the array. Called from
      * AcceptLoop on every iteration and from Stop() so disconnected
-     * peers don't leak their 64 KB recv buffer (RECV_BUFFER_SIZE in
+     * peers don't leak their 4 KB recv buffer (RECV_BUFFER_SIZE in
      * the header).
      */
     void ReapZombieSessions();
@@ -588,8 +589,8 @@ private:
     std::atomic<bool> m_thread_done{false};
 
     // Receive buffer
-    static constexpr size_t RECV_BUFFER_SIZE = 0x10000;
-    uint8_t m_recv_buffer[RECV_BUFFER_SIZE];
+    static constexpr size_t RECV_BUFFER_SIZE = 0x1000;
+    ryu_ldn::protocol::PacketBuffer<RECV_BUFFER_SIZE> m_recv_buffer;
 
     friend class P2pProxyServer;  // for the reaper path
 };

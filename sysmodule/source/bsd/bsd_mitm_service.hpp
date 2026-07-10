@@ -72,6 +72,15 @@ public:
      */
     static void CleanupAbandonedServices();
 
+    /**
+     * @brief Clean up abandoned forward services for a specific process ID
+     *
+     * Called when the last active intercepted session of a process is destroyed.
+     *
+     * @param pid Process ID of the game
+     */
+    static void CleanupAbandonedServicesForPid(u64 pid);
+
 public:
     // =========================================================================
     // Command Implementations

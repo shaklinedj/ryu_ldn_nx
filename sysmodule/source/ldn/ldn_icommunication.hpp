@@ -530,13 +530,14 @@ private:
 
     // Inactivity timeout (like Ryujinx _timeout)
     NetworkTimeout m_inactivity_timeout;                    ///< Auto-disconnect after idle period
-
     // Dedicated receive thread — reads packets from master TCP and dispatches
     // them via HandleServerPacket immediately, like NetCoreServer's OnReceived
     // callback in Ryujinx. IPC handlers no longer call update(); they wait on
     // os::Event (via TimedWaitAny) which the receive thread signals.
-    os::ThreadType m_recv_thread;                           ///< Receive thread (replaces old bg thread)
+    os::ThreadType m_recv_thread;                           ///< Receive background thread
     std::atomic<bool> m_recv_thread_running;                 ///< Receive thread running flag
+    int m_stack_slot_index = -1;                            ///< Index of the allocated stack slot
+
 
     // Mutex protecting shared state written by the receive thread and read
     // by IPC handlers: m_network_info, m_network_connected, m_scan_results,

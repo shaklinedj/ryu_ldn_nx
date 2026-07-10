@@ -179,6 +179,11 @@ struct RyuLdnClientConfig {
     char passphrase[config::MAX_PASSPHRASE_LENGTH + 1];
 
     /**
+     * @brief Whether to use TLS encryption
+     */
+    bool use_tls;
+
+    /**
      * @brief Default constructor with sensible defaults
      */
     RyuLdnClientConfig();
@@ -673,6 +678,11 @@ private:
      */
     /// @gdb{tag="NETWORK:STATE_CALLBACKS", msg="is_handshake_timeout"}
     bool is_handshake_timeout(uint64_t current_time_ms) const;
+
+    /**
+     * @brief Generate a unique session ID
+     */
+    void generate_session_id();
 
     /**
      * @brief Generate a unique MAC address

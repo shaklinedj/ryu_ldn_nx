@@ -44,6 +44,8 @@
 #include "../debug/log.hpp"
 #include <cstring>
 #include <memory>
+#include <cstdlib>
+#include <ctime>
 
 namespace ryu_ldn {
 namespace network {
@@ -85,6 +87,7 @@ RyuLdnClientConfig::RyuLdnClientConfig()
     std::strncpy(host, "127.0.0.1", sizeof(host) - 1);
     host[sizeof(host) - 1] = '\0';
     passphrase[0] = '\0';  // Empty passphrase = public rooms
+    use_tls = false;
 }
 
 /**
@@ -111,6 +114,8 @@ RyuLdnClientConfig::RyuLdnClientConfig(const config::Config& cfg)
     // Copy passphrase, ensuring null termination
     std::memset(passphrase, 0, sizeof(passphrase));
     std::memcpy(passphrase, cfg.ldn.passphrase, sizeof(passphrase) - 1);
+    
+    use_tls = cfg.server.use_tls;
 
     // Configure reconnection from app config
     reconnect.initial_delay_ms = cfg.network.reconnect_delay_ms;
@@ -155,6 +160,7 @@ RyuLdnClient::RyuLdnClient()
     , m_last_rtt_ms(0)
     , m_ping_id(0)
 {
+    generate_session_id();
     generate_mac_address();
 }
 
@@ -189,6 +195,7 @@ RyuLdnClient::RyuLdnClient(const RyuLdnClientConfig& config)
     , m_last_rtt_ms(0)
     , m_ping_id(0)
 {
+    generate_session_id();
     generate_mac_address();
 }
 
@@ -218,6 +225,7 @@ RyuLdnClient::RyuLdnClient(const RyuLdnClientConfig& config, std::unique_ptr<ITc
     , m_last_rtt_ms(0)
     , m_ping_id(0)
 {
+    generate_session_id();
     generate_mac_address();
 }
 
@@ -879,8 +887,10 @@ ClientOpResult RyuLdnClient::send_proxy_data(const protocol::ProxyDataHeader& he
 
     ClientResult result = m_tcp_client->send_proxy_data(header, data, size);
     if (result != ClientResult::Success) {
-        LOG_INFO("send_proxy_data: TCP send returned %d", static_cast<int>(result));
-        if (result == ClientResult::ConnectionLost) {
+        LOG_INFO("send_proxy_data: TCP send failed: %s", client_result_to_string(result));
+        // NotConnected can happen when another thread has already marked the
+        // socket down but the state machine is still in Ready for this tick.
+        if (result == ClientResult::ConnectionLost || result == ClientResult::NotConnected) {
             ConnectionState before_state = m_state_machine.get_state();
             m_state_machine.process_event(ConnectionEvent::ConnectionLost);
             if (m_state_callback && before_state != m_state_machine.get_state()) {
@@ -1066,7 +1076,8 @@ void RyuLdnClient::try_connect() {
     ClientResult result = m_tcp_client->connect(
         m_config.host,
         m_config.port,
-        m_config.connect_timeout_ms
+        m_config.connect_timeout_ms,
+        m_config.use_tls
     );
 
     if (result == ClientResult::Success) {
@@ -1125,8 +1136,9 @@ void RyuLdnClient::process_packets() {
             break;
         }
 
-        if (result == ClientResult::ConnectionLost) {
-            LOG_INFO("process_packets: receive_packet returned ConnectionLost (server closed TCP)");
+        if (result == ClientResult::ConnectionLost || result == ClientResult::NotConnected) {
+            LOG_INFO("process_packets: receive_packet returned %s (treating as ConnectionLost)",
+                     client_result_to_string(result));
             ConnectionState before_state = m_state_machine.get_state();
             m_state_machine.process_event(ConnectionEvent::ConnectionLost);
             if (m_config.auto_reconnect) {
@@ -1232,12 +1244,8 @@ ClientOpResult RyuLdnClient::send_initialize() {
 
     protocol::InitializeMessage msg{};
 
-    // Generate a session ID (in real use, this would be a proper UUID)
-    for (size_t i = 0; i < sizeof(msg.id.data); i++) {
-        msg.id.data[i] = static_cast<uint8_t>(i ^ 0xAB);
-    }
-
-    // Copy our MAC address
+    // Always send our stored session ID and MAC address
+    std::memcpy(msg.id.data, m_session_id.data, sizeof(msg.id.data));
     std::memcpy(msg.mac_address.data, m_mac_address.data, sizeof(msg.mac_address.data));
 
     ClientResult result = m_tcp_client->send_initialize(msg);
@@ -1262,6 +1270,18 @@ ClientOpResult RyuLdnClient::send_initialize() {
 }
 
 /**
+ * @brief Generate a unique session ID
+ *
+ * Generates a random 16-byte session ID for this client instance.
+ * Ryujinx emulator generates a random node ID upon startup.
+ */
+void RyuLdnClient::generate_session_id() {
+    for (size_t i = 0; i < sizeof(m_session_id.data); i++) {
+        m_session_id.data[i] = static_cast<uint8_t>(std::rand() & 0xFF);
+    }
+}
+
+/**
  * @brief Generate a unique MAC address
  *
  * Generates a statically assigned locally administered MAC address.
@@ -1273,11 +1293,11 @@ ClientOpResult RyuLdnClient::send_initialize() {
  * (not the MAC) for identification.
  */
 void RyuLdnClient::generate_mac_address() {
-    // Statically assigned MAC matching Ryujinx convention.
-    // The server identifies nodes by ID, not by MAC.
-    m_mac_address.data[0] = 0x02;  // Locally administered
+    // Generate a unique unicast locally administered MAC address
+    // Format: 02:XX:XX:XX:XX:XX to avoid conflicts on the virtual network.
+    m_mac_address.data[0] = 0x02;  // Locally administered, unicast
     m_mac_address.data[1] = 0x00;
-    m_mac_address.data[2] = 0x5E;
+    m_mac_address.data[2] = 0x5e;
     m_mac_address.data[3] = 0x00;
     m_mac_address.data[4] = 0x53;
     m_mac_address.data[5] = 0x01;

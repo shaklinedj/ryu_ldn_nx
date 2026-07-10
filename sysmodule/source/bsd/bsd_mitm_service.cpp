@@ -47,6 +47,8 @@
  * @license GPL-2.0-or-later
  */
 
+
+#include <algorithm>
 #include "bsd_mitm_service.hpp"
 #include "proxy_socket_manager.hpp"
 #include "bsd_types.hpp"
@@ -112,7 +114,13 @@ static os::Mutex g_socket_info_mutex{false};
  * Value: number of BSD sessions intercepted for this PID.
  */
 static std::unordered_map<u64, u32> g_mitm_pid_count;
+static std::unordered_map<u64, u32> g_active_intercepted_sessions_count;
 static os::Mutex g_mitm_pids_mutex{false};
+
+struct AbandonedService {
+    u64 client_pid;
+    std::shared_ptr<::Service> service;
+};
 
 /**
  * @brief List of abandoned forward services (sessions that never got RegisterClient)
@@ -124,7 +132,7 @@ static os::Mutex g_mitm_pids_mutex{false};
  * These services will be cleaned up when the game process exits or when
  * we explicitly clean them (e.g., on LDN disconnect).
  */
-static std::vector<std::shared_ptr<::Service>> g_abandoned_forward_services;
+static std::vector<AbandonedService> g_abandoned_forward_services;
 static os::Mutex g_abandoned_services_mutex{false};
 
 // =============================================================================
@@ -152,8 +160,7 @@ static os::Mutex g_abandoned_services_mutex{false};
  *
  * @param s Shared pointer to the original bsd:u service session
  * @param c Process information for the client (PID, program ID, etc.)
- */
-BsdMitmService::BsdMitmService(std::shared_ptr<::Service>&& s, const sm::MitmProcessInfo& c)
+ */BsdMitmService::BsdMitmService(std::shared_ptr<::Service>&& s, const sm::MitmProcessInfo& c)
     : MitmServiceImplBase(std::forward<std::shared_ptr<::Service>>(s), c)
     , m_client_pid(c.process_id.value)
     , m_session_id(++s_next_session_id)
@@ -166,8 +173,13 @@ BsdMitmService::BsdMitmService(std::shared_ptr<::Service>&& s, const sm::MitmPro
 
     LOG_INFO("[BSD#%u] CONSTRUCTOR: program_id=0x%016lx, pid=%lu, fwd_srv=%p (handle=0x%x, domain=%d, object_id=%u)",
              m_session_id, c.program_id.value, m_client_pid, fwd, session_handle, is_domain, object_id);
-}
 
+    // Increment active intercepted sessions count for this PID
+    {
+        std::scoped_lock lock(g_mitm_pids_mutex);
+        g_active_intercepted_sessions_count[m_client_pid]++;
+    }
+}
 /**
  * @brief Destroy BSD MITM service
  *
@@ -215,20 +227,6 @@ BsdMitmService::~BsdMitmService() {
         }
     }
 
-    // Decrement the session count for this PID
-    {
-        std::scoped_lock lock(g_mitm_pids_mutex);
-        auto it = g_mitm_pid_count.find(m_client_pid);
-        if (it != g_mitm_pid_count.end()) {
-            if (it->second > 0) {
-                it->second--;
-            }
-            if (it->second == 0) {
-                g_mitm_pid_count.erase(it);
-            }
-        }
-    }
-
     ::Service* fwd = m_forward_service.get();
     Handle session_handle = fwd ? fwd->session : INVALID_HANDLE;
     LOG_INFO("[BSD#%u] DESTRUCTOR: pid=%lu, fwd_srv=%p (handle=0x%x), commands=%u, registered=%d",
@@ -244,12 +242,38 @@ BsdMitmService::~BsdMitmService() {
             LOG_WARN("[BSD#%u] Session never registered - moving forward_service to abandoned list to prevent freeze",
                      m_session_id);
             std::scoped_lock lock(g_abandoned_services_mutex);
-            g_abandoned_forward_services.push_back(std::move(m_forward_service));
+            g_abandoned_forward_services.push_back({ m_client_pid, std::move(m_forward_service) });
             LOG_INFO("[BSD#%u] Abandoned services count: %zu", m_session_id, g_abandoned_forward_services.size());
         }
     }
     // For registered sessions, m_forward_service will be closed normally
     // when the base class destructor runs (shared_ptr goes out of scope)
+
+    // Decrement the active intercepted sessions count for this PID
+    bool is_last_session = false;
+    {
+        std::scoped_lock lock(g_mitm_pids_mutex);
+        auto it = g_active_intercepted_sessions_count.find(m_client_pid);
+        if (it != g_active_intercepted_sessions_count.end()) {
+            if (it->second > 0) {
+                it->second--;
+            }
+            if (it->second == 0) {
+                g_active_intercepted_sessions_count.erase(it);
+                is_last_session = true;
+            }
+        }
+    }
+
+    if (is_last_session) {
+        LOG_INFO("Last active BSD session for pid=%lu destroyed. Cleaning up process resources.", m_client_pid);
+        CleanupAbandonedServicesForPid(m_client_pid);
+        {
+            std::scoped_lock lock(g_mitm_pids_mutex);
+            g_mitm_pid_count.erase(m_client_pid);
+        }
+        LOG_INFO("BSD destructor: cleanup complete for pid=%lu", m_client_pid);
+    }
 }
 
 /**
@@ -291,6 +315,14 @@ bool BsdMitmService::ShouldMitm(const sm::MitmProcessInfo& client_info) {
         return false;
     }
 
+    // Skip the Album applet (used for Homebrew Launcher). HBL never registers a
+    // BSD client, and intercepting it causes crashes. It might be in the whitelist
+    // due to upstream gamelist.txt, so we must explicitly ignore it.
+    if (program_id == 0x010028600ebda000ULL) {
+        LOG_INFO("BSD ShouldMitm #%u: SKIP (Album/HBL 0x%016lx)", call_id, program_id);
+        return false;
+    }
+
     // First check: is this game in the LDN whitelist?
     LOG_INFO("BSD ShouldMitm #%u: checking whitelist for 0x%016lx...", call_id, program_id);
     bool is_whitelisted = ryu_ldn::config::IsGameInWhitelist(program_id);
@@ -298,6 +330,19 @@ bool BsdMitmService::ShouldMitm(const sm::MitmProcessInfo& client_info) {
 
     if (!is_whitelisted) {
         return false;
+    }
+
+    // Second check: if another PID has an active LDN session, do not intercept this one.
+    // This handles cases where a background process opens bsd:u while a game is running.
+    {
+        u64 ldn_pid = ams::mitm::ldn::SharedState::GetInstance().GetLdnPid();
+        if (ldn_pid != 0 && ldn_pid != client_info.process_id.value) {
+            LOG_INFO("BSD ShouldMitm #%u: SKIP pid=%lu (LDN active for different pid=%lu)",
+                     call_id, client_info.process_id.value, ldn_pid);
+            return false;
+        }
+        // If ldn_pid == 0, we still intercept if whitelisted, because some games
+        // open bsd:u before ldn:u.
     }
 
     // Track session count and decide whether to intercept
@@ -343,13 +388,57 @@ void BsdMitmService::CleanupAbandonedServices() {
     LOG_INFO("BSD CleanupAbandonedServices: cleaning up %zu abandoned services",
              g_abandoned_forward_services.size());
 
-    // Clear the vector - this will call serviceClose() on each service
-    // We do this here (during LDN disconnect) rather than during session
-    // destruction because it's safer to close these sessions when the
-    // game is no longer actively using BSD.
+    // Clear the vector - this will close the service directly using svcCloseHandle
+    // and then zero it out to prevent Atmosphere from sending CMIF Close requests 
+    // which caused IPC hangs/panics.
+    for (auto& entry : g_abandoned_forward_services) {
+        ::Service* raw = entry.service.get();
+        if (raw && raw->session != 0) { // 0 is INVALID_HANDLE in libnx
+            svcCloseHandle(raw->session);
+            *raw = (::Service){};
+        }
+    }
+
+    // Clear the vector - this will call serviceClose() on each service (now safely zeroed)
     g_abandoned_forward_services.clear();
 
     LOG_INFO("BSD CleanupAbandonedServices: cleanup complete");
+}
+
+void BsdMitmService::CleanupAbandonedServicesForPid(u64 pid) {
+    std::scoped_lock lock(g_abandoned_services_mutex);
+
+    if (g_abandoned_forward_services.empty()) {
+        return;
+    }
+
+    LOG_INFO("BSD CleanupAbandonedServicesForPid: checking abandoned services for pid=%lu", pid);
+
+    // We close the session handle manually using svcCloseHandle before zeroing it out.
+    // This prevents the bsd:u session from leaking while avoiding the IPC CMIF Close hang.
+    for (auto& entry : g_abandoned_forward_services) {
+        if (entry.client_pid == pid) {
+            ::Service* raw = entry.service.get();
+            if (raw && raw->session != 0) {
+                svcCloseHandle(raw->session);
+                *raw = (::Service){};
+            }
+        }
+    }
+
+    auto it = std::remove_if(g_abandoned_forward_services.begin(), g_abandoned_forward_services.end(),
+        [pid](const AbandonedService& entry) {
+            return entry.client_pid == pid;
+        });
+
+    size_t count_before = g_abandoned_forward_services.size();
+    g_abandoned_forward_services.erase(it, g_abandoned_forward_services.end());
+    size_t count_after = g_abandoned_forward_services.size();
+
+    if (count_before != count_after) {
+        LOG_INFO("BSD CleanupAbandonedServicesForPid: cleared %zu services for pid=%lu, remaining: %zu",
+                 count_before - count_after, pid, count_after);
+    }
 }
 
 // =============================================================================
@@ -434,13 +523,12 @@ Result BsdMitmService::RegisterClient(
     LOG_INFO("[BSD#%u] RegisterClient: forward returned rc=0x%x, pid_out=0x%lx",
              m_session_id, rc.GetValue(), pid_out);
 
-    // CRITICAL: Detach the handle to prevent sf::CopyHandle destructor from closing it.
+    // DO NOT detach the transfer memory handle!
     // The handle was forwarded to the real BSD service via serviceMitmDispatchInOut,
-    // which creates a kernel-level copy. However, sf::CopyHandle is marked as "managed"
-    // by Atmosphere's command serialization, meaning its destructor would close our
-    // local handle. Since we're a MITM proxy, we must NOT close handles that belong
-    // to the client process - we only forward them.
-    transfer_memory.Detach();
+    // which creates a new handle for bsd:u in the kernel. Atmosphere's sf::CopyHandle 
+    // wrapper owns the local duplicated handle. If we detach it, we leak the local handle,
+    // which keeps the TransferMemory alive in the kernel and prevents the game process
+    // from being fully destroyed, causing a console freeze when launching the next game.
 
     // Mark this session as registered
     if (R_SUCCEEDED(rc)) {
@@ -1117,13 +1205,16 @@ Result BsdMitmService::Bind(
                         ryu_ldn::bsd::SockAddrIn bind_addr = sock_addr_copy;
                         if (is_inaddr_any) {
                             // Replace 0.0.0.0 with our local LDN IP
-                            // CRITICAL: Do NOT bswap32 - must match Ryujinx/NetworkInfo format
+                            // local_ip is in Ryujinx format (big-endian uint32, e.g. 0x0A720003).
+                            // sin_addr must be in network byte order so that GetAddr() (which
+                            // does bswap32) returns the original Ryujinx-format value.
+                            // On ARM64 (little-endian), bswap32 converts Ryujinx→network order.
                             uint32_t local_ip = manager.GetLocalIp();
                             if (local_ip == 0) {
                                 // Local IP not set yet - use 0.0.0.0 which will match any dest
                                 LOG_WARN("BSD Bind fd=%d: local LDN IP not set, using INADDR_ANY", fd);
                             } else {
-                                bind_addr.sin_addr = local_ip;  // NO bswap32 - Ryujinx format
+                                bind_addr.sin_addr = __builtin_bswap32(local_ip);  // Ryujinx format → network byte order
                                 LOG_INFO("BSD Bind fd=%d: using local LDN IP 0x%08x", fd, local_ip);
                             }
                         }
@@ -1311,13 +1402,16 @@ Result BsdMitmService::Connect(
                         R_SUCCEED();
                     }
 
-                    // Create local address using our LDN IP
-                    // CRITICAL: Do NOT bswap32 - must match Ryujinx/NetworkInfo format
+                    // Create local address using our LDN IP.
+                    // GetLocalIp() returns Ryujinx format (big-endian uint32, e.g. 0x0A720001).
+                    // sin_addr must store the value in network byte order; on ARM64 (little-endian)
+                    // bswap32 converts Ryujinx format to the in-memory layout expected by the kernel.
+                    // GetAddr() on this sin_addr later does another bswap32, recovering Ryujinx format.
                     ryu_ldn::bsd::SockAddrIn local_addr{};
                     local_addr.sin_len = sizeof(local_addr);
                     local_addr.sin_family = static_cast<uint8_t>(ryu_ldn::bsd::AddressFamily::Inet);
                     local_addr.sin_port = __builtin_bswap16(ephemeral);
-                    local_addr.sin_addr = manager.GetLocalIp();  // NO bswap32 - Ryujinx format
+                    local_addr.sin_addr = __builtin_bswap32(manager.GetLocalIp());  // Ryujinx format → network byte order
 
                     Result bind_result = proxy->Bind(local_addr);
                     if (R_FAILED(bind_result)) {
@@ -1735,15 +1829,15 @@ Result BsdMitmService::SendTo(
                 if (proxy == nullptr) {
                     proxy = manager.CreateProxySocket(fd, socket_info.type, socket_info.protocol);
                     if (proxy != nullptr) {
-                        // Auto-bind
-                        // CRITICAL: Do NOT bswap32 - must match Ryujinx/NetworkInfo format
+                        // Auto-bind: GetLocalIp() returns Ryujinx format; bswap32 converts to
+                        // network byte order for sin_addr (GetAddr() will bswap back to Ryujinx format).
                         uint16_t ephemeral = manager.AllocatePort(socket_info.protocol);
                         if (ephemeral != 0) {
                             ryu_ldn::bsd::SockAddrIn local_addr{};
                             local_addr.sin_len = sizeof(local_addr);
                             local_addr.sin_family = static_cast<uint8_t>(ryu_ldn::bsd::AddressFamily::Inet);
                             local_addr.sin_port = __builtin_bswap16(ephemeral);
-                            local_addr.sin_addr = manager.GetLocalIp();  // NO bswap32 - Ryujinx format
+                            local_addr.sin_addr = __builtin_bswap32(manager.GetLocalIp());  // Ryujinx format → network byte order
                             R_TRY(proxy->Bind(local_addr));
                         }
                     }

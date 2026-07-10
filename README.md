@@ -9,11 +9,7 @@ Nintendo Switch sysmodule enabling online multiplayer via Ryujinx LDN servers �
 
 ## 🚧 Work in Progress
 
-This project is still under development and is not ready for release yet.
-
-If you want to test the project and contribute, please use a private RyuLDN server, please DO NOT USE the official Ryujinx LDN servers with this project (ldn.ryujinx.app).
-
-A hosted testing instance is also available via IP address at 90.93.156.13.
+This project is under active development. Hostname resolution (DNS) and TLS encryption are fully implemented, allowing direct secure connection to the official Ryujinx LDN servers (`ldn.ryujinx.app`).
 
 ## What is ryu_ldn_nx?
 
@@ -64,9 +60,9 @@ Create `sdmc:/config/ryu_ldn_nx/config.ini` (or let the sysmodule auto-create it
 
 ```ini
 [server]
-host = 90.93.156.13    ; IP address or hostname
+host = ldn.ryujinx.app    ; IP address or hostname (resolved via direct UDP DNS query)
 port = 30456
-use_tls = 0                      ; NOT IMPLEMENTED — no TLS code exists
+use_tls = 1                      ; Use TLS encryption (mbedtls) for secure server connection
 
 [network]
 connect_timeout = 5000

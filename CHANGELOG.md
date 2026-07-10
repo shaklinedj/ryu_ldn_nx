@@ -8,13 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Nothing yet
+- Support for client-side TLS encryption using `mbedtls` (`-lmbedtls -lmbedcrypto -lmbedx509`) to allow secure connections to the official Ryujinx LDN production servers.
+- Custom UDP DNS resolution wrapper in `dns_wrap.cpp` to resolve domain names (like `ldn.ryujinx.app`) safely from the boot2 sysmodule context, bypassing the crash-prone `sfdnsres` system service.
 
 ### Changed
-- Nothing yet
+- Config defaults updated to use the official Ryujinx production server (`ldn.ryujinx.app` with `use_tls = 1`) by default.
 
 ### Fixed
-- Nothing yet
+- Critical memory corruption bug in the DNS resolver's `AddrinfoStorage` layout by replacing the overlapping `union` with a sequentially aligned `struct`.
+- IP comparison endianness bug in `proxy_socket_manager.cpp` by using `local_addr.GetAddr()` (host byte order) instead of `local_addr.sin_addr` (network byte order), correcting routing failures on Switch hardware.
 
 ## [0.1.0] - 2026-01-12
 

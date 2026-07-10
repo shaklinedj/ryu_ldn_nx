@@ -4,10 +4,10 @@
 
 [server]
 ; Server hostname or IP address
-host = 90.93.156.13
+host = ldn.ryujinx.app
 ; Server port
 port = 30456
-; Use TLS encryption (0/1) — NOT IMPLEMENTED: always plain TCP regardless of this setting
+; Use TLS encryption (0/1)
 use_tls = 0
 
 [network]
@@ -27,13 +27,13 @@ enabled = 1
 passphrase =
 ; Network interface (empty = auto)
 interface =
-; Disable P2P proxy (0 = false | 1 = true) : DO NOT SET at 0 / false (P2P is not fully implemented and in development)
-disable_p2p = 1
+; Disable P2P proxy (0 = P2P enabled with auto-relay fallback | 1 = relay only)
+disable_p2p = 0
 
 [debug]
 ; Enable debug logging (0/1/true/false/yes/no)
 enabled = 0
 ; Log level (0=errors, 1=warnings, 2=info, 3=verbose)
-level = 1
+level = 2
 ; Log to file (0/1/true/false/yes/no)
 log_to_file = 0

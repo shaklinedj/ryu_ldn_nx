@@ -383,11 +383,29 @@ bool UpnpPortMapper::GetLocalIPAddress(char* ip_out, size_t ip_len) {
     return true;
 }
 
+#ifdef __SWITCH__
+extern "C" uint32_t nifmGetCurrentIpConfigInfo(uint32_t* out_addr, uint32_t* out_subnet, uint32_t* out_gw, uint32_t* out_dns1, uint32_t* out_dns2);
+#endif
+
+uint32_t UpnpPortMapper::GetLocalIPv4Nifm() {
+#ifdef __SWITCH__
+    uint32_t out_addr = 0, out_subnet = 0, out_gw = 0;
+    uint32_t out_dns1 = 0, out_dns2 = 0;
+    uint32_t rc = nifmGetCurrentIpConfigInfo(&out_addr, &out_subnet, &out_gw, &out_dns1, &out_dns2);
+    if (rc == 0) {
+        // nifm returns IP in network byte order (big endian).
+        // Convert to host byte order to match GetLocalIPv4 return format.
+        return __builtin_bswap32(out_addr);
+    }
+#endif
+    return 0;
+}
+
 uint32_t UpnpPortMapper::GetLocalIPv4() const {
     std::scoped_lock lock(m_mutex);
 
     if (!m_available || m_lan_addr[0] == '\0') {
-        return 0;
+        return GetLocalIPv4Nifm();
     }
 
     // ==========================================================================
@@ -397,12 +415,12 @@ uint32_t UpnpPortMapper::GetLocalIPv4() const {
     //
     unsigned int a, b, c, d;
     if (std::sscanf(m_lan_addr, "%u.%u.%u.%u", &a, &b, &c, &d) != 4) {
-        return 0;
+        return GetLocalIPv4Nifm();
     }
 
     // Validate octets
     if (a > 255 || b > 255 || c > 255 || d > 255) {
-        return 0;
+        return GetLocalIPv4Nifm();
     }
 
     // Return in host byte order (most significant byte first)
