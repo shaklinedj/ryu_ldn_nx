@@ -13,6 +13,7 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <atomic>
 
 namespace ryu_ldn::network {
 
@@ -177,7 +178,7 @@ public:
 
 private:
     int m_fd;
-    bool m_connected;
+    std::atomic<bool> m_connected;
     bool m_use_tls;
     void* m_tls_ctx; // Pointer to internal TlsContext
 

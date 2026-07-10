@@ -266,8 +266,8 @@ ICommunicationService::ICommunicationService(ncm::ProgramId program_id)
         this,
         g_ldn_recv_stacks[m_stack_slot_index],
         sizeof(g_ldn_recv_stacks[m_stack_slot_index]),
-        16  // Higher priority than before (lower number = higher priority)
-            // so receive thread preempts IPC handlers for lower latency
+        5   // Higher priority than MITM thread (which runs at 6)
+            // so receive thread preempts BSD MITM and IPC handlers for lower latency
     ));
     os::SetThreadNamePointer(&m_recv_thread, "ldn_recv");
     os::StartThread(&m_recv_thread);
@@ -339,6 +339,13 @@ Result ICommunicationService::ConnectToServer() {
         if (result != ryu_ldn::network::ClientOpResult::Success) {
             LOG_ERROR("Server connection failed: %s",
                       ryu_ldn::network::client_op_result_to_string(result));
+            R_RETURN(MAKERESULT(0x10, 2)); // Connection failed
+        }
+
+        // Immediate check to avoid 5-second stall if connect() returned Success
+        // but the socket immediately dropped (e.g. ECONNREFUSED)
+        if (!m_server_client.is_connected()) {
+            LOG_ERROR("Server connection failed immediately after connect()");
             R_RETURN(MAKERESULT(0x10, 2)); // Connection failed
         }
     }

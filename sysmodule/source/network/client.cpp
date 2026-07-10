@@ -864,8 +864,10 @@ ClientOpResult RyuLdnClient::send_proxy_data(const protocol::ProxyDataHeader& he
 
     ClientResult result = m_tcp_client->send_proxy_data(header, data, size);
     if (result != ClientResult::Success) {
-        LOG_INFO("send_proxy_data: TCP send returned %d", static_cast<int>(result));
-        if (result == ClientResult::ConnectionLost) {
+        LOG_INFO("send_proxy_data: TCP send failed: %s", client_result_to_string(result));
+        // NotConnected can happen when another thread has already marked the
+        // socket down but the state machine is still in Ready for this tick.
+        if (result == ClientResult::ConnectionLost || result == ClientResult::NotConnected) {
             ConnectionState before_state = m_state_machine.get_state();
             m_state_machine.process_event(ConnectionEvent::ConnectionLost);
             if (m_state_callback && before_state != m_state_machine.get_state()) {
@@ -1111,8 +1113,9 @@ void RyuLdnClient::process_packets() {
             break;
         }
 
-        if (result == ClientResult::ConnectionLost) {
-            LOG_INFO("process_packets: receive_packet returned ConnectionLost (server closed TCP)");
+        if (result == ClientResult::ConnectionLost || result == ClientResult::NotConnected) {
+            LOG_INFO("process_packets: receive_packet returned %s (treating as ConnectionLost)",
+                     client_result_to_string(result));
             ConnectionState before_state = m_state_machine.get_state();
             m_state_machine.process_event(ConnectionEvent::ConnectionLost);
             if (m_config.auto_reconnect) {

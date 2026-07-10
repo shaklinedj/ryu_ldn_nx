@@ -296,18 +296,18 @@ static int ParseDnsResponse(const uint8_t* response, size_t resp_len,
 
     // TC (truncated) bit
     if (flags & 0x0200) {
-        return EAI_AGAIN;
+        return -EAI_AGAIN;
     }
 
     // RCODE
     if (rcode == 3) {
-        return EAI_NONAME;  // NXDOMAIN
+        return -EAI_NONAME;  // NXDOMAIN
     }
     if (rcode == 2 || rcode == 5) {
-        return EAI_FAIL;  // SERVFAIL or REFUSED
+        return -EAI_FAIL;  // SERVFAIL or REFUSED
     }
     if (rcode != 0) {
-        return EAI_FAIL;  // Other errors
+        return -EAI_FAIL;  // Other errors
     }
 
     uint16_t ancount = (static_cast<uint16_t>(response[6]) << 8) | response[7];
@@ -359,7 +359,7 @@ static int ParseDnsResponse(const uint8_t* response, size_t resp_len,
         p += rdlength;
     }
 
-    return ip_count > 0 ? ip_count : EAI_NONAME;
+    return ip_count > 0 ? ip_count : -EAI_NONAME;
 }
 
 /**
@@ -377,7 +377,7 @@ static int ParseDnsResponse(const uint8_t* response, size_t resp_len,
  */
 static int ResolveHostnameDns(const char* hostname, uint32_t* out_ips, int max_ips) {
     if (!hostname || !out_ips || max_ips <= 0) {
-        return EAI_FAIL;
+        return -EAI_FAIL;
     }
 
     // Step 1: Get DNS server IP
@@ -391,13 +391,13 @@ static int ResolveHostnameDns(const char* hostname, uint32_t* out_ips, int max_i
     uint8_t query_buf[512];
     ssize_t query_len = BuildDnsQuery(hostname, query_id, query_buf, sizeof(query_buf));
     if (query_len < 0) {
-        return EAI_FAIL;
+        return -EAI_FAIL;
     }
 
     // Step 3: Create UDP socket
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock < 0) {
-        return EAI_FAIL;
+        return -EAI_FAIL;
     }
 
     // Step 4: Set receive timeout (5 seconds)
@@ -417,7 +417,7 @@ static int ResolveHostnameDns(const char* hostname, uint32_t* out_ips, int max_i
                            sizeof(dns_addr));
     if (sent < 0) {
         close(sock);
-        return EAI_AGAIN;
+        return -EAI_AGAIN;
     }
 
     // Step 6: Receive response
@@ -432,7 +432,7 @@ static int ResolveHostnameDns(const char* hostname, uint32_t* out_ips, int max_i
     close(sock);
 
     if (recv_len <= 0) {
-        return EAI_AGAIN;
+        return -EAI_AGAIN;
     }
 
     // Step 7: Parse response
@@ -477,7 +477,7 @@ int __wrap_getaddrinfo(const char* node, const char* service,
             int num_ips = ResolveHostnameDns(node, resolved_ips, 8);
 
             if (num_ips <= 0) {
-                return (num_ips == 0) ? EAI_NONAME : EAI_AGAIN;
+                return (num_ips == 0) ? EAI_NONAME : -num_ips;
             }
 
             // Build addrinfo linked list from resolved IPs

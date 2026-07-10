@@ -218,7 +218,7 @@ SocketResult errno_to_result(int err) {
 #endif
     // Connection errors
     if (err == ECONNREFUSED) return SocketResult::ConnectionRefused;
-    if (err == ECONNRESET) return SocketResult::ConnectionReset;
+    if (err == ECONNRESET || err == EPIPE || err == ECONNABORTED) return SocketResult::ConnectionReset;
     // Network reachability errors
     if (err == EHOSTUNREACH || err == ENETUNREACH) return SocketResult::HostUnreachable;
     if (err == ENETDOWN) return SocketResult::NetworkDown;
@@ -326,7 +326,7 @@ Socket::~Socket() {
  */
 Socket::Socket(Socket&& other) noexcept
     : m_fd(other.m_fd)
-    , m_connected(other.m_connected)
+    , m_connected(other.m_connected.load())
     , m_use_tls(other.m_use_tls)
     , m_tls_ctx(other.m_tls_ctx)
 {
@@ -353,13 +353,13 @@ Socket& Socket::operator=(Socket&& other) noexcept {
 
         // Transfer ownership
         m_fd = other.m_fd;
-        m_connected = other.m_connected;
+        m_connected.store(other.m_connected.load());
         m_use_tls = other.m_use_tls;
         m_tls_ctx = other.m_tls_ctx;
 
         // Invalidate source
         other.m_fd = -1;
-        other.m_connected = false;
+        other.m_connected.store(false);
     }
     return *this;
 }
@@ -635,6 +635,7 @@ SocketResult Socket::send(const uint8_t* data, size_t size, size_t& sent) {
             return SocketResult::WouldBlock;
         }
         // Connection error - mark as disconnected
+        LOG_ERROR("Socket::send: failed with errno=%d", errno);
         m_connected = false;
         return errno_to_result(errno);
     }
@@ -767,6 +768,7 @@ SocketResult Socket::recv(uint8_t* buffer, size_t buffer_size, size_t& received,
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 return SocketResult::WouldBlock;
             }
+            LOG_ERROR("Socket::recv (non-blocking) failed: errno=%d", errno);
             m_connected = false;
             return errno_to_result(errno);
         }
@@ -808,6 +810,7 @@ SocketResult Socket::recv(uint8_t* buffer, size_t buffer_size, size_t& received,
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
             return SocketResult::WouldBlock;
         }
+        LOG_ERROR("Socket::recv (blocking) failed: errno=%d", errno);
         m_connected = false;
         return errno_to_result(errno);
     }
