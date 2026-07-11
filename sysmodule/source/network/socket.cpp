@@ -659,14 +659,16 @@ SocketResult Socket::send(const uint8_t* data, size_t size, size_t& sent) {
  * @param data Pointer to data buffer to send
  * @param size Number of bytes to send
  *
+ * @param timeout_ms Timeout for sending in milliseconds (0 = drop if would block on first chunk)
+ *
  * @return SocketResult::Success if all data was sent
+ * @return SocketResult::WouldBlock if timeout_ms=0 and socket is immediately unwritable
  * @return SocketResult::Timeout if waiting too long for socket to be writable
  * @return Other error codes on failure
  *
- * @note This function may block for extended periods
- * @note Uses 5 second timeout per send chunk
+ * @note This function may block for extended periods if timeout_ms is large
  */
-SocketResult Socket::send_all(const uint8_t* data, size_t size) {
+SocketResult Socket::send_all(const uint8_t* data, size_t size, int32_t timeout_ms) {
     size_t total_sent = 0;
 
     while (total_sent < size) {
@@ -674,8 +676,16 @@ SocketResult Socket::send_all(const uint8_t* data, size_t size) {
         SocketResult result = send(data + total_sent, size - total_sent, sent);
 
         if (result == SocketResult::WouldBlock) {
+            // If non-blocking check requested and no data written yet, abort cleanly
+            if (timeout_ms == 0 && total_sent == 0) {
+                return SocketResult::WouldBlock;
+            }
+            
             // Wait for socket to become writable
-            result = wait_ready(5000, true);  // 5 second timeout per chunk
+            // Note: If we already wrote some data, we MUST wait to finish the packet,
+            // otherwise we corrupt the TCP stream. Fall back to 5s if timeout was 0.
+            uint32_t wait_timeout = (timeout_ms == 0 && total_sent > 0) ? 5000 : static_cast<uint32_t>(timeout_ms);
+            result = wait_ready(wait_timeout, true);
             if (result != SocketResult::Success) {
                 return result;
             }

@@ -70,6 +70,12 @@
 #include <cstdint>
 #include <cstddef>
 #include <utility>
+#include <string>
+#include <vector>
+#include <queue>
+#include <mutex>
+#include <thread>
+#include <condition_variable>
 
 #ifdef TEST_BUILD
     #include <mutex>
@@ -473,6 +479,35 @@ private:
     // with each other.
     mutable ::ams::os::Mutex m_send_mutex{false};
     mutable ::ams::os::Mutex m_recv_mutex{false};
+
+    // Asynchronous send queue for ProxyData packets
+    // Prevents blocking the IPC thread if the OS TCP buffer fills up.
+    struct QueuedPacket {
+        uint64_t timestamp_ms;
+        std::vector<uint8_t> data;
+    };
+    std::deque<QueuedPacket> m_send_queue;
+    size_t m_send_queue_size = 0;                    ///< Current size of queue in bytes
+    const size_t kMaxSendQueueSize = 32 * 1024;      ///< 32KB max queue size (approx 2.4s of MK8 data, but constrained by age drops)
+    
+#ifdef TEST_BUILD
+    std::mutex m_queue_mutex;
+    std::condition_variable m_queue_cv;
+    std::thread m_send_thread;
+#else
+    ::ams::os::Mutex m_queue_mutex{false};
+    ::ams::os::ConditionVariableType m_queue_cv;
+    ::ams::os::ThreadType m_send_thread;
+    alignas(::ams::os::ThreadStackAlignment) uint8_t m_send_thread_stack[16 * 1024];
+#endif
+    
+    bool m_send_thread_running = false;
+
+    /**
+     * @brief Background sender thread entry point
+     */
+    static void SendThreadEntry(void* arg);
+    void SendThreadLoop();
 
     /**
      * @brief Convert SocketResult to ClientResult

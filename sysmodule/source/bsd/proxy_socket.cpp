@@ -344,6 +344,7 @@ void ProxySocket::IncomingData(const void* data, size_t len, const ryu_ldn::bsd:
 
     // Drop oldest if ring is full (UDP behavior)
     if (m_rx_count >= PROXY_SOCKET_MAX_QUEUE_SIZE) {
+        LOG_WARN("ProxySocket::IncomingData: queue full, dropping oldest packet on port %u", m_local_addr.GetPort());
         m_rx_head = (m_rx_head + 1) % PROXY_SOCKET_MAX_QUEUE_SIZE;
         m_rx_count--;
     }

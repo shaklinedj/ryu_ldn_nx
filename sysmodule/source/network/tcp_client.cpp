@@ -33,6 +33,20 @@
 #include <cstdio>
 #include <cstring>
 #include <mutex>
+#include <thread>
+
+#ifdef TEST_BUILD
+#include <chrono>
+static uint64_t GetCurrentTimeMs() {
+    auto now = std::chrono::steady_clock::now();
+    return std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
+}
+#else
+#include <switch.h>
+static uint64_t GetCurrentTimeMs() {
+    return armTicksToNs(armGetSystemTick()) / 1000000ULL;
+}
+#endif
 
 namespace ryu_ldn::network {
 
@@ -50,6 +64,9 @@ TcpClient::TcpClient()
     , m_recv_buffer()
 {
     // Send buffer is uninitialized - will be filled during send operations
+#ifndef TEST_BUILD
+    ::ams::os::InitializeConditionVariable(&m_queue_cv);
+#endif
 }
 
 /**
@@ -132,10 +149,39 @@ ClientResult TcpClient::connect(const char* host, uint16_t port, uint32_t timeou
 
     // Enable TCP_NODELAY by default for lower latency
     m_socket.set_nodelay(true);
+    m_socket.set_non_blocking(true);
 
-    // Increase socket buffers to help absorb WiFi jitter/bursts
-    m_socket.set_send_buffer_size(128 * 1024);
-    m_socket.set_recv_buffer_size(128 * 1024);
+    // Use very small OS socket buffers to force our background thread to block early.
+    // This minimizes the amount of data the OS TCP stack holds, pushing it into our
+    // application-level queue which drops OLD packets to prevent Bufferbloat.
+    m_socket.set_send_buffer_size(16384);
+    m_socket.set_recv_buffer_size(32 * 1024);
+
+    // Start sender thread
+    m_send_thread_running = true;
+    m_send_queue.clear();
+    m_send_queue_size = 0;
+#ifdef TEST_BUILD
+    m_send_thread = std::thread(&TcpClient::SendThreadLoop, this);
+#else
+    ::ams::Result rc = ::ams::os::CreateThread(
+        &m_send_thread,
+        SendThreadEntry,
+        this,
+        m_send_thread_stack,
+        sizeof(m_send_thread_stack),
+        6 // Priority, same as other MITM threads
+    );
+    if (R_SUCCEEDED(rc)) {
+        ::ams::os::SetThreadNamePointer(&m_send_thread, "tcp_send");
+        ::ams::os::StartThread(&m_send_thread);
+    } else {
+        LOG_ERROR("TcpClient: Failed to start sender thread");
+        m_send_thread_running = false;
+        m_socket.close();
+        return ClientResult::ConnectionLost;
+    }
+#endif
 
     LOG_VERBOSE("TcpClient connected successfully");
     return ClientResult::Success;
@@ -147,8 +193,29 @@ ClientResult TcpClient::connect(const char* host, uint16_t port, uint32_t timeou
  * Closes socket and resets internal state.
  */
 void TcpClient::disconnect() {
-    LOG_VERBOSE("TcpClient::disconnect()");
-    m_socket.close();
+    LOG_INFO("TcpClient disconnecting");
+
+    // Stop sender thread
+    if (m_send_thread_running) {
+        m_send_thread_running = false;
+#ifdef TEST_BUILD
+        m_queue_cv.notify_one();
+        if (m_send_thread.joinable()) {
+            m_send_thread.join();
+        }
+#else
+        ::ams::os::SignalConditionVariable(&m_queue_cv);
+        ::ams::os::WaitThread(&m_send_thread);
+        ::ams::os::DestroyThread(&m_send_thread);
+#endif
+        m_send_queue.clear();
+        m_send_queue_size = 0;
+    }
+
+    // Close socket to wake up any blocking recv
+    if (m_socket.is_connected()) {
+        m_socket.close();
+    }
     m_recv_buffer.reset();
 }
 
@@ -560,8 +627,35 @@ ClientResult TcpClient::send_proxy_data(const protocol::ProxyDataHeader& header,
         return ClientResult::EncodingError;
     }
 
-    SocketResult send_result = m_socket.send_all(m_send_buffer, encoded_size);
-    return send_result == SocketResult::Success ? ClientResult::Success : socket_to_client_result(send_result);
+    // Push to background send queue
+    {
+#ifdef TEST_BUILD
+        std::lock_guard<std::mutex> lock(m_queue_mutex);
+#else
+        std::scoped_lock lock(m_queue_mutex);
+#endif
+
+        // If queue is full, drop the OLDEST packets (head-drop) to make room for the NEW packet.
+        // This ensures Ryujinx always gets the freshest drivedata after a lag spike,
+        // preventing the 'ReceiveOldDrivedata' disconnection error.
+        while (m_send_queue_size + encoded_size > kMaxSendQueueSize && !m_send_queue.empty()) {
+            m_send_queue_size -= m_send_queue.front().data.size();
+            m_send_queue.pop_front();
+            LOG_WARN("TcpClient::send_proxy_data: Queue full (size=%zu), dropping OLDEST UDP packet", m_send_queue_size);
+        }
+
+        std::vector<uint8_t> packet(m_send_buffer, m_send_buffer + encoded_size);
+        m_send_queue.push_back({GetCurrentTimeMs(), std::move(packet)});
+        m_send_queue_size += encoded_size;
+    }
+
+#ifdef TEST_BUILD
+    m_queue_cv.notify_one();
+#else
+    ::ams::os::SignalConditionVariable(&m_queue_cv);
+#endif
+
+    return ClientResult::Success;
 }
 
 /**
@@ -838,6 +932,146 @@ ClientResult TcpClient::receive_into_buffer(int32_t timeout_ms) {
     }
 
     return ClientResult::Success;
+}
+
+// =============================================================================
+// Background Sender Thread
+// =============================================================================
+
+void TcpClient::SendThreadEntry(void* arg) {
+    auto* client = static_cast<TcpClient*>(arg);
+    client->SendThreadLoop();
+}
+
+void TcpClient::SendThreadLoop() {
+    size_t send_offset = 0;
+
+    while (m_send_thread_running) {
+        // Step 1: Wait for data to be available in the queue (if we don't have a partially sent packet)
+        if (send_offset == 0) {
+#ifdef TEST_BUILD
+            std::unique_lock<std::mutex> lock(m_queue_mutex);
+            m_queue_cv.wait(lock, [this]() {
+                return !m_send_queue.empty() || !m_send_thread_running;
+            });
+            if (!m_send_thread_running) {
+                break;
+            }
+#else
+            m_queue_mutex.Lock();
+            while (m_send_queue.empty() && m_send_thread_running) {
+                ::ams::os::WaitConditionVariable(&m_queue_cv, m_queue_mutex.GetBase());
+            }
+            if (!m_send_thread_running) {
+                m_queue_mutex.Unlock();
+                break;
+            }
+#endif
+            // Check age of the packet at the front of the queue
+            uint64_t now_ms = GetCurrentTimeMs();
+            if (now_ms > m_send_queue.front().timestamp_ms && (now_ms - m_send_queue.front().timestamp_ms) > 500) {
+                // Drop stale packet!
+                LOG_WARN("TcpClient::SendThreadLoop: Dropping stale packet (age=%llu ms)", now_ms - m_send_queue.front().timestamp_ms);
+                m_send_queue_size -= m_send_queue.front().data.size();
+                m_send_queue.pop_front();
+#ifdef TEST_BUILD
+                lock.unlock();
+#else
+                m_queue_mutex.Unlock();
+#endif
+                continue; // Loop back and check next packet
+            }
+#ifdef TEST_BUILD
+            lock.unlock();
+#else
+            m_queue_mutex.Unlock();
+#endif
+        }
+
+        // Step 2: Get the packet details (front of the queue) safely
+        std::vector<uint8_t> temp_data;
+        bool has_data = false;
+        
+#ifdef TEST_BUILD
+        std::unique_lock<std::mutex> lock(m_queue_mutex);
+#else
+        m_queue_mutex.Lock();
+#endif
+        if (!m_send_queue.empty()) {
+            // Check age again in case it aged while we were in a non-blocking retry cycle
+            if (send_offset == 0) {
+                uint64_t now_ms = GetCurrentTimeMs();
+                if (now_ms > m_send_queue.front().timestamp_ms && (now_ms - m_send_queue.front().timestamp_ms) > 500) {
+                    LOG_WARN("TcpClient::SendThreadLoop: Dropping stale packet during retry (age=%llu ms)", now_ms - m_send_queue.front().timestamp_ms);
+                    m_send_queue_size -= m_send_queue.front().data.size();
+                    m_send_queue.pop_front();
+#ifdef TEST_BUILD
+                    lock.unlock();
+#else
+                    m_queue_mutex.Unlock();
+#endif
+                    continue;
+                }
+            }
+            temp_data = m_send_queue.front().data;
+            has_data = true;
+        }
+#ifdef TEST_BUILD
+        lock.unlock();
+#else
+        m_queue_mutex.Unlock();
+#endif
+
+        if (!has_data) {
+            // Queue became empty
+            send_offset = 0;
+            continue;
+        }
+
+        // Step 3: Try to send
+        size_t to_send = temp_data.size() - send_offset;
+        size_t sent = 0;
+        
+        SocketResult res;
+        {
+            std::scoped_lock send_lock(m_send_mutex);
+            res = m_socket.send(temp_data.data() + send_offset, to_send, sent);
+        }
+        
+        if (res == SocketResult::Success) {
+            send_offset += sent;
+            if (send_offset >= temp_data.size()) {
+                // Packet fully sent! Pop it from the queue.
+#ifdef TEST_BUILD
+                lock.lock();
+#else
+                m_queue_mutex.Lock();
+#endif
+                if (!m_send_queue.empty()) {
+                    m_send_queue_size -= m_send_queue.front().data.size();
+                    m_send_queue.pop_front();
+                }
+#ifdef TEST_BUILD
+                lock.unlock();
+#else
+                m_queue_mutex.Unlock();
+#endif
+                send_offset = 0;
+            }
+        } else if (res == SocketResult::WouldBlock) {
+            // Socket buffer full. Sleep for 1ms and retry later.
+            // This yields CPU and avoids blocking on concurrently-unsafe poll() calls!
+#ifdef TEST_BUILD
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+#else
+            ::ams::os::SleepThread(::ams::TimeSpan::FromMilliSeconds(1)); // 1ms
+#endif
+        } else {
+            // Socket error
+            LOG_WARN("TcpClient::SendThreadLoop: send failed: %s", socket_result_to_string(res));
+            break;
+        }
+    }
 }
 
 } // namespace ryu_ldn::network

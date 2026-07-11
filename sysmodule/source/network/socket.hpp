@@ -109,9 +109,10 @@ public:
      * @brief Send all data (loops until complete or error)
      * @param data Data to send
      * @param size Size of data
+     * @param timeout_ms Send timeout in milliseconds (0 = non-blocking check for first chunk)
      * @return SocketResult::Success or error
      */
-    SocketResult send_all(const uint8_t* data, size_t size);
+    SocketResult send_all(const uint8_t* data, size_t size, int32_t timeout_ms = 5000);
 
     /**
      * @brief Receive data (non-blocking or with timeout)
@@ -176,6 +177,14 @@ public:
      */
     SocketResult set_send_buffer_size(int size);
 
+    /**
+     * @brief Wait for socket to be ready (using poll)
+     * @param timeout_ms Timeout in milliseconds
+     * @param for_write true to wait for write, false for read
+     * @return SocketResult::Success, Timeout, or error
+     */
+    SocketResult wait_ready(uint32_t timeout_ms, bool for_write);
+
 private:
     int m_fd;
     std::atomic<bool> m_connected;
@@ -187,14 +196,6 @@ private:
      * @return SocketResult::Success or error
      */
     SocketResult create();
-
-    /**
-     * @brief Wait for socket to be ready (using poll)
-     * @param timeout_ms Timeout in milliseconds
-     * @param for_write true to wait for write, false for read
-     * @return SocketResult::Success, Timeout, or error
-     */
-    SocketResult wait_ready(uint32_t timeout_ms, bool for_write);
 };
 
 // ============================================================================

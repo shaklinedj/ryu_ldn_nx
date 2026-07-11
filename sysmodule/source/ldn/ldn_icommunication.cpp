@@ -535,8 +535,8 @@ Result ICommunicationService::GetState(ams::sf::Out<u32> state) {
     // asynchronously and updates state via HandleServerPacket + events.
 
     auto current_state = m_state_machine.GetState();
-    LOG_INFO("GetState() called, returning state=%u (%s)",
-             static_cast<u32>(current_state), LdnStateMachine::StateToString(current_state));
+    LOG_VERBOSE("GetState() called, returning state=%u (%s)",
+                static_cast<u32>(current_state), LdnStateMachine::StateToString(current_state));
     state.SetValue(static_cast<u32>(current_state));
 
     // If error_state is set and we have a disconnect reason, return error
@@ -1903,20 +1903,10 @@ void ICommunicationService::HandleConnectedPacket(const uint8_t* data, size_t si
 }
 
 void ICommunicationService::HandleSyncNetworkPacket(const uint8_t* data, size_t size) {
-    LOG_INFO("HandleServerPacket: SyncNetwork ENTRY (size=%zu)", size);
-    ryu_ldn::debug::g_logger.flush();
+    LOG_VERBOSE("HandleServerPacket: SyncNetwork ENTRY (size=%zu)", size);
     if (size >= sizeof(ryu_ldn::protocol::NetworkInfo)) {
         const auto* net_info = reinterpret_cast<const ryu_ldn::protocol::NetworkInfo*>(data);
-        LOG_INFO("SyncNetwork step1: about to memcpy NetworkInfo (sizeof=%zu, src=%p, dst=%p)",
-                 sizeof(m_network_info),
-                 static_cast<const void*>(net_info),
-                 static_cast<void*>(&m_network_info));
-        ryu_ldn::debug::g_logger.flush();
         std::memcpy(&m_network_info, net_info, sizeof(m_network_info));
-        LOG_INFO("SyncNetwork step2: memcpy done, node_count=%u, max=%u",
-                 m_network_info.ldn.nodeCount,
-                 m_network_info.ldn.nodeCountMax);
-        ryu_ldn::debug::g_logger.flush();
 
         // Fix sceneId and localCommunicationId (same as Connected handler)
         if (m_expected_scene_id != 0 && m_network_info.networkId.intentId.sceneId != m_expected_scene_id) {
@@ -1926,34 +1916,21 @@ void ICommunicationService::HandleSyncNetworkPacket(const uint8_t* data, size_t 
             m_network_info.networkId.intentId.localCommunicationId != m_local_communication_id) {
             m_network_info.networkId.intentId.localCommunicationId = m_local_communication_id;
         }
-        LOG_INFO("SyncNetwork step3: scene/comm-id fix done");
-        ryu_ldn::debug::g_logger.flush();
 
         // Update session info
-        LOG_INFO("SyncNetwork step4: calling FindLocalNodeId()");
-        ryu_ldn::debug::g_logger.flush();
         int local_id = FindLocalNodeId();
-        LOG_INFO("SyncNetwork step4b: FindLocalNodeId() returned %d", local_id);
-        ryu_ldn::debug::g_logger.flush();
-
-        LOG_INFO("SyncNetwork step5: getting SharedState::GetInstance()");
-        ryu_ldn::debug::g_logger.flush();
         auto& shared_state = SharedState::GetInstance();
-        LOG_INFO("SyncNetwork step6: calling SetSessionInfo");
-        ryu_ldn::debug::g_logger.flush();
         shared_state.SetSessionInfo(
             m_network_info.ldn.nodeCount,
             m_network_info.ldn.nodeCountMax,
             local_id,
             m_state_machine.GetState() == CommState::AccessPointCreated
         );
-        LOG_INFO("SyncNetwork step7: SetSessionInfo done");
-        ryu_ldn::debug::g_logger.flush();
 
         // Signal state change event so game knows network updated
         m_state_machine.SignalStateChange();
-        LOG_INFO("SyncNetwork step8: SignalStateChange done");
-        ryu_ldn::debug::g_logger.flush();
+        LOG_VERBOSE("SyncNetwork: updated node_count=%u, local_id=%d",
+                    m_network_info.ldn.nodeCount, local_id);
     }
 }
 
@@ -2030,8 +2007,7 @@ void ICommunicationService::HandleExternalProxyPacket(const uint8_t* data, size_
 
 void ICommunicationService::HandleProxyDataPacket(const uint8_t* data, size_t size) {
     // Route to BSD MITM proxy sockets for transparent game socket interception
-    LOG_INFO("HandleServerPacket: ProxyData ENTRY (size=%zu)", size);
-    ryu_ldn::debug::g_logger.flush();
+    LOG_VERBOSE("HandleServerPacket: ProxyData ENTRY (size=%zu)", size);
     if (size >= sizeof(ryu_ldn::protocol::ProxyDataHeader)) {
         const auto* proxy_header = reinterpret_cast<const ryu_ldn::protocol::ProxyDataHeader*>(data);
         const uint8_t* payload = data + sizeof(ryu_ldn::protocol::ProxyDataHeader);
@@ -2082,11 +2058,10 @@ void ICommunicationService::HandleProxyDataPacket(const uint8_t* data, size_t si
             if (routed) {
                 LOG_VERBOSE("ProxyData: routed to proxy socket");
             } else {
-                // No matching proxy socket - fallback to legacy buffer for direct reads
-                LOG_VERBOSE("ProxyData: no matching proxy socket, storing in buffer");
-                if (!m_proxy_buffer.Write(*proxy_header, payload, proxy_header->data_length)) {
-                    LOG_WARN("ProxyData: buffer full, dropping packet");
-                }
+                // No matching proxy socket. Drop silently at INFO/WARN levels to avoid
+                // log spam under race traffic bursts; this path is expected during socket
+                // lifecycle transitions and stale packets from peers.
+                LOG_VERBOSE("ProxyData: no matching proxy socket (dropped)");
             }
         } else {
             LOG_WARN("ProxyData: payload size mismatch (%zu < %u)",

@@ -622,6 +622,7 @@ private:
 
     static constexpr size_t MaxPendingPackets = 32;
     static constexpr size_t PendingPayloadMax = 1400;
+    static constexpr uint64_t MaxPendingPacketAgeMs = 500;
 
     struct PendingPacket {
         uint32_t source_ip;
@@ -630,6 +631,7 @@ private:
         uint16_t dest_port;
         uint16_t len;
         ryu_ldn::bsd::ProtocolType protocol;
+        uint64_t enqueue_time_ms;
         uint8_t data[PendingPayloadMax];
     };
 
