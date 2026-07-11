@@ -151,10 +151,9 @@ ClientResult TcpClient::connect(const char* host, uint16_t port, uint32_t timeou
     m_socket.set_nodelay(true);
     m_socket.set_non_blocking(true);
 
-    // Use very small OS socket buffers to force our background thread to block early.
-    // This minimizes the amount of data the OS TCP stack holds, pushing it into our
-    // application-level queue which drops OLD packets to prevent Bufferbloat.
-    m_socket.set_send_buffer_size(16384);
+    // Keep a reasonably large OS send buffer so gameplay bursts don't immediately
+    // overflow the app queue and force packet drops.
+    m_socket.set_send_buffer_size(128 * 1024);
     m_socket.set_recv_buffer_size(32 * 1024);
 
     // Start sender thread
@@ -969,7 +968,8 @@ void TcpClient::SendThreadLoop() {
 #endif
             // Check age of the packet at the front of the queue
             uint64_t now_ms = GetCurrentTimeMs();
-            if (now_ms > m_send_queue.front().timestamp_ms && (now_ms - m_send_queue.front().timestamp_ms) > 500) {
+            if (now_ms > m_send_queue.front().timestamp_ms &&
+                (now_ms - m_send_queue.front().timestamp_ms) > kMaxQueuedPacketAgeMs) {
                 // Drop stale packet!
                 LOG_WARN("TcpClient::SendThreadLoop: Dropping stale packet (age=%llu ms)", now_ms - m_send_queue.front().timestamp_ms);
                 m_send_queue_size -= m_send_queue.front().data.size();
@@ -1001,7 +1001,8 @@ void TcpClient::SendThreadLoop() {
             // Check age again in case it aged while we were in a non-blocking retry cycle
             if (send_offset == 0) {
                 uint64_t now_ms = GetCurrentTimeMs();
-                if (now_ms > m_send_queue.front().timestamp_ms && (now_ms - m_send_queue.front().timestamp_ms) > 500) {
+                if (now_ms > m_send_queue.front().timestamp_ms &&
+                    (now_ms - m_send_queue.front().timestamp_ms) > kMaxQueuedPacketAgeMs) {
                     LOG_WARN("TcpClient::SendThreadLoop: Dropping stale packet during retry (age=%llu ms)", now_ms - m_send_queue.front().timestamp_ms);
                     m_send_queue_size -= m_send_queue.front().data.size();
                     m_send_queue.pop_front();

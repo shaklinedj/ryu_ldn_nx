@@ -488,7 +488,8 @@ private:
     };
     std::deque<QueuedPacket> m_send_queue;
     size_t m_send_queue_size = 0;                    ///< Current size of queue in bytes
-    const size_t kMaxSendQueueSize = 32 * 1024;      ///< 32KB max queue size (approx 2.4s of MK8 data, but constrained by age drops)
+    const size_t kMaxSendQueueSize = 256 * 1024;     ///< 256KB max queue size to absorb race bursts without aggressive packet loss
+    static constexpr uint64_t kMaxQueuedPacketAgeMs = 2000;  ///< Drop only heavily stale packets under sustained congestion
     
 #ifdef TEST_BUILD
     std::mutex m_queue_mutex;
