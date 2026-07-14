@@ -449,7 +449,14 @@ bool ProxySocketManager::RouteIncomingData(uint32_t source_ip, uint16_t source_p
                                                       targets, kMaxSockets);
 
     if (match_count == 0) {
-        // No matching socket — buffer into fixed-size ring for post-bind delivery.
+        // For UDP gameplay traffic, buffering unmatched packets can re-inject stale
+        // data into a later socket lifecycle phase (lobby/race) and trigger
+        // protocol-level desyncs. Drop unmatched UDP immediately.
+        if (protocol == ryu_ldn::bsd::ProtocolType::Udp) {
+            return false;
+        }
+
+        // For non-UDP traffic, keep fixed-size post-bind buffering behavior.
         if (m_pending_count >= MaxPendingPackets) {
             // Drop oldest
             m_pending_head = (m_pending_head + 1) % MaxPendingPackets;
