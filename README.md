@@ -4,6 +4,8 @@
 [![Coverage](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/Pikatsuto/4277995494c6874ebb238bdbc499d9d0/raw/coverage.json)](https://github.com/shaklinedj/ryu_ldn_nx/actions)
 [![License: GPL v2](https://img.shields.io/badge/License-GPLv2-blue.svg)](https://www.gnu.org/licenses/gpl-2.0)
 
+> **Nota:** Este repositorio es una adaptación independiente en español, actualizada para mantener compatibilidad con las últimas versiones de Firmware y Atmosphere. El proyecto y creador original es **[Ethiquema/ryu_ldn_nx](https://github.com/Ethiquema/ryu_ldn_nx)**.
+
 Un sysmodule para Nintendo Switch que habilita el multijugador online a través de los servidores LDN de Ryujinx, sin necesidad de configuraciones de red complejas.
 
 ## 🚧 Trabajo en Progreso
