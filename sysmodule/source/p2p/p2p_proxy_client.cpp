@@ -131,6 +131,7 @@ P2pProxyClient::P2pProxyClient(ProxyPacketCallback packet_callback)
     , m_disposed(false)
     , m_ready(false)
     , m_proxy_config{}
+    , m_recv_thread_created(false)
     , m_recv_thread_running(false)
     , m_packet_callback(packet_callback) {
 
@@ -322,12 +323,15 @@ bool P2pProxyClient::Connect(const uint8_t* ip_bytes, size_t ip_len, uint16_t po
                                   P2P_CLIENT_STACK_SIZE,
                                   /* priority */ 7);
 
+    m_recv_thread_created = true;
+
     if (R_FAILED(rc)) {
         LOG_ERROR("P2P client: failed to create recv thread (rc=0x%X)", rc.GetValue());
         close(m_socket_fd);
         m_socket_fd = -1;
         m_connected = false;
         m_recv_thread_running = false;
+        m_recv_thread_created = false;
         return false;
     }
 
@@ -363,13 +367,14 @@ void P2pProxyClient::Disconnect() {
     }
 
     // Wait for receive thread to finish
-    if (m_connected) {
+    if (m_recv_thread_created) {
         // We need to release the lock temporarily to avoid deadlock
         // since the recv thread might try to acquire it
         m_mutex.Unlock();
         os::WaitThread(&m_recv_thread);
         os::DestroyThread(&m_recv_thread);
         m_mutex.Lock();
+        m_recv_thread_created = false;
     }
 
     m_connected = false;
@@ -588,8 +593,13 @@ void P2pProxyClient::ReceiveLoop() {
 
         // Append to packet buffer
         if (m_recv_buffer.append(temp_buf, static_cast<size_t>(received)) != ryu_ldn::protocol::BufferResult::Success) {
-            LOG_ERROR("P2P client: buffer overflow or append error");
-            break;
+            // Buffer full — likely burst data from a NAT-blocked P2P attempt.
+            // Reset and keep going; the next complete packet will re-sync us.
+            // Do NOT break: dropping the connection here prevents relay fallback.
+            LOG_WARN("P2P client: recv buffer full (%zu bytes), resetting to recover",
+                     m_recv_buffer.size());
+            m_recv_buffer.reset();
+            continue;
         }
 
         // Process all complete packets in the buffer

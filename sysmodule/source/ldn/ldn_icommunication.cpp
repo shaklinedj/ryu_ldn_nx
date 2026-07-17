@@ -2417,21 +2417,21 @@ void ICommunicationService::HandleExternalProxyConnect(
     }
 
     if (!connected) {
-        LOG_ERROR("Failed to connect to P2P host");
+        LOG_WARN("P2P connect failed (router may be blocking ports) — relay will be used");
         DisconnectP2pProxy();
         return;
     }
 
     // Perform authentication with ExternalProxyConfig
     if (!m_p2p_client->PerformAuth(config)) {
-        LOG_ERROR("P2P authentication failed");
+        LOG_WARN("P2P auth failed — relay will be used");
         DisconnectP2pProxy();
         return;
     }
 
     // Wait for ProxyConfig response from host
     if (!m_p2p_client->EnsureProxyReady()) {
-        LOG_ERROR("P2P proxy not ready (timeout waiting for ProxyConfig)");
+        LOG_WARN("P2P proxy not ready (timeout) — relay will be used");
         DisconnectP2pProxy();
         return;
     }

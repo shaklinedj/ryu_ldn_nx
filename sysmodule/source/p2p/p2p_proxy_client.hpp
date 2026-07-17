@@ -311,10 +311,15 @@ private:
     // moment the server told us about the external proxy. Same root cause
     // as the P2pProxyServer/P2pProxySession fix.
     os::ThreadType m_recv_thread;
+    bool m_recv_thread_created;
     bool m_recv_thread_running;
 
-    // Receive buffer
-    static constexpr size_t RECV_BUFFER_SIZE = 0x1000; // 4 KB (but logic supports unbounded read via PacketBuffer)
+    // Receive buffer — 16 KB to handle burst data from P2P connections.
+    // When a router does partial NAT/firewall, multiple TCP chunks can arrive
+    // before the first complete packet is assembled. 4 KB was too small and
+    // caused BufferFull errors during P2P connect, cutting the connection
+    // instead of gracefully falling back to relay.
+    static constexpr size_t RECV_BUFFER_SIZE = 0x4000; // 16 KB
     ryu_ldn::protocol::PacketBuffer<RECV_BUFFER_SIZE> m_recv_buffer;
 
     // Packet callback
