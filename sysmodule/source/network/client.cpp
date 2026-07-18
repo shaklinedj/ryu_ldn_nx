@@ -1426,6 +1426,11 @@ bool RyuLdnClient::process_handshake_response(protocol::PacketId id,
                     m_state_callback(before_err, m_state_machine.get_state(), m_state_callback_user_data);
                 }
             } else {
+                if (m_last_error_code == protocol::NetworkErrorCode::InvalidSessionId) {
+                    LOG_WARN("Session ID invalid or expired on server, generating new one for retry");
+                    generate_session_id();
+                }
+
                 // Other errors might be recoverable
                 ConnectionState before_err = m_state_machine.get_state();
                 m_state_machine.process_event(ConnectionEvent::HandshakeFailed);

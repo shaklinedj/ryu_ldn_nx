@@ -276,7 +276,15 @@ bool P2pProxyClient::Connect(const uint8_t* ip_bytes, size_t ip_len, uint16_t po
         timeout.tv_sec = CONNECT_TIMEOUT_MS / 1000;
         timeout.tv_usec = (CONNECT_TIMEOUT_MS % 1000) * 1000;
 
-        result = select(m_socket_fd + 1, nullptr, &write_fds, nullptr, &timeout);
+        int fd_to_poll = m_socket_fd;
+        m_mutex.Unlock();
+        result = select(fd_to_poll + 1, nullptr, &write_fds, nullptr, &timeout);
+        m_mutex.Lock();
+
+        if (m_socket_fd != fd_to_poll) {
+            LOG_WARN("P2P client: socket closed during connect by another thread");
+            return false;
+        }
 
         if (result <= 0) {
             LOG_ERROR("P2P client: connect timeout or error (result=%d, errno=%d)",

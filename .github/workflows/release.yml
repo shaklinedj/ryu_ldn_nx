@@ -288,4 +288,3 @@ jobs:
           prerelease: false
           files: |
             ryu_ldn_nx-${{ steps.version.outputs.version }}.zip
-            debug/ryu_ldn_nx.elf

@@ -412,9 +412,9 @@ static int ResolveHostnameDns(const char* hostname, uint32_t* out_ips, int max_i
         return -EAI_FAIL;
     }
 
-    // Step 4: Set receive timeout (5 seconds)
+    // Step 4: Set receive timeout (1 second)
     struct timeval tv;
-    tv.tv_sec = 5;
+    tv.tv_sec = 1;
     tv.tv_usec = 0;
     setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
