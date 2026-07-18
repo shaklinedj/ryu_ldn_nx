@@ -284,13 +284,8 @@ ICommunicationService::~ICommunicationService() {
     os::WaitThread(&m_recv_thread);
     os::DestroyThread(&m_recv_thread);
 
-    // Wait for any in-flight async P2P connect worker before tearing down
-    // m_p2p_client / m_external_proxy_config underneath it.
-    if (m_p2p_connect_thread_initialized) {
-        os::WaitThread(&m_p2p_connect_thread);
-        os::DestroyThread(&m_p2p_connect_thread);
-        m_p2p_connect_thread_initialized = false;
-    }
+    // Note: m_p2p_connect_thread cleanup is now handled safely inside
+    // DisconnectP2pProxy() below, which first interrupts any blocking operations.
 
     // Stop P2P server if hosting
     StopP2pProxyServer();
@@ -1993,6 +1988,7 @@ void ICommunicationService::HandleExternalProxyPacket(const uint8_t* data, size_
                     LOG_ERROR("Failed to spawn P2P connect thread: rc=0x%X",
                               rc.GetValue());
                     m_p2p_connect_thread_active = false;
+                    m_p2p_connect_thread_initialized = false;
                 } else {
                     os::SetThreadNamePointer(&m_p2p_connect_thread, "p2p_connect");
                     os::StartThread(&m_p2p_connect_thread);
@@ -2468,7 +2464,21 @@ void ICommunicationService::HandleExternalProxyConnect(
 void ICommunicationService::DisconnectP2pProxy() {
     if (m_p2p_client != nullptr) {
         LOG_INFO("Disconnecting P2P proxy client");
+        // Interrupt any blocking operations (Connect, WaitForReady) first
         m_p2p_client->Disconnect();
+    }
+
+    // Safely wait for the async connect thread to finish if it's running.
+    // We check GetCurrentThread() to prevent deadlock when called from within the thread itself.
+    if (m_p2p_connect_thread_initialized && os::GetCurrentThread() != &m_p2p_connect_thread) {
+        os::WaitThread(&m_p2p_connect_thread);
+        os::DestroyThread(&m_p2p_connect_thread);
+        m_p2p_connect_thread_initialized = false;
+        // The thread sets this to false when exiting, but we clear it here as well
+        m_p2p_connect_thread_active = false;
+    }
+
+    if (m_p2p_client != nullptr) {
         delete m_p2p_client;
         m_p2p_client = nullptr;
     }
