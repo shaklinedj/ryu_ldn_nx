@@ -163,8 +163,11 @@ void LoadWhitelist() {
     ams::fs::CloseFile(file);
 
     // Sort whitelist array once at startup to enable O(log N) binary search
+    // and remove duplicate Title IDs to keep memory clean.
     if (g_whitelist_count > 1) {
         std::sort(g_whitelist, g_whitelist + g_whitelist_count);
+        auto last = std::unique(g_whitelist, g_whitelist + g_whitelist_count);
+        g_whitelist_count = std::distance(g_whitelist, last);
     }
 
     g_whitelist_loaded = true;
