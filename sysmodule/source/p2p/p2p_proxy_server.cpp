@@ -1323,6 +1323,29 @@ void P2pProxyServer::AcceptLoop() {
             LOG_WARN("Failed to set TCP_NODELAY on client socket");
         }
 
+        // SO_KEEPALIVE to detect dead peer connections quickly
+        int keepalive = 1;
+        if (setsockopt(client_fd, SOL_SOCKET, SO_KEEPALIVE, &keepalive, sizeof(keepalive)) < 0) {
+            LOG_WARN("Failed to set SO_KEEPALIVE on client socket");
+        }
+#if defined(__SWITCH__) || defined(SOL_TCP) || defined(IPPROTO_TCP)
+#ifndef TCP_KEEPIDLE
+#define TCP_KEEPIDLE 4
+#endif
+#ifndef TCP_KEEPINTVL
+#define TCP_KEEPINTVL 5
+#endif
+#ifndef TCP_KEEPCNT
+#define TCP_KEEPCNT 6
+#endif
+        int keepidle = 10;   // 10s idle before keepalive probes start
+        int keepintvl = 5;   // 5s interval between probes
+        int keepcnt = 3;     // 3 probes -> ~25s total detection time
+        setsockopt(client_fd, IPPROTO_TCP, TCP_KEEPIDLE, &keepidle, sizeof(keepidle));
+        setsockopt(client_fd, IPPROTO_TCP, TCP_KEEPINTVL, &keepintvl, sizeof(keepintvl));
+        setsockopt(client_fd, IPPROTO_TCP, TCP_KEEPCNT, &keepcnt, sizeof(keepcnt));
+#endif
+
         // =====================================================================
         // Check Session Limit
         // =====================================================================

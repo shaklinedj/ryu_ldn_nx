@@ -171,13 +171,22 @@ bool IsGameInWhitelist(u64 program_id) {
         return false;
     }
 
-    // Simple linear search (fast enough for ~5000 entries)
+    // If no whitelist entries loaded (e.g. missing or empty gamelist.txt),
+    // fall back to allowing all application processes (excluding Album/HBL).
+    if (g_whitelist_count == 0) {
+        bool is_app = (program_id >= 0x0100000000000000ULL) && (program_id != 0x010028600ebda000ULL);
+        LOG_INFO("GameWhitelist: empty whitelist fallback for 0x%016lx -> %s", program_id, is_app ? "ALLOW" : "DENY");
+        return is_app;
+    }
+
+    // Simple linear search
     for (size_t i = 0; i < g_whitelist_count; i++) {
         if (g_whitelist[i] == program_id) {
             return true;
         }
     }
 
+    LOG_INFO("GameWhitelist: 0x%016lx not found in whitelist (%zu games)", program_id, g_whitelist_count);
     return false;
 }
 

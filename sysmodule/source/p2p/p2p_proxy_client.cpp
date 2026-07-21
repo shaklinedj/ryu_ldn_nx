@@ -228,6 +228,29 @@ bool P2pProxyClient::Connect(const uint8_t* ip_bytes, size_t ip_len, uint16_t po
         LOG_WARN("P2P client: failed to set TCP_NODELAY (errno=%d)", errno);
     }
 
+    // SO_KEEPALIVE - enable TCP keepalive to detect dead P2P connections quickly
+    int keepalive = 1;
+    if (setsockopt(m_socket_fd, SOL_SOCKET, SO_KEEPALIVE, &keepalive, sizeof(keepalive)) < 0) {
+        LOG_WARN("P2P client: failed to set SO_KEEPALIVE (errno=%d)", errno);
+    }
+#if defined(__SWITCH__) || defined(SOL_TCP) || defined(IPPROTO_TCP)
+#ifndef TCP_KEEPIDLE
+#define TCP_KEEPIDLE 4
+#endif
+#ifndef TCP_KEEPINTVL
+#define TCP_KEEPINTVL 5
+#endif
+#ifndef TCP_KEEPCNT
+#define TCP_KEEPCNT 6
+#endif
+    int keepidle = 10;   // 10s idle before keepalive probes start
+    int keepintvl = 5;   // 5s interval between probes
+    int keepcnt = 3;     // 3 probes -> ~25s total detection time
+    setsockopt(m_socket_fd, IPPROTO_TCP, TCP_KEEPIDLE, &keepidle, sizeof(keepidle));
+    setsockopt(m_socket_fd, IPPROTO_TCP, TCP_KEEPINTVL, &keepintvl, sizeof(keepintvl));
+    setsockopt(m_socket_fd, IPPROTO_TCP, TCP_KEEPCNT, &keepcnt, sizeof(keepcnt));
+#endif
+
     // Set non-blocking for connect with timeout
     int flags = fcntl(m_socket_fd, F_GETFL, 0);
     if (flags >= 0) {
