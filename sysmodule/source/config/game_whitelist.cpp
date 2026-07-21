@@ -13,6 +13,7 @@
 #include "../debug/log.hpp"
 
 #include <stratosphere.hpp>
+#include <algorithm>
 #include <cstring>
 #include <new>
 
@@ -160,9 +161,15 @@ void LoadWhitelist() {
     }
 
     ams::fs::CloseFile(file);
+
+    // Sort whitelist array once at startup to enable O(log N) binary search
+    if (g_whitelist_count > 1) {
+        std::sort(g_whitelist, g_whitelist + g_whitelist_count);
+    }
+
     g_whitelist_loaded = true;
 
-    LOG_INFO("GameWhitelist: loaded %zu games", g_whitelist_count);
+    LOG_INFO("GameWhitelist: loaded and sorted %zu games", g_whitelist_count);
 }
 
 bool IsGameInWhitelist(u64 program_id) {
@@ -179,11 +186,9 @@ bool IsGameInWhitelist(u64 program_id) {
         return is_app;
     }
 
-    // Simple linear search
-    for (size_t i = 0; i < g_whitelist_count; i++) {
-        if (g_whitelist[i] == program_id) {
-            return true;
-        }
+    // Binary search (O(log N) ~12 steps instead of O(N) ~5000 steps)
+    if (std::binary_search(g_whitelist, g_whitelist + g_whitelist_count, program_id)) {
+        return true;
     }
 
     LOG_INFO("GameWhitelist: 0x%016lx not found in whitelist (%zu games)", program_id, g_whitelist_count);

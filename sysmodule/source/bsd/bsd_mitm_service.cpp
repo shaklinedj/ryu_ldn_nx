@@ -291,6 +291,16 @@ BsdMitmService::~BsdMitmService() {
  * @return true For games in the whitelist, false otherwise
  */
 bool BsdMitmService::ShouldMitm(const sm::MitmProcessInfo& client_info) {
+    // Fast path: Cache decision per PID to avoid repetitive lookups and log spam
+    static u64 s_cached_pid = 0;
+    static bool s_cached_result = false;
+    static u64 s_cached_program_id = 0;
+
+    if (s_cached_pid != 0 && s_cached_pid == client_info.process_id.value &&
+        s_cached_program_id == client_info.program_id.value) {
+        return s_cached_result;
+    }
+
     // Static counter to track all ShouldMitm calls for debugging
     static u32 s_call_count = 0;
     u32 call_id = ++s_call_count;
@@ -298,13 +308,21 @@ bool BsdMitmService::ShouldMitm(const sm::MitmProcessInfo& client_info) {
     LOG_INFO("BSD ShouldMitm #%u: ENTER pid=%lu, program_id=0x%016lx",
              call_id, client_info.process_id.value, client_info.program_id.value);
 
+    // Cache helper lambda
+    auto cache_and_return = [&](bool result) {
+        s_cached_pid = client_info.process_id.value;
+        s_cached_program_id = client_info.program_id.value;
+        s_cached_result = result;
+        return result;
+    };
+
     // Our sysmodule's program_id - do not intercept ourselves
     constexpr u64 OUR_PROGRAM_ID = 0x4200000000000010ULL;
 
     // Skip our own sysmodule to avoid infinite recursion
     if (client_info.program_id.value == OUR_PROGRAM_ID) {
         LOG_INFO("BSD ShouldMitm #%u: SKIP (our sysmodule)", call_id);
-        return false;
+        return cache_and_return(false);
     }
 
     u64 program_id = client_info.program_id.value;
@@ -312,7 +330,7 @@ bool BsdMitmService::ShouldMitm(const sm::MitmProcessInfo& client_info) {
     // Skip non-applications (system services, applets, etc.)
     if (program_id < 0x0100000000000000ULL) {
         LOG_INFO("BSD ShouldMitm #%u: SKIP (system 0x%016lx)", call_id, program_id);
-        return false;
+        return cache_and_return(false);
     }
 
     // Skip the Album applet (used for Homebrew Launcher). HBL never registers a
@@ -320,7 +338,7 @@ bool BsdMitmService::ShouldMitm(const sm::MitmProcessInfo& client_info) {
     // due to upstream gamelist.txt, so we must explicitly ignore it.
     if (program_id == 0x010028600ebda000ULL) {
         LOG_INFO("BSD ShouldMitm #%u: SKIP (Album/HBL 0x%016lx)", call_id, program_id);
-        return false;
+        return cache_and_return(false);
     }
 
     // First check: is this game in the LDN whitelist?
@@ -329,7 +347,7 @@ bool BsdMitmService::ShouldMitm(const sm::MitmProcessInfo& client_info) {
     LOG_INFO("BSD ShouldMitm #%u: whitelist result=%s", call_id, is_whitelisted ? "YES" : "NO");
 
     if (!is_whitelisted) {
-        return false;
+        return cache_and_return(false);
     }
 
     // Second check: if another PID has an active LDN session, do not intercept this one.
@@ -339,7 +357,7 @@ bool BsdMitmService::ShouldMitm(const sm::MitmProcessInfo& client_info) {
         if (ldn_pid != 0 && ldn_pid != client_info.process_id.value) {
             LOG_INFO("BSD ShouldMitm #%u: SKIP pid=%lu (LDN active for different pid=%lu)",
                      call_id, client_info.process_id.value, ldn_pid);
-            return false;
+            return cache_and_return(false);
         }
         // If ldn_pid == 0, we still intercept if whitelisted, because some games
         // open bsd:u before ldn:u.
@@ -359,14 +377,14 @@ bool BsdMitmService::ShouldMitm(const sm::MitmProcessInfo& client_info) {
         if (count == 1) {
             LOG_INFO("BSD ShouldMitm #%u: SKIP first session for pid=%lu (dummy session)",
                      call_id, client_info.process_id.value);
-            return false;
+            return false; // Do not cache the dummy session skip so session #2 evaluates properly
         }
 
         LOG_INFO("BSD ShouldMitm #%u: INTERCEPTING session #%u for pid=%lu",
                  call_id, count, client_info.process_id.value);
     }
 
-    return true;
+    return cache_and_return(true);
 }
 
 /**
