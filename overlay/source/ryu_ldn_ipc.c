@@ -49,6 +49,10 @@ enum {
     RyuCfgCmd_GetLastRtt          = 26,
     RyuCfgCmd_ForceReconnect      = 27,
     RyuCfgCmd_GetActiveProcessId  = 28,
+
+    // P2P Proxy control (29-30)
+    RyuCfgCmd_GetDisableP2p       = 29,
+    RyuCfgCmd_SetDisableP2p       = 30,
 };
 
 /// Global service handle
@@ -259,6 +263,14 @@ Result ryuLdnForceReconnect(RyuLdnConfigService* s) {
 
 Result ryuLdnGetActiveProcessId(RyuLdnConfigService* s, u64* pid) {
     return serviceDispatchOut(&s->s, RyuCfgCmd_GetActiveProcessId, *pid);
+}
+
+Result ryuLdnGetDisableP2p(RyuLdnConfigService* s, u32* disabled) {
+    return serviceDispatchOut(&s->s, RyuCfgCmd_GetDisableP2p, *disabled);
+}
+
+Result ryuLdnSetDisableP2p(RyuLdnConfigService* s, u32 disabled) {
+    return serviceDispatchIn(&s->s, RyuCfgCmd_SetDisableP2p, disabled);
 }
 
 const char* ryuLdnStateToString(RyuLdnState state) {

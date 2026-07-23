@@ -402,6 +402,24 @@ Result ryuLdnForceReconnect(RyuLdnConfigService* s);
 Result ryuLdnGetActiveProcessId(RyuLdnConfigService* s, u64* pid);
 
 /**
+ * @brief Get P2P proxy disabled state
+ *
+ * @param s Configuration service
+ * @param disabled Output: 1 if P2P proxy is disabled, 0 if enabled
+ * @return Result code
+ */
+Result ryuLdnGetDisableP2p(RyuLdnConfigService* s, u32* disabled);
+
+/**
+ * @brief Set P2P proxy disabled state
+ *
+ * @param s Configuration service
+ * @param disabled 1 to disable P2P proxy (relay only), 0 to enable
+ * @return Result code
+ */
+Result ryuLdnSetDisableP2p(RyuLdnConfigService* s, u32 disabled);
+
+/**
  * @brief Convert LDN state to human-readable string
  *
  * @param state LDN state value

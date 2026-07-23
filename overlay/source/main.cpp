@@ -841,6 +841,18 @@ public:
         });
         list->addItem(ldnItem);
 
+        // P2P Proxy toggle (when enabled = P2P disabled / Relay only mode)
+        auto disableP2pItem = new tsl::elm::ToggleListItem("Disable P2P (Relay Only)", false);
+        u32 disableP2p;
+        if (R_SUCCEEDED(ryuLdnGetDisableP2p(svc, &disableP2p))) {
+            disableP2pItem->setState(disableP2p != 0);
+        }
+        disableP2pItem->setStateChangedListener([](bool disabled) {
+            RyuLdnConfigService* svc = ryuLdnGetService();
+            if (svc) ryuLdnSetDisableP2p(svc, disabled ? 1 : 0);
+        });
+        list->addItem(disableP2pItem);
+
         list->addItem(new tsl::elm::CategoryHeader("Passphrase"));
 
         // Current passphrase display (shows hex part only)
