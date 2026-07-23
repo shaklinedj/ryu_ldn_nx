@@ -44,9 +44,9 @@ using TimeoutCallback = void(*)();
 class NetworkTimeout {
 public:
     /**
-     * @brief Default inactive timeout (matches Ryujinx)
+     * @brief Default inactive timeout (60 seconds)
      */
-    static constexpr uint64_t DEFAULT_IDLE_TIMEOUT_MS = 6000;
+    static constexpr uint64_t DEFAULT_IDLE_TIMEOUT_MS = 60000;
 
     /**
      * @brief Constructor

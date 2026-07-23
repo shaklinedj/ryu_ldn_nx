@@ -277,22 +277,17 @@ ICommunicationService::~ICommunicationService() {
     LOG_INFO("ICommunicationService destructor called (state=%s)",
              LdnStateMachine::StateToString(m_state_machine.GetState()));
 
-    // Stop receive thread first
+    // Disconnect server and P2P proxy FIRST to shut down underlying sockets.
+    // This breaks out of any blocking poll/recv in m_server_client.update() on the receive thread immediately.
+    StopP2pProxyServer();
+    DisconnectP2pProxy();
+    DisconnectFromServer();
+
+    // Now stop receive thread safely (it will exit its loop immediately)
     m_recv_thread_running = false;
-    // Signal error event to unblock receive thread if it's waiting
     m_error_event.Signal();
     os::WaitThread(&m_recv_thread);
     os::DestroyThread(&m_recv_thread);
-
-    // Note: m_p2p_connect_thread cleanup is now handled safely inside
-    // DisconnectP2pProxy() below, which first interrupts any blocking operations.
-
-    // Stop P2P server if hosting
-    StopP2pProxyServer();
-    // Ensure P2P proxy client is disconnected
-    DisconnectP2pProxy();
-    // Ensure server is disconnected
-    DisconnectFromServer();
 
     // Release our thread stack slot back to the pool
     if (m_stack_slot_index >= 0) {
@@ -2096,6 +2091,16 @@ void ICommunicationService::HandleNetworkErrorPacket(const uint8_t* data, size_t
             LOG_WARN("Received NetworkError: PortUnreachable — disabling P2P (cleanup deferred)");
             m_use_p2p_proxy = false;
             is_port_unreachable = true;
+
+            // Auto-persist disable_p2p = 1 to config.ini so future sessions launch directly in Relay mode
+            {
+                std::scoped_lock lk(ryu_ldn::ipc::g_config_mutex);
+                if (!ryu_ldn::ipc::g_config.ldn.disable_p2p) {
+                    ryu_ldn::ipc::g_config.ldn.disable_p2p = true;
+                    ryu_ldn::config::save_config(ryu_ldn::config::CONFIG_PATH, ryu_ldn::ipc::g_config);
+                    LOG_INFO("Auto-persisted disable_p2p = 1 to config.ini following PortUnreachable detection");
+                }
+            }
         } else {
             m_last_network_error = error_code;
             LOG_ERROR("Received NetworkError: code=%u", err->error_code);
