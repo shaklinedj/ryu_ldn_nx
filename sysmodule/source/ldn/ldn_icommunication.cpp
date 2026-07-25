@@ -277,17 +277,21 @@ ICommunicationService::~ICommunicationService() {
     LOG_INFO("ICommunicationService destructor called (state=%s)",
              LdnStateMachine::StateToString(m_state_machine.GetState()));
 
-    // Disconnect server and P2P proxy FIRST to shut down underlying sockets.
-    // This breaks out of any blocking poll/recv in m_server_client.update() on the receive thread immediately.
+    // 1. Stop receive thread first to prevent processing any new packets or spawning new threads.
+    m_recv_thread_running = false;
+    m_error_event.Signal();
+
+    // Disconnect the server client to wake up the receive thread from any blocking poll/recv
+    m_server_client.disconnect();
+
+    // Wait for the receive thread to finish and destroy it
+    os::WaitThread(&m_recv_thread);
+    os::DestroyThread(&m_recv_thread);
+
+    // 2. Now that the receive thread is stopped, it is safe to clean up P2P and connection
     StopP2pProxyServer();
     DisconnectP2pProxy();
     DisconnectFromServer();
-
-    // Now stop receive thread safely (it will exit its loop immediately)
-    m_recv_thread_running = false;
-    m_error_event.Signal();
-    os::WaitThread(&m_recv_thread);
-    os::DestroyThread(&m_recv_thread);
 
     // Release our thread stack slot back to the pool
     if (m_stack_slot_index >= 0) {
@@ -1963,6 +1967,8 @@ void ICommunicationService::HandleExternalProxyPacket(const uint8_t* data, size_
                      config->proxy_port);
         } else if (!m_use_p2p_proxy) {
             LOG_INFO("P2P proxy disabled, ignoring ExternalProxy");
+        } else if (!m_recv_thread_running.load()) {
+            LOG_INFO("Receive thread shutting down, ignoring ExternalProxy");
         } else {
             // Spawn a dedicated worker for the connect+auth+ready chain
             // (Ryujinx runs HandleExternalProxy on its async receive

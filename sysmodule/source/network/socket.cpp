@@ -849,23 +849,24 @@ void Socket::close() {
         // this prevents the server from interpreting the close as an
         // abnormal connection loss.
         if (m_connected) {
+            ::shutdown(m_fd, SHUT_WR);
+        }
 
 #ifndef TEST_BUILD
-            if (m_use_tls && m_tls_ctx) {
-                TlsContext* tls = static_cast<TlsContext*>(m_tls_ctx);
+        if (m_use_tls && m_tls_ctx) {
+            TlsContext* tls = static_cast<TlsContext*>(m_tls_ctx);
+            if (m_connected) {
                 mbedtls_ssl_close_notify(&tls->ssl);
-                mbedtls_ssl_free(&tls->ssl);
-                mbedtls_ssl_config_free(&tls->conf);
-                mbedtls_ctr_drbg_free(&tls->ctr_drbg);
-                mbedtls_entropy_free(&tls->entropy);
-                delete tls;
-                m_tls_ctx = nullptr;
-                m_use_tls = false;
             }
-#endif
-            ::shutdown(m_fd, SHUT_WR);
-
+            mbedtls_ssl_free(&tls->ssl);
+            mbedtls_ssl_config_free(&tls->conf);
+            mbedtls_ctr_drbg_free(&tls->ctr_drbg);
+            mbedtls_entropy_free(&tls->entropy);
+            delete tls;
+            m_tls_ctx = nullptr;
+            m_use_tls = false;
         }
+#endif
         ::close(m_fd);
         m_fd = -1;
     }
