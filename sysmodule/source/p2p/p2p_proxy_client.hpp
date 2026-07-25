@@ -87,8 +87,8 @@ public:
     /** @brief Timeout for authentication and ready wait (milliseconds) */
     static constexpr int FAILURE_TIMEOUT_MS = 4000;
 
-    /** @brief Connection timeout (milliseconds) */
-    static constexpr int CONNECT_TIMEOUT_MS = 5000;
+    /** @brief Connection timeout (milliseconds) - 1.5s for fast P2P probe */
+    static constexpr int CONNECT_TIMEOUT_MS = 1500;
 
     // =========================================================================
     // Lifecycle

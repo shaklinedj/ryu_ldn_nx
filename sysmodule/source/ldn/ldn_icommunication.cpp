@@ -1277,6 +1277,9 @@ Result ICommunicationService::Connect(const ConnectNetworkData &dat, const Netwo
 Result ICommunicationService::Disconnect() {
     LOG_INFO("Disconnect() called");
 
+    // Immediately stop any background P2P connect thread when user/game cancels
+    DisconnectP2pProxy();
+
     auto result = m_state_machine.Disconnect();
     R_UNLESS(result == StateTransitionResult::Success, MAKERESULT(0x10, 1));
 
@@ -2417,22 +2420,28 @@ void ICommunicationService::HandleExternalProxyConnect(
         LOG_WARN("Unsupported address family: %u", config.address_family);
     }
 
-    if (!connected) {
-        LOG_WARN("P2P connect failed (router may be blocking ports) — relay will be used");
+    const bool p2p_failed = !connected ||
+                            (connected && !m_p2p_client->PerformAuth(config)) ||
+                            (connected && !m_p2p_client->EnsureProxyReady());
+
+    if (p2p_failed) {
+        LOG_WARN("P2P connection/auth/ready failed — disabling P2P and falling back to relay");
+        m_use_p2p_proxy = false;
+        {
+            std::scoped_lock lk(ryu_ldn::ipc::g_config_mutex);
+            if (!ryu_ldn::ipc::g_config.ldn.disable_p2p) {
+                ryu_ldn::ipc::g_config.ldn.disable_p2p = true;
+                ryu_ldn::config::save_config(ryu_ldn::config::CONFIG_PATH, ryu_ldn::ipc::g_config);
+                LOG_INFO("Auto-persisted disable_p2p = 1 to config.ini following P2P connection failure");
+            }
+        }
         DisconnectP2pProxy();
         return;
     }
 
-    // Perform authentication with ExternalProxyConfig
-    if (!m_p2p_client->PerformAuth(config)) {
-        LOG_WARN("P2P auth failed — relay will be used");
-        DisconnectP2pProxy();
-        return;
-    }
-
-    // Wait for ProxyConfig response from host
-    if (!m_p2p_client->EnsureProxyReady()) {
-        LOG_WARN("P2P proxy not ready (timeout) — relay will be used");
+    // Check if network was disconnected while P2P setup was in progress
+    if (!m_network_connected && m_state_machine.GetState() != CommState::StationConnected && m_state_machine.GetState() != CommState::AccessPointCreated) {
+        LOG_WARN("HandleExternalProxyConnect: network disconnected during setup — aborting P2P apply");
         DisconnectP2pProxy();
         return;
     }
