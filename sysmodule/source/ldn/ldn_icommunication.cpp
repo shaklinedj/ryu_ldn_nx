@@ -1254,6 +1254,22 @@ Result ICommunicationService::Connect(const ConnectNetworkData &dat, const Netwo
 
     LOG_INFO("Connect: sent request, waiting for Connected response...");
     if (!WaitForResponse(ryu_ldn::protocol::PacketId::Connected, 8000)) {
+        // If P2P connection failed during setup, m_use_p2p_proxy was cleared to false by HandleExternalProxyConnect.
+        // Re-send the connect request once over TCP relay!
+        if (!m_use_p2p_proxy) {
+            LOG_INFO("Connect: P2P failed during setup — retrying Connect request over TCP relay...");
+            m_error_event.Clear();
+            send_result = m_server_client.send_connect(request);
+            if (send_result == ryu_ldn::network::ClientOpResult::Success) {
+                if (WaitForResponse(ryu_ldn::protocol::PacketId::Connected, 8000)) {
+                    LOG_INFO("Connect: relay fallback successful, connected to network");
+                    m_network_connected = true;
+                    m_inactivity_timeout.DisableTimeout();
+                    R_SUCCEED();
+                }
+            }
+        }
+
         LOG_ERROR("Connect: did not receive Connected response from server");
         m_state_machine.Disconnect();
         R_RETURN(MAKERESULT(0x10, 5)); // Response timeout
@@ -1464,6 +1480,23 @@ Result ICommunicationService::ConnectPrivate(const ConnectPrivateData &data) {
     // Wait for Connected response from server (like Ryujinx ConnectCommon)
     constexpr uint64_t response_timeout_ms = 8000; // FailureTimeout in Ryujinx
     if (!WaitForResponse(ryu_ldn::protocol::PacketId::Connected, response_timeout_ms)) {
+        // If P2P connection failed during setup, m_use_p2p_proxy was cleared to false by HandleExternalProxyConnect.
+        // Re-send the connect request once over TCP relay!
+        if (!m_use_p2p_proxy) {
+            LOG_INFO("ConnectPrivate: P2P failed during setup — retrying ConnectPrivate request over TCP relay...");
+            m_error_event.Clear();
+            send_result = m_server_client.send_connect_private(request);
+            if (send_result == ryu_ldn::network::ClientOpResult::Success) {
+                if (WaitForResponse(ryu_ldn::protocol::PacketId::Connected, response_timeout_ms)) {
+                    LOG_INFO("ConnectPrivate: relay fallback successful, connected to network");
+                    m_network_connected = true;
+                    m_inactivity_timeout.DisableTimeout();
+                    SharedState::GetInstance().SetLdnState(CommState::StationConnected);
+                    R_SUCCEED();
+                }
+            }
+        }
+
         LOG_ERROR("ConnectPrivate: did not receive Connected response from server");
         m_state_machine.Disconnect();
         R_RETURN(MAKERESULT(0x10, 5)); // Response timeout
@@ -2442,6 +2475,7 @@ void ICommunicationService::HandleExternalProxyConnect(
             }
         }
         DisconnectP2pProxy();
+        m_error_event.Signal();
         return;
     }
 
