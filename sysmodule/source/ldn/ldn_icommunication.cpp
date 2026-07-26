@@ -2626,38 +2626,49 @@ void ICommunicationService::ReceiveThreadFunc() {
     LOG_INFO("Receive thread started");
 
     while (m_recv_thread_running.load()) {
-        // Drive the client's state machine whenever the TCP connection is
-        // alive — this covers the handshake phase (Connected/Handshaking)
-        // as well as the Ready phase.  m_server_connected is only set
-        // *after* ConnectToServer() completes, so checking it here would
-        // skip the handshake entirely and deadlock the IPC thread waiting
-        // on m_handshake_event.
-        if (!m_server_client.is_connected() && !m_server_client.is_transitioning()) {
-            // Not connected and not connecting — sleep and retry
+        // CRITICAL: Only drive the client state machine when there is an
+        // active TCP connection (Connected / Handshaking / Ready).
+        //
+        // Do NOT call update() when the state is Backoff, Retrying, or
+        // Connecting.  Those states cause update() to call try_connect()
+        // (which runs DNS + socket operations), and ConnectToServer() on
+        // the IPC thread may simultaneously call connect() → try_connect()
+        // — two concurrent calls to try_connect() without a mutex corrupts
+        // the TcpClient socket state and causes a kernel panic.
+        //
+        // All connection establishment is the exclusive responsibility of
+        // the IPC thread via ConnectToServer().  The receive thread's only
+        // job is to process incoming packets once a connection exists.
+        using ryu_ldn::network::ConnectionState;
+        ConnectionState state = m_server_client.get_state();
+
+        if (state != ConnectionState::Connected &&
+            state != ConnectionState::Handshaking &&
+            state != ConnectionState::Ready) {
+            // Not connected at TCP level — sleep and wait for the IPC
+            // thread to establish a connection.
             svcSleepThread(10 * 1000000ULL);  // 10 ms
             continue;
         }
 
         // Read packets from TCP and dispatch immediately via HandleServerPacket.
         // TcpClient::update() calls process_packets() which calls handle_packet()
-        // which calls our callback, which calls HandleServerPacket. The callback
-        // holds m_shared_mutex during HandleServerPacket processing.
+        // which calls our callback, which calls HandleServerPacket.
         uint64_t current_time_ms = armTicksToNs(armGetSystemTick()) / 1000000ULL;
         m_server_client.update(current_time_ms);
 
-        // Check inactivity timeout (like Ryujinx _timeout.RefreshTimeout()
-        // called from HandleConnected, and _timeout.CheckTimeout() in update loop)
+        // Check inactivity timeout
         m_inactivity_timeout.CheckTimeout(current_time_ms);
 
-        // Brief sleep to yield CPU when no data is available.
-        // The TCP recv_timeout inside update() already blocks for ~20ms
-        // when no packets arrive, so this just prevents a tight loop
-        // when update() returns immediately (e.g., during burst processing).
+        // Brief yield to prevent tight spin when no packets arrive.
+        // The TCP recv_timeout inside update() already blocks ~20 ms
+        // when no data is available.
         svcSleepThread(1 * 1000000ULL);  // 1 ms
     }
 
     LOG_INFO("Receive thread stopped");
 }
+
 
 u8 ICommunicationService::FindLocalNodeId() const {
     // Search nodes array for our IP address
