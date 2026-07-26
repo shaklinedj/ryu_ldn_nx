@@ -618,9 +618,18 @@ private:
     void HandleExternalProxyConnect(const ryu_ldn::protocol::ExternalProxyConfig& config);
 
     /**
+     * @brief Perform comprehensive session resource cleanup
+     *
+     * Clears all session resources, events, nodes, threads, P2P servers,
+     * BSD MITM proxy mappings, and shared state tracking.
+     */
+    void CleanupSessionResources();
+
+    /**
      * @brief Disconnect from P2P proxy if connected
      */
     void DisconnectP2pProxy();
+
 
     /**
      * @brief Start P2P proxy server for hosting

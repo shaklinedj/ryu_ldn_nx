@@ -274,8 +274,9 @@ ICommunicationService::ICommunicationService(ncm::ProgramId program_id)
 }
 
 ICommunicationService::~ICommunicationService() {
-    LOG_INFO("ICommunicationService destructor called (state=%s)",
-             LdnStateMachine::StateToString(m_state_machine.GetState()));
+    LOG_INFO("ICommunicationService destructor called (state=%s, pid=0x%lx)",
+             LdnStateMachine::StateToString(m_state_machine.GetState()),
+             m_client_process_id);
 
     // 1. Stop receive thread first to prevent processing any new packets or spawning new threads.
     m_recv_thread_running = false;
@@ -288,24 +289,19 @@ ICommunicationService::~ICommunicationService() {
     os::WaitThread(&m_recv_thread);
     os::DestroyThread(&m_recv_thread);
 
-    // 2. Now that the receive thread is stopped, it is safe to clean up P2P and connection
-    StopP2pProxyServer();
-    DisconnectP2pProxy();
-    DisconnectFromServer();
+    // 2. Perform complete session resource cleanup
+    CleanupSessionResources();
 
-    // Release our thread stack slot back to the pool
+    // 3. Finalize state machine
+    m_state_machine.Finalize();
+
+    // 4. Release our thread stack slot back to the pool
     if (m_stack_slot_index >= 0) {
         ReleaseLdnStackSlot(m_stack_slot_index);
         m_stack_slot_index = -1;
     }
-
-    // NOTE: Do NOT clear LDN PID here!
-    // The game may open BSD sockets between LDN sessions (e.g., after connection
-    // failure and retry). If we clear the PID here, BSD MITM won't intercept
-    // those sockets. The PID remains set for the lifetime of the game process.
-    // When the game closes, the PID becomes stale but harmless (new processes
-    // will have different PIDs).
 }
+
 
 // ============================================================================
 // Server Connection Helpers
@@ -428,8 +424,66 @@ Result ICommunicationService::ConnectToServer() {
     R_SUCCEED();
 }
 
+void ICommunicationService::CleanupSessionResources() {
+    LOG_INFO("CleanupSessionResources called (client_pid=0x%lx)", m_client_process_id);
+
+    // 1. Stop P2P host server & disconnect P2P client proxy
+    StopP2pProxyServer();
+    DisconnectP2pProxy();
+
+    // 2. Disconnect master TCP client
+    if (m_server_connected) {
+        LOG_INFO("Disconnecting from RyuLdn server");
+        m_server_client.disconnect();
+        m_server_connected = false;
+    }
+
+    // 3. Clear active service pointer safely under mutex
+    {
+        std::scoped_lock lock(g_active_service_mutex);
+        if (g_active_ldn_service == this) {
+            g_active_ldn_service = nullptr;
+        }
+    }
+
+    // 4. Reset BSD ProxySocketManager (closes proxy sockets, releases ports, clears callbacks)
+    mitm::bsd::ProxySocketManager::GetInstance().Reset();
+
+    // 5. Clean up abandoned BSD forward services
+    if (m_client_process_id != 0) {
+        mitm::bsd::BsdMitmService::CleanupAbandonedServicesForPid(m_client_process_id);
+    }
+    mitm::bsd::BsdMitmService::CleanupAbandonedServices();
+
+    // 6. Clear all OS event latches to prevent stale signals
+    m_response_event.Clear();
+    m_scan_event.Clear();
+    m_error_event.Clear();
+    m_reject_event.Clear();
+    m_handshake_event.Clear();
+
+    // 7. Reset all network states, node mapping, node connectivity deltas
+    std::memset(&m_network_info, 0, sizeof(m_network_info));
+    std::memset(&m_proxy_config, 0, sizeof(m_proxy_config));
+    std::memset(&m_external_proxy_config, 0, sizeof(m_external_proxy_config));
+    std::memset(m_scan_results, 0, sizeof(m_scan_results));
+    std::memset(m_prev_node_connected, 0, sizeof(m_prev_node_connected));
+    std::memset(m_advertise_data, 0, sizeof(m_advertise_data));
+    m_scan_result_count = 0;
+    m_advertise_data_size = 0;
+    m_ipv4_address = 0;
+    m_subnet_mask = 0;
+    m_network_connected = false;
+    m_node_mapper.Clear();
+
+    // 8. Update SharedState tracking
+    auto& shared_state = SharedState::GetInstance();
+    shared_state.SetGameActive(false, 0);
+    shared_state.SetLdnPid(0);
+}
+
 void ICommunicationService::DisconnectFromServer() {
-    // Disconnect P2P proxy first if connected
+    StopP2pProxyServer();
     DisconnectP2pProxy();
 
     // Reset active LDN service pointer
@@ -441,11 +495,12 @@ void ICommunicationService::DisconnectFromServer() {
     }
 
     // Reset the ProxySocketManager - clears all sockets, pending packets, callbacks
-    // This prevents memory leaks when the game disconnects and reconnects
     mitm::bsd::ProxySocketManager::GetInstance().Reset();
 
-    // Clean up abandoned BSD forward services (sessions that never got RegisterClient)
-    // This is safe to do now because we're disconnecting from LDN
+    // Clean up abandoned BSD forward services
+    if (m_client_process_id != 0) {
+        mitm::bsd::BsdMitmService::CleanupAbandonedServicesForPid(m_client_process_id);
+    }
     mitm::bsd::BsdMitmService::CleanupAbandonedServices();
 
     if (m_server_connected) {
@@ -453,6 +508,13 @@ void ICommunicationService::DisconnectFromServer() {
         m_server_client.disconnect();
         m_server_connected = false;
     }
+
+    // Clear events
+    m_response_event.Clear();
+    m_scan_event.Clear();
+    m_error_event.Clear();
+    m_reject_event.Clear();
+    m_handshake_event.Clear();
 }
 
 bool ICommunicationService::IsServerConnected() const {
@@ -481,8 +543,6 @@ Result ICommunicationService::Initialize(const ams::sf::ClientProcessId& client_
     shared_state.SetLdnState(static_cast<ams::mitm::ldn::CommState>(m_state_machine.GetState()));
 
     // Re-set LDN PID to enable BSD MITM interception
-    // This is critical for retry scenarios: after Finalize() clears the PID,
-    // a subsequent Initialize() must re-enable BSD interception
     shared_state.SetLdnPid(m_client_process_id);
 
     LOG_VERBOSE("LDN Initialized successfully (LdnPid=%lu)", m_client_process_id);
@@ -496,29 +556,20 @@ Result ICommunicationService::InitializeSystem2(u64 unk, const ams::sf::ClientPr
 
 Result ICommunicationService::Finalize() {
     LOG_INFO("Finalize() called");
-    // Disconnect from RyuLdn server if connected
-    DisconnectFromServer();
+
+    // Perform complete session resource cleanup
+    CleanupSessionResources();
 
     // Transition back to None state
     m_state_machine.Finalize();
-
-    // Update shared state - game is no longer active
-    auto& shared_state = SharedState::GetInstance();
-    shared_state.SetGameActive(false, 0);
-    shared_state.SetLdnPid(0);  // Clear so BSD MITM stops intercepting
-    LOG_INFO("Finalize: cleared LDN PID");
 
     // Clear client info
     m_client_process_id = 0;
     m_error_state = 0;
 
-    // Clear network state
-    std::memset(&m_network_info, 0, sizeof(m_network_info));
-    m_ipv4_address = 0;
-    m_subnet_mask = 0;
-
     R_SUCCEED();
 }
+
 
 // ============================================================================
 // Query Operations
