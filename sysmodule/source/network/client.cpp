@@ -581,9 +581,12 @@ void RyuLdnClient::handle_handshaking_state(uint64_t current_time_ms) {
     }
 
     // Try to receive and process handshake response
-    uint8_t recv_buffer[2048];
+    // IMPORTANT: static buffer to avoid stack overflow on the 16 KB receive thread stack.
+    // This function is only ever called from ReceiveThreadFunc (single thread per session).
+    static uint8_t recv_buffer[2048];
     size_t recv_size = 0;
     protocol::PacketId packet_id;
+
 
     ClientResult result = m_tcp_client->receive_packet(
         packet_id,
@@ -1118,9 +1121,12 @@ void RyuLdnClient::process_packets() {
     }
 
     // Try to receive packets
-    uint8_t recv_buffer[2048];
+    // IMPORTANT: static buffer to avoid stack overflow on the 16 KB receive thread stack.
+    // process_packets() is only ever called from ReceiveThreadFunc (single thread per session).
+    static uint8_t recv_buffer[2048];
     size_t recv_size = 0;
     protocol::PacketId packet_id;
+
 
     while (true) {
         ClientResult result = m_tcp_client->receive_packet(

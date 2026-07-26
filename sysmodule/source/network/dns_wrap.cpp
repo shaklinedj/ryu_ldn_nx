@@ -147,8 +147,9 @@ ssize_t BuildDnsQuery(const char* hostname, uint16_t query_id,
         return -1;
     }
 
-    // Encode the name first to determine its length
-    uint8_t name_buf[256];
+    // Encode the name first to determine its length.
+    // IMPORTANT: static to avoid contributing to stack overflow on 16KB receive thread.
+    static uint8_t name_buf[256];
     size_t name_len = EncodeDnsName(hostname, name_buf, sizeof(name_buf));
     if (name_len == 0) {
         return -1;
@@ -397,10 +398,16 @@ static int ResolveHostnameDns(const char* hostname, uint32_t* out_ips, int max_i
     GetDnsServerIp(dns_ip);
 
     // Step 2: Build DNS query
+    // IMPORTANT: These buffers are static to avoid stack overflow on small thread stacks
+    // (e.g., the 16 KB LDN receive thread stack). Protected by a mutex for thread safety.
     static uint16_t s_next_query_id = 0x1234;
     uint16_t query_id = __atomic_fetch_add(&s_next_query_id, 1, __ATOMIC_RELAXED);
 
-    uint8_t query_buf[512];
+    // Use static buffers to keep them off the call-frame stack.
+    // DNS is serialized through a mutex so this is safe.
+    static uint8_t query_buf[512];
+    static uint8_t resp_buf[512];
+
     ssize_t query_len = BuildDnsQuery(hostname, query_id, query_buf, sizeof(query_buf));
     if (query_len < 0) {
         return -EAI_FAIL;
@@ -435,53 +442,12 @@ static int ResolveHostnameDns(const char* hostname, uint32_t* out_ips, int max_i
     }
 
     // Step 6: Receive response
-    uint8_t resp_buf[512];
     struct sockaddr_in from_addr{};
     socklen_t from_len = sizeof(from_addr);
 
     ssize_t recv_len = recvfrom(sock, resp_buf, sizeof(resp_buf), 0,
                                  reinterpret_cast<struct sockaddr*>(&from_addr),
                                  &from_len);
-
-    // Diagnostic logging: dump key DNS response fields
-    if (recv_len >= 12) {
-        uint16_t resp_id  = (static_cast<uint16_t>(resp_buf[0]) << 8) | resp_buf[1];
-        uint16_t resp_fl  = (static_cast<uint16_t>(resp_buf[2]) << 8) | resp_buf[3];
-        uint16_t resp_qd  = (static_cast<uint16_t>(resp_buf[4]) << 8) | resp_buf[5];
-        uint16_t resp_an  = (static_cast<uint16_t>(resp_buf[6]) << 8) | resp_buf[7];
-        uint16_t resp_ns  = (static_cast<uint16_t>(resp_buf[8]) << 8) | resp_buf[9];
-        uint16_t resp_ar  = (static_cast<uint16_t>(resp_buf[10]) << 8) | resp_buf[11];
-        LOG_INFO("DNS response: %zu bytes, id=0x%04X flags=0x%04X QD=%u AN=%u NS=%u AR=%u",
-                 recv_len, resp_id, resp_fl, resp_qd, resp_an, resp_ns, resp_ar);
-        LOG_INFO("DNS query id=0x%04X, response id=0x%04X", query_id, resp_id);
-    }
-
-    // Hex dump of DNS response — one LOG_INFO per 16-byte line
-    {
-        size_t dump_len = (recv_len < 64) ? static_cast<size_t>(recv_len) : 64;
-        for (size_t i = 0; i < dump_len; i += 16) {
-            LOG_INFO("DNS hex %04zx: %02x %02x %02x %02x %02x %02x %02x %02x  "
-                     "%02x %02x %02x %02x %02x %02x %02x %02x",
-                     i,
-                     (i+0 < dump_len) ? resp_buf[i+0] : 0,
-                     (i+1 < dump_len) ? resp_buf[i+1] : 0,
-                     (i+2 < dump_len) ? resp_buf[i+2] : 0,
-                     (i+3 < dump_len) ? resp_buf[i+3] : 0,
-                     (i+4 < dump_len) ? resp_buf[i+4] : 0,
-                     (i+5 < dump_len) ? resp_buf[i+5] : 0,
-                     (i+6 < dump_len) ? resp_buf[i+6] : 0,
-                     (i+7 < dump_len) ? resp_buf[i+7] : 0,
-                     (i+8 < dump_len) ? resp_buf[i+8] : 0,
-                     (i+9 < dump_len) ? resp_buf[i+9] : 0,
-                     (i+10 < dump_len) ? resp_buf[i+10] : 0,
-                     (i+11 < dump_len) ? resp_buf[i+11] : 0,
-                     (i+12 < dump_len) ? resp_buf[i+12] : 0,
-                     (i+13 < dump_len) ? resp_buf[i+13] : 0,
-                     (i+14 < dump_len) ? resp_buf[i+14] : 0,
-                     (i+15 < dump_len) ? resp_buf[i+15] : 0);
-        }
-    }
-
     close(sock);
 
     if (recv_len <= 0) {
