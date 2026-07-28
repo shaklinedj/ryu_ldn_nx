@@ -849,8 +849,9 @@ void Socket::close() {
         // this prevents the server from interpreting the close as an
         // abnormal connection loss.
         if (m_connected) {
-            ::shutdown(m_fd, SHUT_WR);
+            ::shutdown(m_fd, SHUT_RDWR);
         }
+
 
 #ifndef TEST_BUILD
         if (m_use_tls && m_tls_ctx) {
