@@ -1941,6 +1941,19 @@ void ICommunicationService::HandleConnectedPacket(const uint8_t* data, size_t si
                      i, username, node.localCommunicationVersion);
         }
 
+        // Resolve local node IP and update ProxySocketManager for BSD MITM
+        u8 local_node_id = FindLocalNodeId();
+        if (local_node_id != 0xFF) {
+            u32 local_ip = m_network_info.ldn.nodes[local_node_id].ipv4Address;
+            if (local_ip != 0) {
+                m_ipv4_address = local_ip;
+                mitm::bsd::ProxySocketManager::GetInstance().SetLocalIp(local_ip);
+                LOG_INFO("Connected: resolved local node_id=%u, local_ip=0x%08X", local_node_id, local_ip);
+            }
+        } else {
+            LOG_WARN("Connected: could not match local node_id in network nodes list");
+        }
+
         // Update session info in shared state
         auto& shared_state = SharedState::GetInstance();
         bool is_host = (m_network_info.ldn.nodes[0].isConnected &&
@@ -1948,9 +1961,10 @@ void ICommunicationService::HandleConnectedPacket(const uint8_t* data, size_t si
         shared_state.SetSessionInfo(
             m_network_info.ldn.nodeCount,
             m_network_info.ldn.nodeCountMax,
-            FindLocalNodeId(),
+            local_node_id,
             is_host
         );
+
 
         // Mirror Ryujinx HandleConnected: invoke NetworkChange event,
         // which over there hits AccessPoint.NetworkChanged → calls
@@ -2722,14 +2736,27 @@ void ICommunicationService::ReceiveThreadFunc() {
 
 
 u8 ICommunicationService::FindLocalNodeId() const {
-    // Search nodes array for our IP address
+    // 1. Search nodes array by IP if set
+    if (m_ipv4_address != 0) {
+        for (u8 i = 0; i < NodeCountMax; i++) {
+            const auto& node = m_network_info.ldn.nodes[i];
+            if (node.isConnected && node.ipv4Address == m_ipv4_address) {
+                return i;
+            }
+        }
+    }
+
+    // 2. Fallback: match by local MAC address assigned to RyuLdnClient
+    const auto& my_mac = m_server_client.get_mac_address();
     for (u8 i = 0; i < NodeCountMax; i++) {
         const auto& node = m_network_info.ldn.nodes[i];
-        if (node.isConnected && node.ipv4Address == m_ipv4_address) {
+        if (node.isConnected && std::memcmp(node.macAddress.raw, my_mac.data, 6) == 0) {
             return i;
         }
     }
+
     return 0xFF; // Not found
 }
+
 
 } // namespace ams::mitm::ldn

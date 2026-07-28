@@ -376,7 +376,13 @@ public:
 
     /**
      * @brief Check if connected (TCP established)
-     *
+     */
+    /**
+     * @brief Get local MAC address assigned by server
+     */
+    const protocol::MacAddress& get_mac_address() const { return m_mac_address; }
+
+    /**
      * @return true if TCP is connected (may not be ready for packets)
      */
     /// @gdb{tag="NETWORK:CONNECTION", msg="is_connected queried"}
