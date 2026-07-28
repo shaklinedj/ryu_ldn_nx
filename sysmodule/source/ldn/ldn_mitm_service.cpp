@@ -37,9 +37,22 @@ LdnMitMService::~LdnMitMService() {
 }
 
 bool LdnMitMService::ShouldMitm(const sm::MitmProcessInfo& client_info) {
-    // We always want to intercept LDN calls from applications
+    u64 program_id = client_info.program_id.value;
+
+    // Skip non-applications (system services, applets, etc.)
+    if (program_id < 0x0100000000000000ULL) {
+        LOG_INFO("LDN ShouldMitm: SKIP (system 0x%016lx)", program_id);
+        return false;
+    }
+
+    // Skip Album/HBL applet
+    if (program_id == 0x010028600ebda000ULL) {
+        LOG_INFO("LDN ShouldMitm: SKIP (Album/HBL 0x%016lx)", program_id);
+        return false;
+    }
+
     LOG_INFO("LDN ShouldMitm called for pid=%lu, program_id=0x%016lx",
-             client_info.process_id.value, client_info.program_id.value);
+             client_info.process_id.value, program_id);
     return true;
 }
 

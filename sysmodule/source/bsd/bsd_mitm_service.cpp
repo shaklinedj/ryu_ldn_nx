@@ -340,26 +340,25 @@ bool BsdMitmService::ShouldMitm(const sm::MitmProcessInfo& client_info) {
         return cache_and_return(false);
     }
 
-    // First check: is this game in the LDN whitelist?
-    LOG_INFO("BSD ShouldMitm #%u: checking whitelist for 0x%016lx...", call_id, program_id);
-    bool is_whitelisted = ryu_ldn::config::IsGameInWhitelist(program_id);
-    LOG_INFO("BSD ShouldMitm #%u: whitelist result=%s", call_id, is_whitelisted ? "YES" : "NO");
+    u64 ldn_pid = ams::mitm::ldn::SharedState::GetInstance().GetLdnPid();
+    bool is_ldn_active_for_this_pid = (ldn_pid != 0 && ldn_pid == client_info.process_id.value);
 
-    if (!is_whitelisted) {
+    // If another PID has an active LDN session, do not intercept this process.
+    if (ldn_pid != 0 && ldn_pid != client_info.process_id.value) {
+        LOG_INFO("BSD ShouldMitm #%u: SKIP pid=%lu (LDN active for different pid=%lu)",
+                 call_id, client_info.process_id.value, ldn_pid);
         return cache_and_return(false);
     }
 
-    // Second check: if another PID has an active LDN session, do not intercept this one.
-    // This handles cases where a background process opens bsd:u while a game is running.
-    {
-        u64 ldn_pid = ams::mitm::ldn::SharedState::GetInstance().GetLdnPid();
-        if (ldn_pid != 0 && ldn_pid != client_info.process_id.value) {
-            LOG_INFO("BSD ShouldMitm #%u: SKIP pid=%lu (LDN active for different pid=%lu)",
-                     call_id, client_info.process_id.value, ldn_pid);
-            return cache_and_return(false);
-        }
-        // If ldn_pid == 0, we still intercept if whitelisted, because some games
-        // open bsd:u before ldn:u.
+    // Intercept if game is in whitelist OR if this process has an active LDN session
+    bool is_whitelisted = ryu_ldn::config::IsGameInWhitelist(program_id);
+    LOG_INFO("BSD ShouldMitm #%u: check for 0x%016lx (whitelisted=%s, ldn_active=%s)",
+             call_id, program_id, is_whitelisted ? "YES" : "NO", is_ldn_active_for_this_pid ? "YES" : "NO");
+
+    if (!is_whitelisted && !is_ldn_active_for_this_pid) {
+        LOG_INFO("BSD ShouldMitm #%u: SKIP 0x%016lx (not whitelisted and no active LDN session)",
+                 call_id, program_id);
+        return cache_and_return(false);
     }
 
     // Track session count and decide whether to intercept
