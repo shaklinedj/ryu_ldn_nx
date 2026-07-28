@@ -232,22 +232,21 @@ BsdMitmService::~BsdMitmService() {
     LOG_INFO("[BSD#%u] DESTRUCTOR: pid=%lu, fwd_srv=%p (handle=0x%x), commands=%u, registered=%d",
              m_session_id, m_client_pid, fwd, session_handle, m_command_count, m_registered);
 
-    // LAZY FORWARD SERVICE HANDLING:
-    // If this session was never registered (never received RegisterClient),
-    // we must NOT close the forward_service. Closing an unregistered bsd:u
-    // session causes a system freeze. Instead, we move it to an "abandoned"
-    // list where it stays alive until the game process exits.
-    if (!m_registered) {
-        if (m_forward_service) {
-            LOG_WARN("[BSD#%u] Session never registered - moving forward_service to abandoned list to prevent freeze",
-                     m_session_id);
-            std::scoped_lock lock(g_abandoned_services_mutex);
-            g_abandoned_forward_services.push_back({ m_client_pid, std::move(m_forward_service) });
-            LOG_INFO("[BSD#%u] Abandoned services count: %zu", m_session_id, g_abandoned_forward_services.size());
-        }
+    // CRITICAL: Directly close the raw kernel session handle using svcCloseHandle
+    // and zero out the ::Service struct.
+    //
+    // Allowing libnx's default serviceClose() to run sends a CMIF Close IPC message
+    // to Horizon's real bsd:u service. When the game process is exiting or has
+    // already been terminated by the kernel, sending an IPC Close message from the
+    // sysmodule thread causes an IPC dispatch deadlock inside bsd:u, freezing the
+    // entire Switch console on a black screen. Closing the raw handle directly
+    // bypasses the CMIF Close IPC message safely.
+    if (fwd && fwd->session != 0) {
+        svcCloseHandle(fwd->session);
+        *fwd = (::Service){};
     }
-    // For registered sessions, m_forward_service will be closed normally
-    // when the base class destructor runs (shared_ptr goes out of scope)
+    m_forward_service.reset();
+
 
     // Decrement the active intercepted sessions count for this PID
     bool is_last_session = false;
