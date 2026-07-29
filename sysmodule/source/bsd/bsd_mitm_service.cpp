@@ -290,99 +290,77 @@ BsdMitmService::~BsdMitmService() {
  * @return true For games in the whitelist, false otherwise
  */
 bool BsdMitmService::ShouldMitm(const sm::MitmProcessInfo& client_info) {
-    // Fast path: Cache decision per PID to avoid repetitive lookups and log spam
-    static u64 s_cached_pid = 0;
-    static bool s_cached_result = false;
-    static u64 s_cached_program_id = 0;
-
-    if (s_cached_pid != 0 && s_cached_pid == client_info.process_id.value &&
-        s_cached_program_id == client_info.program_id.value) {
-        return s_cached_result;
-    }
-
     // Static counter to track all ShouldMitm calls for debugging
     static u32 s_call_count = 0;
     u32 call_id = ++s_call_count;
 
-    LOG_INFO("BSD ShouldMitm #%u: ENTER pid=%lu, program_id=0x%016lx",
-             call_id, client_info.process_id.value, client_info.program_id.value);
-
-    // Cache helper lambda
-    auto cache_and_return = [&](bool result) {
-        s_cached_pid = client_info.process_id.value;
-        s_cached_program_id = client_info.program_id.value;
-        s_cached_result = result;
-        return result;
-    };
-
     // Our sysmodule's program_id - do not intercept ourselves
     constexpr u64 OUR_PROGRAM_ID = 0x4200000000000010ULL;
+    u64 program_id = client_info.program_id.value;
+    u64 pid = client_info.process_id.value;
+
+    LOG_INFO("BSD ShouldMitm #%u: ENTER pid=%lu, program_id=0x%016lx",
+             call_id, pid, program_id);
 
     // Skip our own sysmodule to avoid infinite recursion
-    if (client_info.program_id.value == OUR_PROGRAM_ID) {
+    if (program_id == OUR_PROGRAM_ID) {
         LOG_INFO("BSD ShouldMitm #%u: SKIP (our sysmodule)", call_id);
-        return cache_and_return(false);
+        return false;
     }
-
-    u64 program_id = client_info.program_id.value;
 
     // Skip non-applications (system services, applets, etc.)
     if (program_id < 0x0100000000000000ULL) {
         LOG_INFO("BSD ShouldMitm #%u: SKIP (system 0x%016lx)", call_id, program_id);
-        return cache_and_return(false);
+        return false;
     }
 
     // Skip the Album applet (used for Homebrew Launcher). HBL never registers a
-    // BSD client, and intercepting it causes crashes. It might be in the whitelist
-    // due to upstream gamelist.txt, so we must explicitly ignore it.
+    // BSD client, and intercepting it causes crashes.
     if (program_id == 0x010028600ebda000ULL) {
         LOG_INFO("BSD ShouldMitm #%u: SKIP (Album/HBL 0x%016lx)", call_id, program_id);
-        return cache_and_return(false);
+        return false;
     }
 
     u64 ldn_pid = ams::mitm::ldn::SharedState::GetInstance().GetLdnPid();
-    bool is_ldn_active_for_this_pid = (ldn_pid != 0 && ldn_pid == client_info.process_id.value);
 
     // If another PID has an active LDN session, do not intercept this process.
-    if (ldn_pid != 0 && ldn_pid != client_info.process_id.value) {
+    if (ldn_pid != 0 && ldn_pid != pid) {
         LOG_INFO("BSD ShouldMitm #%u: SKIP pid=%lu (LDN active for different pid=%lu)",
-                 call_id, client_info.process_id.value, ldn_pid);
-        return cache_and_return(false);
+                 call_id, pid, ldn_pid);
+        return false;
     }
 
-    // Intercept if game is in whitelist OR if this process has an active LDN session
+    bool is_ldn_active_for_this_pid = (ldn_pid != 0 && ldn_pid == pid);
     bool is_whitelisted = ryu_ldn::config::IsGameInWhitelist(program_id);
+
     LOG_INFO("BSD ShouldMitm #%u: check for 0x%016lx (whitelisted=%s, ldn_active=%s)",
              call_id, program_id, is_whitelisted ? "YES" : "NO", is_ldn_active_for_this_pid ? "YES" : "NO");
 
     if (!is_whitelisted && !is_ldn_active_for_this_pid) {
         LOG_INFO("BSD ShouldMitm #%u: SKIP 0x%016lx (not whitelisted and no active LDN session)",
                  call_id, program_id);
-        return cache_and_return(false);
+        return false;
     }
 
     // Track session count and decide whether to intercept
     {
         std::scoped_lock lock(g_mitm_pids_mutex);
-        u32& count = g_mitm_pid_count[client_info.process_id.value];
+        u32& count = g_mitm_pid_count[pid];
         count++;
 
-        // Skip the first BSD session from each game process.
-        // Games typically open a "dummy" first session that is never used
-        // (no RegisterClient is ever called on it). Intercepting this session
-        // causes system instability/crashes even if we try to handle it gracefully.
-        // The actual networking happens on session #2+.
+        // Skip the first BSD session from each game process (dummy session).
+        // Games open a dummy first session that is never used.
         if (count == 1) {
             LOG_INFO("BSD ShouldMitm #%u: SKIP first session for pid=%lu (dummy session)",
-                     call_id, client_info.process_id.value);
-            return false; // Do not cache the dummy session skip so session #2 evaluates properly
+                     call_id, pid);
+            return false; // Do not cache dummy session skip so session #2 evaluates properly
         }
 
         LOG_INFO("BSD ShouldMitm #%u: INTERCEPTING session #%u for pid=%lu",
-                 call_id, count, client_info.process_id.value);
+                 call_id, count, pid);
     }
 
-    return cache_and_return(true);
+    return true;
 }
 
 /**
