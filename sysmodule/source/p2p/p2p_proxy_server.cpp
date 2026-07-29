@@ -500,20 +500,25 @@ bool P2pProxyServer::Start(uint16_t port) {
 
     m_running = true;
 
-    R_ABORT_UNLESS(os::CreateThread(
+    Result rc_accept = os::CreateThread(
         &m_accept_thread,
         AcceptThreadEntry,                // Entry function
         this,                              // Argument (this pointer)
         g_p2p_accept_thread_stack,         // Static, page-aligned stack (BSS)
         sizeof(g_p2p_accept_thread_stack), // Stack size (16KB)
         5                                  // High user-mode priority
-    ));
+    );
 
-    os::SetThreadNamePointer(&m_accept_thread, "p2p_accept");
-    os::StartThread(&m_accept_thread);
-
-    LOG_INFO("P2P server started on port %u", m_private_port);
-    return true;
+    if (R_SUCCEEDED(rc_accept)) {
+        os::SetThreadNamePointer(&m_accept_thread, "p2p_accept");
+        os::StartThread(&m_accept_thread);
+        LOG_INFO("P2P server started on port %u", m_private_port);
+        return true;
+    } else {
+        LOG_ERROR("P2P server: failed to create accept thread: 0x%x", rc_accept.GetValue());
+        m_running = false;
+        return false;
+    }
 }
 
 // =============================================================================
@@ -784,17 +789,22 @@ void P2pProxyServer::StartLeaseRenewal() {
 
     m_lease_thread_running = true;
 
-    R_ABORT_UNLESS(os::CreateThread(
+    Result rc_lease = os::CreateThread(
         &m_lease_thread,
         LeaseThreadEntry,
         this,
         g_p2p_lease_thread_stack,         // Static, page-aligned stack (BSS)
         sizeof(g_p2p_lease_thread_stack),
         os::LowestThreadPriority           // Low priority - not time-critical
-    ));
+    );
 
-    os::SetThreadNamePointer(&m_lease_thread, "p2p_lease");
-    os::StartThread(&m_lease_thread);
+    if (R_SUCCEEDED(rc_lease)) {
+        os::SetThreadNamePointer(&m_lease_thread, "p2p_lease");
+        os::StartThread(&m_lease_thread);
+    } else {
+        LOG_ERROR("P2P server: failed to create lease thread: 0x%x", rc_lease.GetValue());
+        m_lease_thread_running = false;
+    }
 }
 
 /**
@@ -1838,17 +1848,21 @@ void P2pProxySession::Start() {
     // a slow recv handler. `HighestThreadPriority - 2` (= -2) was a system
     // priority that the kernel refuses for a normal sysmodule, same DABRT as
     // the accept thread used to take.
-    R_ABORT_UNLESS(os::CreateThread(
+    Result rc_session = os::CreateThread(
         &m_recv_thread,
         SessionRecvThreadEntry,
         this,
         g_p2p_session_stacks[m_stack_slot],
         P2P_SESSION_STACK_SIZE,
         7                                // High user-mode priority
-    ));
+    );
 
-    os::SetThreadNamePointer(&m_recv_thread, "p2p_session");
-    os::StartThread(&m_recv_thread);
+    if (R_SUCCEEDED(rc_session)) {
+        os::SetThreadNamePointer(&m_recv_thread, "p2p_session");
+        os::StartThread(&m_recv_thread);
+    } else {
+        LOG_ERROR("P2pProxySession: failed to create session thread: 0x%x", rc_session.GetValue());
+    }
 }
 
 /**

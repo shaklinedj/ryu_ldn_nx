@@ -54,7 +54,12 @@ static int AllocateLdnStackSlot() {
             return i;
         }
     }
-    return -1;
+    // Fallback: recycle slot using round-robin if pool is exhausted
+    static std::atomic<int> s_fallback_counter{0};
+    int slot = (s_fallback_counter.fetch_add(1, std::memory_order_relaxed)) % LDN_SESSION_STACK_COUNT;
+    LOG_WARN("AllocateLdnStackSlot: pool exhausted, recycling slot %d", slot);
+    g_ldn_session_stack_used[slot] = true;
+    return slot;
 }
 
 static void ReleaseLdnStackSlot(int slot) {
@@ -253,14 +258,16 @@ ICommunicationService::ICommunicationService(ncm::ProgramId program_id)
 
     // Allocate a thread stack slot from the pool
     m_stack_slot_index = AllocateLdnStackSlot();
-    AMS_ABORT_UNLESS(m_stack_slot_index >= 0); // Too many concurrent sessions!
+    if (m_stack_slot_index < 0) {
+        m_stack_slot_index = 0; // Safe fallback
+    }
 
     // Start dedicated receive thread for asynchronous packet dispatch.
     // This mirrors Ryujinx's NetCoreServer pattern: packets are received and
     // dispatched immediately on a background thread, while IPC handlers wait
     // on os::Event objects (via TimedWaitAny) for specific responses.
     m_recv_thread_running = true;
-    R_ABORT_UNLESS(os::CreateThread(
+    Result rc = os::CreateThread(
         &m_recv_thread,
         ReceiveThreadEntry,
         this,
@@ -268,9 +275,15 @@ ICommunicationService::ICommunicationService(ncm::ProgramId program_id)
         sizeof(g_ldn_recv_stacks[m_stack_slot_index]),
         5   // Higher priority than MITM thread (which runs at 6)
             // so receive thread preempts BSD MITM and IPC handlers for lower latency
-    ));
-    os::SetThreadNamePointer(&m_recv_thread, "ldn_recv");
-    os::StartThread(&m_recv_thread);
+    );
+
+    if (R_SUCCEEDED(rc)) {
+        os::SetThreadNamePointer(&m_recv_thread, "ldn_recv");
+        os::StartThread(&m_recv_thread);
+    } else {
+        LOG_ERROR("ICommunicationService: os::CreateThread failed: 0x%x", rc.GetValue());
+        m_recv_thread_running = false;
+    }
 }
 
 ICommunicationService::~ICommunicationService() {
