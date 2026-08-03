@@ -81,6 +81,14 @@ public:
      */
     static void CleanupAbandonedServicesForPid(u64 pid);
 
+    /**
+     * @brief Reset all internal BSD MITM socket and session tracking for a process
+     *
+     * @param pid Process ID of the game
+     */
+    static void ResetProcessMitmState(u64 pid);
+
+
 public:
     // =========================================================================
     // Command Implementations

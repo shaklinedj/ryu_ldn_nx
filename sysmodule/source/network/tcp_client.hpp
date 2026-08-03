@@ -499,10 +499,10 @@ private:
     ::ams::os::Mutex m_queue_mutex{false};
     ::ams::os::ConditionVariableType m_queue_cv;
     ::ams::os::ThreadType m_send_thread;
-    alignas(::ams::os::ThreadStackAlignment) uint8_t m_send_thread_stack[16 * 1024];
 #endif
     
     bool m_send_thread_running = false;
+    bool m_send_thread_was_started = false;
 
     /**
      * @brief Background sender thread entry point

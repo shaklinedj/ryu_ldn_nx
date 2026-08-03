@@ -120,9 +120,9 @@ TEST(default_values) {
     ASSERT_STREQ(config.ldn.passphrase, "");
 
     // Debug defaults
-    ASSERT_EQ(config.debug.enabled, false);
-    ASSERT_EQ(config.debug.level, 1u);
-    ASSERT_EQ(config.debug.log_to_file, false);
+    ASSERT_EQ(config.debug.enabled, true);
+    ASSERT_EQ(config.debug.level, 3u);
+    ASSERT_EQ(config.debug.log_to_file, true);
 }
 
 // ============================================================================

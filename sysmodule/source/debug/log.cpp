@@ -378,11 +378,10 @@ void Logger::check_idle_timeout() {
 
     if (elapsed_ns >= FILE_IDLE_TIMEOUT_NS) {
         close_file();
-    } else {
-        // Periodic flush — writes are done with WriteOption::None for speed,
-        // so force a sync here to cap data loss on crash to the maintenance tick.
-        ams::fs::FlushFile(s_log_file_handle);
     }
+    // Periodic flush is intentionally removed. SD card syncs (FlushFile) on FAT32/exFAT
+    // are blocking and block the network threads under m_mutex, causing massive gameplay lag.
+    // The OS will flush page caches naturally, and close_file() runs a final flush.
 #else
     std::lock_guard<std::mutex> lock(m_mutex);
     if (!m_file_open) return;

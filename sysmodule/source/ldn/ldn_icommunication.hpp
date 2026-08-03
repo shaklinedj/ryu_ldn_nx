@@ -536,6 +536,7 @@ private:
     // os::Event (via TimedWaitAny) which the receive thread signals.
     os::ThreadType m_recv_thread;                           ///< Receive background thread
     std::atomic<bool> m_recv_thread_running;                 ///< Receive thread running flag
+    bool m_recv_thread_was_started = false;                  ///< True only if os::CreateThread + StartThread succeeded
     int m_stack_slot_index = -1;                            ///< Index of the allocated stack slot
 
 

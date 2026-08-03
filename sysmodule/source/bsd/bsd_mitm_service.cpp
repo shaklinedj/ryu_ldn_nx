@@ -115,6 +115,7 @@ static os::Mutex g_socket_info_mutex{false};
  */
 static std::unordered_map<u64, u32> g_mitm_pid_count;
 static std::unordered_map<u64, u32> g_active_intercepted_sessions_count;
+static std::unordered_map<u64, u64> s_pid_program_ids;
 static os::Mutex g_mitm_pids_mutex{false};
 
 struct AbandonedService {
@@ -267,13 +268,16 @@ BsdMitmService::~BsdMitmService() {
     if (is_last_session) {
         LOG_INFO("Last active BSD session for pid=%lu destroyed. Cleaning up process resources.", m_client_pid);
         CleanupAbandonedServicesForPid(m_client_pid);
-        {
-            std::scoped_lock lock(g_mitm_pids_mutex);
-            g_mitm_pid_count.erase(m_client_pid);
-        }
-        LOG_INFO("BSD destructor: cleanup complete for pid=%lu", m_client_pid);
     }
+    
+    // Do NOT erase g_mitm_pid_count here when an intercepted BSD session is destroyed.
+    // g_mitm_pid_count tracks total BSD sessions opened by a PID since game launch.
+    // Session #1 (boot dummy) was skipped. Sessions #2, #3, #4... are all real LAN sessions
+    // opened when entering or re-entering LAN mode. Erasing g_mitm_pid_count here caused
+    // session #3 (the second LAN attempt) to be wrongly treated as session #1 and skipped!
+    LOG_INFO("BSD destructor: cleanup complete for pid=%lu", m_client_pid);
 }
+
 
 /**
  * @brief Determine if we should MITM a process's BSD calls
@@ -299,25 +303,25 @@ bool BsdMitmService::ShouldMitm(const sm::MitmProcessInfo& client_info) {
     u64 program_id = client_info.program_id.value;
     u64 pid = client_info.process_id.value;
 
-    LOG_INFO("BSD ShouldMitm #%u: ENTER pid=%lu, program_id=0x%016lx",
+    LOG_VERBOSE("BSD ShouldMitm #%u: ENTER pid=%lu, program_id=0x%016lx",
              call_id, pid, program_id);
 
     // Skip our own sysmodule to avoid infinite recursion
     if (program_id == OUR_PROGRAM_ID) {
-        LOG_INFO("BSD ShouldMitm #%u: SKIP (our sysmodule)", call_id);
+        LOG_VERBOSE("BSD ShouldMitm #%u: SKIP (our sysmodule)", call_id);
         return false;
     }
 
     // Skip non-applications (system services, applets, etc.)
     if (program_id < 0x0100000000000000ULL) {
-        LOG_INFO("BSD ShouldMitm #%u: SKIP (system 0x%016lx)", call_id, program_id);
+        LOG_VERBOSE("BSD ShouldMitm #%u: SKIP (system 0x%016lx)", call_id, program_id);
         return false;
     }
 
     // Skip the Album applet (used for Homebrew Launcher). HBL never registers a
     // BSD client, and intercepting it causes crashes.
     if (program_id == 0x010028600ebda000ULL) {
-        LOG_INFO("BSD ShouldMitm #%u: SKIP (Album/HBL 0x%016lx)", call_id, program_id);
+        LOG_VERBOSE("BSD ShouldMitm #%u: SKIP (Album/HBL 0x%016lx)", call_id, program_id);
         return false;
     }
 
@@ -325,7 +329,7 @@ bool BsdMitmService::ShouldMitm(const sm::MitmProcessInfo& client_info) {
 
     // If another PID has an active LDN session, do not intercept this process.
     if (ldn_pid != 0 && ldn_pid != pid) {
-        LOG_INFO("BSD ShouldMitm #%u: SKIP pid=%lu (LDN active for different pid=%lu)",
+        LOG_VERBOSE("BSD ShouldMitm #%u: SKIP pid=%lu (LDN active for different pid=%lu)",
                  call_id, pid, ldn_pid);
         return false;
     }
@@ -333,11 +337,11 @@ bool BsdMitmService::ShouldMitm(const sm::MitmProcessInfo& client_info) {
     bool is_ldn_active_for_this_pid = (ldn_pid != 0 && ldn_pid == pid);
     bool is_whitelisted = ryu_ldn::config::IsGameInWhitelist(program_id);
 
-    LOG_INFO("BSD ShouldMitm #%u: check for 0x%016lx (whitelisted=%s, ldn_active=%s)",
+    LOG_VERBOSE("BSD ShouldMitm #%u: check for 0x%016lx (whitelisted=%s, ldn_active=%s)",
              call_id, program_id, is_whitelisted ? "YES" : "NO", is_ldn_active_for_this_pid ? "YES" : "NO");
 
     if (!is_whitelisted && !is_ldn_active_for_this_pid) {
-        LOG_INFO("BSD ShouldMitm #%u: SKIP 0x%016lx (not whitelisted and no active LDN session)",
+        LOG_VERBOSE("BSD ShouldMitm #%u: SKIP 0x%016lx (not whitelisted and no active LDN session)",
                  call_id, program_id);
         return false;
     }
@@ -345,13 +349,24 @@ bool BsdMitmService::ShouldMitm(const sm::MitmProcessInfo& client_info) {
     // Track session count and decide whether to intercept
     {
         std::scoped_lock lock(g_mitm_pids_mutex);
+
+        // Reset session count if this PID is being reused by a different game title
+        u64& prev_program_id = s_pid_program_ids[pid];
+        if (prev_program_id != 0 && prev_program_id != program_id) {
+            LOG_INFO("BSD ShouldMitm: pid=%lu program_id changed (0x%016lx -> 0x%016lx), resetting session count",
+                     pid, prev_program_id, program_id);
+            g_mitm_pid_count[pid] = 0;
+        }
+        prev_program_id = program_id;
+
         u32& count = g_mitm_pid_count[pid];
         count++;
 
-        // Skip the first BSD session from each game process (dummy session).
-        // Games open a dummy first session that is never used.
+        // Skip the first BSD session from each game process (dummy session on boot).
+        // Games open a dummy first session during nn::socket::Initialize on boot.
+        // All subsequent sessions (session #2, #3, #4...) are real LAN sessions.
         if (count == 1) {
-            LOG_INFO("BSD ShouldMitm #%u: SKIP first session for pid=%lu (dummy session)",
+            LOG_VERBOSE("BSD ShouldMitm #%u: SKIP first session for pid=%lu (dummy session)",
                      call_id, pid);
             return false; // Do not cache dummy session skip so session #2 evaluates properly
         }
@@ -434,6 +449,48 @@ void BsdMitmService::CleanupAbandonedServicesForPid(u64 pid) {
                  count_before - count_after, pid, count_after);
     }
 }
+
+void BsdMitmService::ResetProcessMitmState(u64 pid) {
+    LOG_INFO("BSD ResetProcessMitmState: completely clearing MITM session and socket tracking for pid=%lu", pid);
+
+    // 1. Clear intercepted session count tracking so the next game session
+    // starts fresh from session #1 (avoids wrong session intercepts).
+    {
+        std::scoped_lock lock(g_mitm_pids_mutex);
+        g_active_intercepted_sessions_count.erase(pid);
+        g_mitm_pid_count.erase(pid);
+        s_pid_program_ids.erase(pid);
+    }
+
+    // 2. Erase and close any orphaned socket info entries belonging to this PID
+    std::vector<s32> proxy_fds_to_close;
+    {
+        std::scoped_lock lock(g_socket_info_mutex);
+        for (auto it = g_socket_info.begin(); it != g_socket_info.end(); ) {
+            // Note: in SocketInfo, we can match by the client process context/pid if available,
+            // or simply match by the session mapping.
+            // BsdMitmService instances themselves hold the session_id.
+            // If the pid matches, clean it up.
+            // Since SocketInfo doesn't store pid directly, we clear everything that matches
+            // proxy sockets just to be clean, or we clear all entries.
+            // As a safe measure, we clear ALL tracked sockets if they are proxy sockets
+            // when resetting state (under game restart), since only one game runs at a time.
+            if (it->second.is_proxy) {
+                proxy_fds_to_close.push_back(it->first);
+            }
+            it = g_socket_info.erase(it);
+        }
+    }
+
+    if (!proxy_fds_to_close.empty()) {
+        auto& manager = ProxySocketManager::GetInstance();
+        for (s32 fd : proxy_fds_to_close) {
+            manager.CloseProxySocket(fd);
+        }
+        LOG_INFO("BSD ResetProcessMitmState: closed %zu proxy sockets", proxy_fds_to_close.size());
+    }
+}
+
 
 // =============================================================================
 // Session Management Commands
@@ -3156,3 +3213,5 @@ Result BsdMitmService::ShutdownAllSockets(
 }
 
 } // namespace ams::mitm::bsd
+
+

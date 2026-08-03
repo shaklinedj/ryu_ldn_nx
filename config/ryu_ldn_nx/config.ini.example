@@ -28,12 +28,12 @@ passphrase =
 ; Network interface (empty = auto)
 interface =
 ; Disable P2P proxy (0 = P2P enabled with auto-relay fallback | 1 = relay only)
-disable_p2p = 0
+disable_p2p = 1
 
 [debug]
 ; Enable debug logging (0/1/true/false/yes/no)
-enabled = 0
+enabled = 1
 ; Log level (0=errors, 1=warnings, 2=info, 3=verbose)
-level = 2
+level = 3
 ; Log to file (0/1/true/false/yes/no)
-log_to_file = 0
+log_to_file = 1

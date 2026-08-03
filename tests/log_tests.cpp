@@ -344,14 +344,14 @@ TEST(logger_from_full_config) {
     ASSERT_FALSE(logger.should_log(LogLevel::Verbose));
 }
 
-TEST(logger_default_config_disabled) {
+TEST(logger_default_config_enabled) {
     Config config = get_default_config();
-    // Default should have debug disabled
+    // Default should have debug enabled
 
     Logger logger;
     logger.init(config.debug);
 
-    ASSERT_FALSE(logger.is_enabled());
+    ASSERT_TRUE(logger.is_enabled());
 }
 
 // ============================================================================

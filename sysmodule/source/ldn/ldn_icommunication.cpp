@@ -30,6 +30,18 @@ namespace ams::mitm::ldn {
 static ICommunicationService* g_active_ldn_service = nullptr;
 static os::Mutex g_active_service_mutex{false};
 
+/**
+ * @brief Pointer to the most recently constructed ICommunicationService
+ *
+ * Unlike g_active_ldn_service (which is set only when ConnectToServer succeeds
+ * and cleared on disconnect), this tracks the instance from construction to
+ * destruction. When a game rapidly re-opens ldn:u, the new constructor uses
+ * this to force-shutdown the lingering old instance's recv_thread before
+ * allocating a new stack slot, preventing heap exhaustion and stack overlap.
+ */
+static ICommunicationService* g_current_ldn_instance = nullptr;
+
+
 // =============================================================================
 // Session Thread Stack Pool
 // =============================================================================
@@ -47,19 +59,50 @@ constinit static bool g_ldn_session_stack_used[LDN_SESSION_STACK_COUNT] = {};
 constinit static os::SdkMutex g_ldn_session_stack_mutex;
 
 static int AllocateLdnStackSlot() {
-    std::scoped_lock lock(g_ldn_session_stack_mutex);
-    for (int i = 0; i < LDN_SESSION_STACK_COUNT; ++i) {
-        if (!g_ldn_session_stack_used[i]) {
-            g_ldn_session_stack_used[i] = true;
-            return i;
+    // Retry for up to 500ms (50 iterations × 10ms sleep).
+    //
+    // WHY: ICommunicationService objects are managed by sf::SharedPointer.
+    // When a game rapidly recreates its ldn:u session (e.g. after leaving a
+    // Smash Bros room), the previous ICommunicationService may still be alive
+    // while the new one is being constructed. Its recv_thread is still running
+    // on its slot. We must NOT recycle that slot — doing so puts two threads
+    // on the same physical stack, causing immediate stack corruption and a
+    // much worse kernel panic. Instead, we wait: the previous destructor calls
+    // os::WaitThread() + ReleaseLdnStackSlot() within a few milliseconds.
+    constexpr int MAX_WAIT_ITERATIONS = 50;
+    constexpr uint64_t SLEEP_NS = 10'000'000ULL; // 10 ms
+
+    for (int attempt = 0; attempt < MAX_WAIT_ITERATIONS; ++attempt) {
+        {
+            std::scoped_lock lock(g_ldn_session_stack_mutex);
+            for (int i = 0; i < LDN_SESSION_STACK_COUNT; ++i) {
+                if (!g_ldn_session_stack_used[i]) {
+                    g_ldn_session_stack_used[i] = true;
+                    if (attempt > 0) {
+                        LOG_INFO("AllocateLdnStackSlot: got slot %d after %d ms wait",
+                                 i, attempt * 10);
+                    }
+                    return i;
+                }
+            }
         }
+        if (attempt == 0) {
+            LOG_WARN("AllocateLdnStackSlot: all %d slots busy, waiting for destructor...",
+                     LDN_SESSION_STACK_COUNT);
+        }
+        svcSleepThread(SLEEP_NS);
     }
-    // Fallback: recycle slot using round-robin if pool is exhausted
-    static std::atomic<int> s_fallback_counter{0};
-    int slot = (s_fallback_counter.fetch_add(1, std::memory_order_relaxed)) % LDN_SESSION_STACK_COUNT;
-    LOG_WARN("AllocateLdnStackSlot: pool exhausted, recycling slot %d", slot);
-    g_ldn_session_stack_used[slot] = true;
-    return slot;
+
+    // Pool still exhausted after 500ms — this should never happen under normal
+    // operation (only one game runs at a time). Force slot 0 as a last resort
+    // and log an error so we can investigate if it ever fires.
+    LOG_ERROR("AllocateLdnStackSlot: pool exhausted after %d ms, forcing slot 0 (possible leak)",
+              MAX_WAIT_ITERATIONS * 10);
+    {
+        std::scoped_lock lock(g_ldn_session_stack_mutex);
+        g_ldn_session_stack_used[0] = true;
+    }
+    return 0;
 }
 
 static void ReleaseLdnStackSlot(int slot) {
@@ -222,11 +265,74 @@ ICommunicationService::ICommunicationService(ncm::ProgramId program_id)
     , m_local_communication_id(0)
     , m_expected_scene_id(0)
 {
+    // ==========================================================================
+    // CRITICAL: Force cleanup of any lingering previous ICommunicationService
+    // ==========================================================================
+    // When a game re-opens ldn:u after a disconnection (e.g. Smash Bros leaving
+    // a room), Stratosphere creates a NEW ICommunicationService while the OLD
+    // one has not yet been destroyed (sf::SharedPointer release is deferred).
+    // The old instance's recv_thread, TcpClient buffers (~50KB inline), and
+    // send_thread_stack (16KB) remain allocated in our 384KB heap. Creating
+    // a second instance exhausts the heap or causes stack overlap, resulting
+    // in an immediate kernel panic.
+    //
+    // Solution: Before proceeding, stop the previous instance's threads and
+    // run its cleanup so resources are freed. When the old sf::SharedPointer
+    // finally releases the stale instance, its destructor will be a safe no-op.
+    {
+        ICommunicationService* prev = nullptr;
+        {
+            std::scoped_lock lock(g_active_service_mutex);
+            prev = g_current_ldn_instance;
+            if (prev != nullptr) {
+                LOG_WARN("ICommunicationService: previous instance %p still alive, "
+                         "forcing shutdown before new instance (%p) can proceed",
+                         prev, this);
+
+                // 1. Signal the previous recv thread to stop
+                prev->m_recv_thread_running = false;
+                prev->m_error_event.Signal();
+
+                // 2. Disconnect its TCP client (unblocks any blocking poll/recv)
+                prev->m_server_client.disconnect();
+
+                // Clear pointers under lock so no other code touches prev
+                g_active_ldn_service = nullptr;
+                g_current_ldn_instance = nullptr;
+            }
+        }
+        // Mutex released — safe to wait on threads that may touch the mutex
+
+        if (prev != nullptr) {
+            // 3. Wait for its recv thread to actually exit, then destroy it
+            if (prev->m_recv_thread_was_started) {
+                os::WaitThread(&prev->m_recv_thread);
+                os::DestroyThread(&prev->m_recv_thread);
+                prev->m_recv_thread_was_started = false;
+            }
+
+            // Release previous stack slot
+            if (prev->m_stack_slot_index >= 0) {
+                ReleaseLdnStackSlot(prev->m_stack_slot_index);
+                prev->m_stack_slot_index = -1;
+            }
+
+            // 4. Run the previous instance's full cleanup
+            prev->CleanupSessionResources();
+            prev->m_state_machine.Finalize();
+
+            LOG_INFO("Previous ICommunicationService instance shutdown complete");
+        }
+    }
+
+
     LOG_INFO("ICommunicationService created with program_id=0x%016lx", m_program_id.value);
+
 
     // Use program_id as LocalCommunicationId
     // NOTE: Technically LocalCommunicationId can differ from program_id (stored in NACP),
     // but reading NACP via nsGetApplicationControlData() causes deadlocks in MITM context.
+
     // For most games, program_id == LocalCommunicationId, and the server will accept either.
     m_local_communication_id = m_program_id.value;
     LOG_INFO("LocalCommunicationId: 0x%016lx (using program_id)", m_local_communication_id);
@@ -280,9 +386,16 @@ ICommunicationService::ICommunicationService(ncm::ProgramId program_id)
     if (R_SUCCEEDED(rc)) {
         os::SetThreadNamePointer(&m_recv_thread, "ldn_recv");
         os::StartThread(&m_recv_thread);
+        m_recv_thread_was_started = true;
     } else {
         LOG_ERROR("ICommunicationService: os::CreateThread failed: 0x%x", rc.GetValue());
         m_recv_thread_running = false;
+    }
+
+    // Register as the current instance for future cleanup
+    {
+        std::scoped_lock lock(g_active_service_mutex);
+        g_current_ldn_instance = this;
     }
 }
 
@@ -291,16 +404,32 @@ ICommunicationService::~ICommunicationService() {
              LdnStateMachine::StateToString(m_state_machine.GetState()),
              m_client_process_id);
 
-    // 1. Stop receive thread first to prevent processing any new packets or spawning new threads.
+    // Unregister from the current instance tracker
+    {
+        std::scoped_lock lock(g_active_service_mutex);
+        if (g_current_ldn_instance == this) {
+            g_current_ldn_instance = nullptr;
+        }
+    }
+
+    // 1. Signal stop to receive thread (set flag + signal error event) so it
+    //    exits its wait loop. Then disconnect the server client to unblock any
+    //    blocking recv/poll call inside the thread.
     m_recv_thread_running = false;
     m_error_event.Signal();
 
     // Disconnect the server client to wake up the receive thread from any blocking poll/recv
     m_server_client.disconnect();
 
-    // Wait for the receive thread to finish and destroy it
-    os::WaitThread(&m_recv_thread);
-    os::DestroyThread(&m_recv_thread);
+    // Wait for the receive thread to finish and destroy it.
+    // Only call WaitThread/DestroyThread if the thread was actually created and
+    // started — if os::CreateThread failed in the constructor, m_recv_thread is
+    // an uninitialized handle and calling WaitThread on it is UB / kernel error.
+    if (m_recv_thread_was_started) {
+        os::WaitThread(&m_recv_thread);
+        os::DestroyThread(&m_recv_thread);
+        m_recv_thread_was_started = false;
+    }
 
     // 2. Perform complete session resource cleanup
     CleanupSessionResources();
@@ -314,6 +443,7 @@ ICommunicationService::~ICommunicationService() {
         m_stack_slot_index = -1;
     }
 }
+
 
 
 // ============================================================================
@@ -468,6 +598,7 @@ void ICommunicationService::CleanupSessionResources() {
     }
     mitm::bsd::BsdMitmService::CleanupAbandonedServices();
 
+
     // 6. Clear all OS event latches to prevent stale signals
     m_response_event.Clear();
     m_scan_event.Clear();
@@ -516,6 +647,7 @@ void ICommunicationService::DisconnectFromServer() {
     }
     mitm::bsd::BsdMitmService::CleanupAbandonedServices();
 
+
     if (m_server_connected) {
         LOG_INFO("Disconnecting from RyuLdn server");
         m_server_client.disconnect();
@@ -542,6 +674,13 @@ Result ICommunicationService::Initialize(const ams::sf::ClientProcessId& client_
     // Store client process ID for tracking
     m_client_process_id = client_process_id.GetValue().value;
     LOG_INFO("LDN Initialize called by process 0x%lx", m_client_process_id);
+
+    // DEFENSIVE DELAY: When the game session drops or crashes and immediately tries
+    // to reopen/reconnect, the Atmosphere service manager / Kernel might still be
+    // cleaning up socket file descriptors or IPC channels. Initiating a new session
+    // instantly can trigger resources clashes or race conditions that panic the kernel.
+    // A brief 200ms yield gives the OS enough room to clear resources.
+    svcSleepThread(200 * 1000000ULL); // 200 ms
 
     // Transition to Initialized state
     auto result = m_state_machine.Initialize();
@@ -2703,6 +2842,10 @@ void ICommunicationService::ReceiveThreadEntry(void* arg) {
 void ICommunicationService::ReceiveThreadFunc() {
     LOG_INFO("Receive thread started");
 
+    // Track previous TCP state to detect transitions (especially Ready → Backoff/Disconnected)
+    using ryu_ldn::network::ConnectionState;
+    ConnectionState prev_tcp_state = m_server_client.get_state();
+
     while (m_recv_thread_running.load()) {
         // CRITICAL: Only drive the client state machine when there is an
         // active TCP connection (Connected / Handshaking / Ready).
@@ -2717,8 +2860,63 @@ void ICommunicationService::ReceiveThreadFunc() {
         // All connection establishment is the exclusive responsibility of
         // the IPC thread via ConnectToServer().  The receive thread's only
         // job is to process incoming packets once a connection exists.
-        using ryu_ldn::network::ConnectionState;
         ConnectionState state = m_server_client.get_state();
+
+        // Detect TCP connection-loss while an LDN game session is active.
+        //
+        // Scenario: TCP drops (errno=32 EPIPE, server restart, network blip)
+        // during StationConnected/AccessPointCreated. The game keeps calling
+        // BSD SendTo, all ProxyData sends fail with NotConnected, and the
+        // game eventually times out through PIA's own 500ms retry logic —
+        // showing the player an opaque connection error.
+        //
+        // Fix: when we observe the TCP transition from Ready → Backoff/
+        // Disconnected while the LDN state is still active, immediately
+        // signal m_error_event so any pending WaitForResponse unblocks, and
+        // transition the LDN state machine to None via the disconnect path,
+        // which makes GetState() return an error and the game can handle it.
+        if (prev_tcp_state == ConnectionState::Ready &&
+            (state == ConnectionState::Backoff ||
+             state == ConnectionState::Disconnected ||
+             state == ConnectionState::Retrying)) {
+
+            CommState ldn_state = m_state_machine.GetState();
+            if (ldn_state == CommState::StationConnected ||
+                ldn_state == CommState::AccessPointCreated) {
+                LOG_WARN("ReceiveThreadFunc: TCP connection lost during active LDN session "
+                         "(TCP=%d, LDN=%s) — signaling network error to game",
+                         static_cast<int>(state),
+                         LdnStateMachine::StateToString(ldn_state));
+
+                // Update shared server state so IPC handlers see the disconnect
+                m_server_connected = false;
+
+                // Signal error event to unblock any WaitForResponse in progress
+                m_error_event.Signal();
+
+                // Record error code so GetState() returns an error result
+                {
+                    std::scoped_lock lock(m_shared_mutex);
+                    m_last_network_error = ryu_ldn::protocol::NetworkErrorCode::None;
+                    m_disconnect_reason  = DisconnectReason::SignalLost;
+                    m_network_connected  = false;
+                }
+
+                // Transition LDN state machine back — game will call OpenStation
+                // or Finalize once it sees the error state via GetState().
+                // Use the correct transition for each active state.
+                if (ldn_state == CommState::StationConnected) {
+                    m_state_machine.Disconnect();      // StationConnected → Station
+                } else {
+                    m_state_machine.DestroyNetwork();  // AccessPointCreated → AccessPoint
+                }
+
+                // Notify shared state so the Tesla overlay reflects the drop
+                SharedState::GetInstance().SetLdnState(
+                    static_cast<CommState>(m_state_machine.GetState()));
+            }
+        }
+        prev_tcp_state = state;
 
         if (state != ConnectionState::Connected &&
             state != ConnectionState::Handshaking &&
@@ -2746,6 +2944,7 @@ void ICommunicationService::ReceiveThreadFunc() {
 
     LOG_INFO("Receive thread stopped");
 }
+
 
 
 u8 ICommunicationService::FindLocalNodeId() const {

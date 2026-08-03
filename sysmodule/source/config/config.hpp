@@ -150,21 +150,21 @@ constexpr uint32_t DEFAULT_MAX_RECONNECT_ATTEMPTS = 5;
 /** @brief Default LDN enabled state */
 constexpr bool DEFAULT_LDN_ENABLED = true;
 
-/** @brief Default P2P proxy disabled state (matches config.ini.example: disable_p2p = 0) */
-constexpr bool DEFAULT_DISABLE_P2P = false;
+/** @brief Default P2P proxy disabled state (matches config.ini.example: disable_p2p = 1) */
+constexpr bool DEFAULT_DISABLE_P2P = true;
 
 // -----------------------------------------------------------------------------
 // Default Values - Debug
 // -----------------------------------------------------------------------------
 
 /** @brief Default debug logging state */
-constexpr bool DEFAULT_DEBUG_ENABLED = false;
+constexpr bool DEFAULT_DEBUG_ENABLED = true;
 
-/** @brief Default debug log level (1 = warnings) */
-constexpr uint32_t DEFAULT_DEBUG_LEVEL = 1;
+/** @brief Default debug log level (3 = verbose) */
+constexpr uint32_t DEFAULT_DEBUG_LEVEL = 3;
 
 /** @brief Default file logging state */
-constexpr bool DEFAULT_LOG_TO_FILE = false;
+constexpr bool DEFAULT_LOG_TO_FILE = true;
 
 // =============================================================================
 // Result Codes

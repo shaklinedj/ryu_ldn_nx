@@ -43,6 +43,7 @@ static uint64_t GetCurrentTimeMs() {
 }
 #else
 #include <switch.h>
+alignas(::ams::os::ThreadStackAlignment) constinit static uint8_t g_tcp_send_thread_stack[16 * 1024];
 static uint64_t GetCurrentTimeMs() {
     return armTicksToNs(armGetSystemTick()) / 1000000ULL;
 }
@@ -162,21 +163,24 @@ ClientResult TcpClient::connect(const char* host, uint16_t port, uint32_t timeou
     m_send_queue_size = 0;
 #ifdef TEST_BUILD
     m_send_thread = std::thread(&TcpClient::SendThreadLoop, this);
+    m_send_thread_was_started = true;
 #else
     ::ams::Result rc = ::ams::os::CreateThread(
         &m_send_thread,
         SendThreadEntry,
         this,
-        m_send_thread_stack,
-        sizeof(m_send_thread_stack),
+        g_tcp_send_thread_stack,
+        sizeof(g_tcp_send_thread_stack),
         6 // Priority, same as other MITM threads
     );
     if (R_SUCCEEDED(rc)) {
         ::ams::os::SetThreadNamePointer(&m_send_thread, "tcp_send");
         ::ams::os::StartThread(&m_send_thread);
+        m_send_thread_was_started = true;
     } else {
-        LOG_ERROR("TcpClient: Failed to start sender thread");
+        LOG_ERROR("TcpClient: Failed to start sender thread (rc=0x%x)", rc.GetValue());
         m_send_thread_running = false;
+        m_send_thread_was_started = false;
         m_socket.close();
         return ClientResult::ConnectionLost;
     }
@@ -195,7 +199,7 @@ void TcpClient::disconnect() {
     LOG_INFO("TcpClient disconnecting");
 
     // Stop sender thread
-    if (m_send_thread_running) {
+    if (m_send_thread_running || m_send_thread_was_started) {
         m_send_thread_running = false;
 #ifdef TEST_BUILD
         m_queue_cv.notify_one();
@@ -204,8 +208,11 @@ void TcpClient::disconnect() {
         }
 #else
         ::ams::os::SignalConditionVariable(&m_queue_cv);
-        ::ams::os::WaitThread(&m_send_thread);
-        ::ams::os::DestroyThread(&m_send_thread);
+        if (m_send_thread_was_started) {
+            ::ams::os::WaitThread(&m_send_thread);
+            ::ams::os::DestroyThread(&m_send_thread);
+            m_send_thread_was_started = false;
+        }
 #endif
         m_send_queue.clear();
         m_send_queue_size = 0;

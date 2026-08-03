@@ -8,6 +8,7 @@
 
 #include "ldn_mitm_service.hpp"
 #include "ldn_shared_state.hpp"
+#include "../bsd/bsd_mitm_service.hpp"
 #include "../debug/log.hpp"
 
 namespace ams::mitm::ldn {
@@ -41,17 +42,17 @@ bool LdnMitMService::ShouldMitm(const sm::MitmProcessInfo& client_info) {
 
     // Skip non-applications (system services, applets, etc.)
     if (program_id < 0x0100000000000000ULL) {
-        LOG_INFO("LDN ShouldMitm: SKIP (system 0x%016lx)", program_id);
+        LOG_VERBOSE("LDN ShouldMitm: SKIP (system 0x%016lx)", program_id);
         return false;
     }
 
     // Skip Album/HBL applet
     if (program_id == 0x010028600ebda000ULL) {
-        LOG_INFO("LDN ShouldMitm: SKIP (Album/HBL 0x%016lx)", program_id);
+        LOG_VERBOSE("LDN ShouldMitm: SKIP (Album/HBL 0x%016lx)", program_id);
         return false;
     }
 
-    LOG_INFO("LDN ShouldMitm called for pid=%lu, program_id=0x%016lx",
+    LOG_VERBOSE("LDN ShouldMitm called for pid=%lu, program_id=0x%016lx",
              client_info.process_id.value, program_id);
     return true;
 }
